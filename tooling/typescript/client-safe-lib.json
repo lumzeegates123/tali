@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "display": "Tali runtime-neutral library (Node.js, browser, Expo/Hermes): no Node or DOM types",
+  "extends": "./base.json",
+  "compilerOptions": {
+    "types": []
+  }
+}

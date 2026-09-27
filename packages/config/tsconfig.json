@@ -1,0 +1,4 @@
+{
+  "extends": "@tali/tsconfig/client-safe-lib.json",
+  "include": ["src"]
+}

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "globalDependencies": ["tooling/typescript/*.json"],
+  "tasks": {
+    "typecheck": {
+      "dependsOn": ["^typecheck"],
+      "inputs": ["src/**", "tsconfig.json", "package.json"],
+      "outputs": []
+    },
+    "test": {
+      "inputs": ["src/**", "tsconfig.json", "package.json", "vitest.config.*"],
+      "outputs": []
+    }
+  }
+}

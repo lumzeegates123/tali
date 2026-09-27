@@ -1,0 +1,21 @@
+title = "Tali gitleaks configuration"
+
+[extend]
+useDefault = true
+
+# Documented placeholders and prose in governance docs, not credentials.
+# Each entry must match both the file and the exact line text; keep this list minimal.
+[[allowlists]]
+description = "Governance documentation placeholders"
+condition = "AND"
+regexTarget = "line"
+paths = [
+  '''(^|/)\.cursor/BUGBOT\.md$''',
+  '''(^|/)\.cursor/rules/70-security\.mdc$''',
+  '''(^|/)docs/decisions/ADR-001-aws-infrastructure\.md$''',
+]
+regexes = [
+  '''fake placeholder secrets such as `test_secret` or `sk_test_placeholder`''',
+  '''const apiKey = 'sk_live_abc123';''',
+  '''OIDC/JWT tokens, S3-compatible object semantics''',
+]

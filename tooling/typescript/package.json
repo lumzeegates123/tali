@@ -1,0 +1,15 @@
+{
+  "name": "@tali/tsconfig",
+  "version": "0.0.0",
+  "private": true,
+  "files": [
+    "base.json",
+    "node-lib.json",
+    "client-safe-lib.json"
+  ],
+  "exports": {
+    "./base.json": "./base.json",
+    "./node-lib.json": "./node-lib.json",
+    "./client-safe-lib.json": "./client-safe-lib.json"
+  }
+}

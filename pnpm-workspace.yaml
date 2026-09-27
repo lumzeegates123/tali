@@ -1,0 +1,8 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+  - "tooling/*"
+
+engineStrict: true
+saveExact: true
+strictPeerDependencies: true
