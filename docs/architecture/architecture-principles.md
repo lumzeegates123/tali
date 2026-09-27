@@ -115,6 +115,10 @@ Rules:
   domain logic lives on the backend. Client-side calculations needed offline (e.g. a sale total) use the same
   shared money/tax calculation code; the server checks their arithmetic on sync and records what was actually
   charged (see section 7).
+- Clients may import only an explicitly **client-safe domain kernel** (pure value objects and deterministic
+  arithmetic, rounding, allocation and formatting primitives). It must not expose authorization rules, posting
+  logic, commit-capable state transitions or other authoritative business operations. The server recomputes and
+  validates every authoritative effect.
 
 ## 7. Offline-first mobile and synchronization
 

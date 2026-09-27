@@ -31,8 +31,9 @@ External events must be **authenticated, idempotent, traceable and auditable**:
    comparison and timestamp/replay-window checks. Reject unverified events.
 2. **Persist raw first**: store the raw payload, provider, external event ID, received-at, verification result,
    and resolved `business_id` (from stored connection config, never from payload fields alone).
-3. **Idempotent**: `UNIQUE (provider, external_event_id)` (or a content hash when no ID exists).
-   Duplicates are acknowledged, not reprocessed.
+3. **Idempotent**: `UNIQUE (provider, external_event_id)`. Provider-issued stable event/transaction identifiers are
+   the preferred deduplication source. A content hash is only a provider-specific fallback after explicit review
+   (recorded in that provider's ADR), never a universal rule. Duplicates are acknowledged, not reprocessed.
 4. **Acknowledge fast, process async** via a queue/outbox with an idempotent consumer.
 5. **Traceable**: every downstream record links back to the raw event ID; correlation IDs flow through logs.
 6. **Auditable**: the processing outcome (accepted, duplicate, rejected, failed) is recorded.

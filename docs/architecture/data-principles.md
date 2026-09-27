@@ -93,6 +93,10 @@ Tali is **location-aware from day one**.
 - Purchasing and receiving (goods receipts, restocks, supplier returns) are location scoped.
 - Relevant staff actions (sales, counts, adjustments, cash handling, daily close) retain location context.
 - Locations belong to a business and are tenant scoped like any other business record.
+- A generic business context may carry an optional location, but any **location-bound use case** (sales, inventory,
+  receiving, cash sessions and cash close) receives a **resolved, non-null location** before it executes. Default-
+  location resolution (and verification that a supplied location belongs to the business) happens server-side
+  **before** the location-bound use case is invoked.
 
 Private-pilot MVP:
 - exactly **one active default location** is created automatically per business;
@@ -203,6 +207,11 @@ mutations, permission changes and sensitive settings changes are sensitive. Audi
 - correlation ID / idempotency key and, where relevant, AI proposal ID or external event ID
 
 Audit records are insert-only for the application; they are never updated or deleted by application code.
+
+Audit payload safety: before/after data uses **bounded, purpose-specific, redacted schemas** per audit action.
+Complete entities are never automatically serialized into audit records. Secrets, tokens, credentials, raw media or
+document content, full account/card numbers and unnecessary sensitive personal attributes are never copied into
+audit payloads; media and evidence are referenced by ID.
 
 ## 13. Idempotency
 

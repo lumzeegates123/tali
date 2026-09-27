@@ -114,3 +114,4 @@ implementation decisions are made.
 | ADR | Title | Status |
 |-----|-------|--------|
 | [ADR-001](ADR-001-aws-infrastructure.md) | AWS-native infrastructure | Accepted (2026-09-27) |
+| [ADR-002](ADR-002-application-foundation.md) | Application foundation | Accepted (2026-09-27) |

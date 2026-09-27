@@ -74,7 +74,7 @@ CREATE TABLE payments (
   id uuid PRIMARY KEY,
   business_id uuid NOT NULL REFERENCES businesses(id),
   amount_minor bigint NOT NULL CHECK (amount_minor > 0),
-  currency char(3) NOT NULL,
+  currency varchar(3) NOT NULL REFERENCES currencies(code),
   status text NOT NULL,
   reverses_id uuid NULL REFERENCES payments(id) ON DELETE RESTRICT
 );

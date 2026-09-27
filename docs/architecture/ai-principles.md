@@ -104,7 +104,8 @@ input (text / voice / image / message / event)
 
 ## 8. Privacy and data minimization
 
-- Models are accessed only through the `LanguageModel` / `SpeechToText` / `DocumentExtractor` ports.
+- Models are accessed only through the `AIProvider` / `SpeechProvider` / `DocumentProvider` ports
+  (canonical provider names in `architecture-principles.md` section 4).
 - Send the minimum data needed to the model provider. Avoid sending unrelated personal data or other customers' data.
 - Provider selection (including data retention and training-use terms) is an ADR decision.
 - Retrieval indexes, embeddings and conversation memory are tenant scoped.

@@ -19,7 +19,9 @@ messages ("I have paid"), photos of transfer screenshots.
 External events must be:
 
 - **Authenticated where supported**: verify provider signatures/HMAC, mTLS or tokens, with replay-window checks.
-- **Idempotent**: each event has a unique key, `(provider, external_event_id)` or a content hash. Processing the
+- **Idempotent**: each event has a unique key. **Provider-issued stable event/transaction identifiers are the
+  preferred deduplication source** (`(provider, external_event_id)`). A content hash is only a provider-specific
+  fallback, adopted after explicit review for that provider, never a universal deduplication rule. Processing the
   same event twice has the same effect as processing it once.
 - **Traceable**: the raw payload is stored, and every downstream proposal, transaction and reconciliation links to it.
 - **Auditable**: receipt, verification result, processing outcome and every state change are recorded with actor
