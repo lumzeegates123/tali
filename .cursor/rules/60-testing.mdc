@@ -72,6 +72,8 @@ multi-currency rejection, closed-period protection.
 
 - Invalid signature rejected; replayed event processed once; out-of-order events handled; unknown account maps to no tenant.
 - Provider adapters are faked at the port boundary; no real network calls or real credentials in tests.
+- Tests do not require AWS: infrastructure ports (`ObjectStorageProvider`, `IdentityProvider`, `QueueProvider`) use
+  test adapters, and database tests use a local/Docker PostgreSQL. AWS adapters are tested against their port contract.
 
 ## Hygiene
 

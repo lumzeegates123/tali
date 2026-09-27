@@ -47,6 +47,10 @@ unless a human explicitly asks for it.
   reconciliation and photo capture; ordered, received, invoiced and paid quantities stay distinct.
 - **Not in MVP**: ambient Store Mode, RFID, sensors, autonomous financial decisions, advanced embedded finance,
   multi-country tax engines, multi-currency accounting. Do not build or scaffold these.
+- **Infrastructure**: Tali owns its **NestJS + TypeScript** backend and runs on **AWS-native infrastructure**
+  (RDS PostgreSQL, Cognito, S3, ECS Fargate, SQS, Secrets Manager, KMS, CloudWatch, CDK in TypeScript, GitHub Actions
+  with AWS OIDC); not Supabase. AWS provides infrastructure only, never business logic. Details and deferred items:
+  `docs/decisions/ADR-001-aws-infrastructure.md` (ACCEPTED 2026-09-27); no CDK code or AWS resources until both ADR-001 and the foundation infrastructure ADR are accepted.
 
 ## 3. Where to find things
 
@@ -68,6 +72,7 @@ Canonical sources for concepts that appear in several places:
 | Inventory movement types | `docs/architecture/data-principles.md` section 4 |
 | Location model | `docs/architecture/data-principles.md` section 5 |
 | Offline sync lifecycle | `docs/architecture/architecture-principles.md` section 7 |
+| Infrastructure, environments, cloud services | `docs/decisions/ADR-001-aws-infrastructure.md` (accepted); summary in `docs/architecture/architecture-principles.md` section 11 |
 | MVP scope, order of work, open decisions | `docs/product/mvp-scope.md` |
 
 Before working in an area, read the matching rule file and architecture doc:
@@ -81,6 +86,8 @@ Before working in an area, read the matching rule file and architecture doc:
 - Banks, payment providers, WhatsApp, external events: `80-integrations.mdc`, `docs/architecture/reconciliation-principles.md`
 - Mobile, offline, devices: `00-architecture.mdc`, `70-security.mdc`, `docs/architecture/architecture-principles.md`
 - Database, schemas, migrations: `10-database.mdc`
+- Infrastructure, deployment, CI/CD, cloud resources: `docs/decisions/ADR-001-aws-infrastructure.md`, `70-security.mdc`,
+  `docs/architecture/architecture-principles.md` section 11
 - Tests: `60-testing.mdc`
 
 ## 4. Precedence and conflicts
@@ -108,9 +115,12 @@ The rule files are authoritative; this is a summary.
 1. One deployable **backend/domain application** (modular monolith). Mobile and web clients are separate by nature
    and contain no authoritative domain logic. A new independent backend/service requires an approved ADR.
 2. Business logic lives in **application/domain services**, never in controllers, route handlers or UI components.
-3. External providers (payments, banks, WhatsApp, AI models, storage, SMS) are accessed only through
-   **provider interfaces/adapters**.
+3. External providers (payments, banks, WhatsApp, AI models, storage, SMS) and cloud infrastructure services
+   (object storage, identity, queues) are accessed only through **provider interfaces/adapters**. AWS SDK calls live
+   only in infrastructure adapters.
 4. **TypeScript** is the primary application language.
+5. **AWS provides infrastructure, not business logic.** Clients talk only to Tali's API and never directly mutate
+   authoritative financial or inventory records through AWS services; no AWS credentials in mobile/web apps.
 
 **Financial integrity**
 1. AI models **never** directly modify financial records.

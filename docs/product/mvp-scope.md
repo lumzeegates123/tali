@@ -1,6 +1,7 @@
 # MVP Scope
 
-Status: **APPROVED** product decisions (approved 2026-09-27; amended 2026-09-27 after the governance audit).
+Status: **APPROVED** product decisions (approved 2026-09-27; amended 2026-09-27 after the governance audit;
+amended 2026-09-27 to record the AWS infrastructure direction).
 Sections below are APPROVED unless marked otherwise. The "Open decisions" section is **not** approved and must
 not be treated as decided. Changes to this scope must be recorded here (with date and reason), or in an ADR when
 they affect architecture. Precedence between documents is defined in `AGENTS.md` section 4.
@@ -153,6 +154,26 @@ is an immutable UUID. The receipt number format is decided in the sync ADR.
   unreconciled items are reviewed; a daily summary is produced.
 - Daily close is **not an accounting-period close** and **does not lock the ledger**.
 - Cash counting does **not** externally verify individual cash transactions.
+
+### Infrastructure direction
+
+Approved 2026-09-27. Detailed rationale, security direction and deferred items are in
+`docs/decisions/ADR-001-aws-infrastructure.md` (status: ACCEPTED 2026-09-27). Infrastructure implementation
+(CDK code, AWS accounts or resources) does not begin until both ADR-001 and the foundation infrastructure ADR are accepted.
+
+- Tali **builds and owns its application backend**: **NestJS + TypeScript** (the modular monolith and its worker process).
+- Tali runs on **AWS-native infrastructure** and does **not** use Supabase as its infrastructure foundation.
+- **AWS provides infrastructure only**; authoritative business logic stays in the NestJS/domain application. Mobile
+  and web talk to Tali's API and never directly mutate authoritative financial or inventory records through AWS services.
+- Planned services: Amazon RDS for PostgreSQL, Amazon Cognito (authentication), Amazon S3, Amazon ECS on Fargate
+  (API and worker), Amazon ECR, Amazon SQS, AWS Secrets Manager, AWS KMS, Amazon CloudWatch, AWS CDK in TypeScript
+  (`infrastructure/cdk/`), GitHub Actions with AWS OIDC (no long-lived AWS keys), Amazon Route 53, AWS Certificate
+  Manager; AWS Amplify Hosting is the preferred initial candidate for the Next.js web app.
+- Not initially: Redis/Amazon ElastiCache (only on a concrete requirement), Amazon SES (when email workflows are
+  required), LocalStack (only on a demonstrated requirement).
+- Environments: isolated local, development, staging and production; no shared authoritative databases; long-term
+  AWS account separation supported. Local development uses a local API, web and Expo app with Docker PostgreSQL and
+  development/test adapters, without requiring AWS for every request.
 
 ## Scope tiers
 

@@ -130,7 +130,14 @@ Flag:
 ## Also flag
 
 - Business logic in controllers, route handlers, webhook handlers or UI components (`00-architecture.mdc`).
-- Vendor SDK imports outside `infrastructure/` adapters.
+- Vendor SDK imports outside `infrastructure/` adapters, including AWS SDK (`@aws-sdk/*`) imports in domain,
+  application, controller or client code.
+- Business logic placed in AWS services (Cognito triggers, database triggers/procedures, S3/SQS event handlers,
+  functions outside the NestJS/domain application) instead of domain/application services (`00-architecture.mdc`).
+- AWS credentials in mobile/web code or bundles; long-lived AWS access keys in CI configuration instead of OIDC;
+  publicly accessible S3 buckets or production RDS; wildcard IAM permissions without justification (`70-security.mdc`).
+- Tenant authorization derived from identity-provider (Cognito) claims alone instead of Tali's membership data.
+- Security-weakening development/test adapters that can be enabled in deployed environments.
 - Stock quantity set by overwriting a field instead of recording an inventory movement.
 - New microservice, separate deployable, datastore or provider without an ADR in `docs/decisions/`.
 - Missing schema validation on external input (HTTP, webhooks, files, AI output).

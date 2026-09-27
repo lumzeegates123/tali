@@ -2,7 +2,7 @@
 
 Enforced by `.cursor/rules/00-architecture.mdc`. This document explains the reasoning and the intended shape
 of the system. Specific technology choices (framework, database, hosting, queue) are made through ADRs in
-`docs/decisions/`.
+`docs/decisions/`. The planned infrastructure direction (NestJS backend on AWS) is summarized in section 11.
 
 ## 1. Modular monolith first
 
@@ -77,11 +77,14 @@ infrastructure/  repositories, database mapping, provider adapters, queue/outbox
 
 ## 4. Provider interfaces and adapters
 
-Every external dependency is behind a port defined in Tali's terms:
+Every external dependency, including cloud infrastructure services, is behind a port defined in Tali's terms
+(names indicative):
 
-- `PaymentProvider`, `BankFeedProvider`, `MessagingChannel` (WhatsApp, SMS), `LanguageModel`,
-  `SpeechToText`, `DocumentExtractor`, `ObjectStorage`, `EmailSender`, etc.
-- Adapters live in `infrastructure/`, translate vendor payloads to internal types, and contain all vendor SDK usage.
+- Infrastructure: `ObjectStorageProvider`, `IdentityProvider`, `QueueProvider` (and an email port when email is needed).
+- Providers: `PaymentProvider`, `BankingProvider`, `MessagingProvider` (WhatsApp, SMS), `SpeechProvider`,
+  `DocumentProvider`, `AIProvider`.
+- Adapters live in `infrastructure/`, translate vendor payloads to internal types, and contain all vendor SDK usage
+  (including the AWS SDK).
 - This keeps domain code testable, allows switching providers, and contains the blast radius of vendor changes.
 - Adding a provider or a regulated financial partner requires an ADR.
 
@@ -180,3 +183,34 @@ Principles:
 - Architecture and rule changes are authorized by either an **accepted ADR**, or an **explicitly APPROVED product
   decision** (recorded in `docs/product/mvp-scope.md`) where the issue is product scope rather than architecture.
 - Document precedence and conflict handling are defined in `AGENTS.md` section 4.
+
+## 11. Infrastructure and environments
+
+Direction approved 2026-09-27 (`docs/product/mvp-scope.md`, Infrastructure direction); rationale, security direction
+and deferred items in `docs/decisions/ADR-001-aws-infrastructure.md` (ACCEPTED 2026-09-27). Nothing is provisioned
+until both ADR-001 and the foundation infrastructure ADR are accepted.
+
+- **Tali owns its backend.** The modular monolith is a **NestJS + TypeScript** application; its background worker
+  is a separate process of the same codebase.
+- **AWS is infrastructure, not the domain.** Planned services: Amazon RDS for PostgreSQL (system of record),
+  Amazon Cognito (authentication only), Amazon S3 (private objects), Amazon ECS on Fargate (API and worker),
+  Amazon ECR, Amazon SQS (transport; the outbox in PostgreSQL stays the source of truth), AWS Secrets Manager,
+  AWS KMS, Amazon CloudWatch, Amazon Route 53, AWS Certificate Manager, and AWS Amplify Hosting as the preferred
+  initial candidate for the Next.js web app.
+- **No business logic in AWS services** (identity triggers, database triggers/procedures as business rules, queue
+  or storage event handlers, functions outside the application). Clients talk only to Tali's API and never
+  mutate authoritative records through AWS services.
+- **Identity versus authorization.** Cognito proves who the user is. Business membership, roles, permissions and
+  device status live in Tali's `identity` module and are checked server-side for every request and synced command.
+  Tali user IDs are Tali UUIDs; the identity provider's subject is stored as an external reference.
+- **Portability.** AWS SDK usage is confined to infrastructure adapters behind the ports in section 4.
+- **Infrastructure as code.** AWS CDK in TypeScript, expected under `infrastructure/cdk/`; every infrastructure change
+  is version controlled and reviewed. CI/CD uses GitHub Actions with AWS OIDC, never long-lived AWS access keys.
+- **Environments.** Isolated `local`, `development`, `staging` and `production`. Development, staging and
+  production never share authoritative databases; the design supports separate AWS accounts per environment.
+- **Local development** runs the NestJS API, the Next.js web app and the Expo mobile app locally with PostgreSQL in
+  Docker. Cloud-dependent ports have development/test adapters where practical; security-weakening dev adapters
+  cannot be enabled in deployed environments. Local development and tests do not require AWS for every request.
+  LocalStack is not used initially.
+- **Deferred** until a concrete requirement and ADR: Redis/Amazon ElastiCache, Amazon SES, LocalStack. Network
+  topology and other operational details are decided in the foundation infrastructure ADR.

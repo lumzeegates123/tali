@@ -27,20 +27,21 @@ If unsure, write one. ADRs are short.
 
 ## Process
 
-1. Copy the template below into a new file `NNNN-short-title.md` (next sequential number, zero-padded to 4 digits,
-   kebab-case title), e.g. `0001-record-architecture-decisions.md`.
-2. Set status to `Proposed`. Open a PR containing only the ADR (or the ADR plus a spike).
+1. Copy the template below into a new file `ADR-NNN-short-title.md` (next sequential number, zero-padded to 3 digits,
+   kebab-case title), e.g. `ADR-001-aws-infrastructure.md`.
+2. Set status to `Proposed` (may be written `PROPOSED FOR APPROVAL`). Open a PR containing only the ADR (or the ADR
+   plus a spike, plus the governance-document updates the ADR requires).
 3. A human maintainer reviews and approves. AI agents may draft ADRs but **may not mark them `Accepted`**.
 4. On approval, set status to `Accepted` with the date. Implementation may begin.
 5. ADRs are immutable once accepted. To change a decision, write a new ADR that supersedes it, and update the old
-   one's status to `Superseded by NNNN`.
+   one's status to `Superseded by ADR-NNN`.
 
-Statuses: `Proposed`, `Accepted`, `Rejected`, `Deprecated`, `Superseded by NNNN`.
+Statuses: `Proposed`, `Accepted`, `Rejected`, `Deprecated`, `Superseded by ADR-NNN`.
 
 ## Template
 
 ```markdown
-# NNNN. Title
+# ADR-NNN. Title
 
 - Status: Proposed
 - Date: YYYY-MM-DD
@@ -77,14 +78,20 @@ a rule, which rule and why).
 ## Anticipated early ADRs
 
 These decisions are expected before or during the first build phase. They are listed for planning only; none has
-been made yet.
+been made yet unless an ADR is listed in the index below.
 
-- 0001 Record architecture decisions (adopt this process)
+Cloud infrastructure, the backend framework (NestJS + TypeScript), the database engine (PostgreSQL on Amazon RDS)
+and the authentication provider (Amazon Cognito) are decided in ADR-001 (accepted 2026-09-27). AWS provisioning
+additionally requires the foundation infrastructure ADR to be accepted.
+
+- Record architecture decisions (adopt this process)
+- Foundation infrastructure (VPC/network topology, AWS Region, account structure, web hosting confirmation, RDS,
+  Cognito, SQS, KMS, observability and CI/CD details deferred by ADR-001 section 12)
 - Monorepo tooling and repository layout
-- Backend framework and runtime
-- Database engine (relational, ACID) and data access layer
+- Backend runtime version
+- Data access layer (ORM/query layer) on PostgreSQL
 - Money and decimal representation
-- Authentication and authorization model (roles, permissions, offline permissions)
+- Authorization model (roles, permissions, offline permissions) and its mapping to the authentication provider
 - Ledger design and default chart of accounts (requires accounting review)
 - Configurable tax treatment model (requires accounting review; no hardcoded jurisdiction rules)
 - Inventory valuation method
@@ -106,4 +113,4 @@ implementation decisions are made.
 
 | ADR | Title | Status |
 |-----|-------|--------|
-| _none yet_ | | |
+| [ADR-001](ADR-001-aws-infrastructure.md) | AWS-native infrastructure | Accepted (2026-09-27) |

@@ -7,7 +7,10 @@ alwaysApply: false
 # Database Rules
 
 Full rationale: `docs/architecture/data-principles.md`. Database technology is selected by ADR
-(a relational, ACID-compliant database is required for financial data).
+(a relational, ACID-compliant database is required for financial data). Planned engine: **PostgreSQL** (Amazon RDS in
+deployed environments, Docker PostgreSQL locally), per `docs/decisions/ADR-001-aws-infrastructure.md` (accepted).
+Development, staging and production never share an authoritative database. Business rules are not implemented as
+database triggers or procedures; constraints enforcing invariants are encouraged.
 
 ## Tenant scoping
 

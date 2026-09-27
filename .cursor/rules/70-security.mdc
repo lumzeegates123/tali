@@ -44,6 +44,24 @@ alwaysApply: true
 - **Minimize local data exposure**: store only what offline operation needs, encrypted at rest where the platform
   allows; no secrets or long-lived credentials in plain local storage.
 
+## Cloud infrastructure (AWS)
+
+Direction in `docs/decisions/ADR-001-aws-infrastructure.md` (accepted); exact topology in the foundation infrastructure ADR.
+
+- **No AWS credentials in mobile or web apps.** Clients authenticate and call Tali's API; they never access AWS
+  services with credentials or mutate authoritative records through them.
+- **No long-lived AWS access keys in CI.** GitHub Actions assumes narrowly scoped roles via AWS OIDC.
+- **Least-privilege IAM roles** per workload (separate API and worker task roles); no wildcard resource grants
+  without review.
+- **Secrets** are retrieved server-side from AWS Secrets Manager (environment variables/local files only in local
+  development); never baked into images, IaC, CI configuration or client bundles.
+- **RDS is not publicly exposed in production. S3 buckets are private by default** (public access blocked).
+- **Encryption at rest** with AWS-managed or Tali-managed KMS keys as appropriate; **HTTPS** for all external traffic.
+- **Environments are isolated**: no shared authoritative databases across development, staging and production;
+  production data is never copied to lower environments without an approved, anonymized process.
+- Development/test adapters that weaken security (e.g. a local identity adapter) must be impossible to enable in
+  deployed environments.
+
 ## Files and uploads
 
 - Validate type and size; store with tenant-scoped paths; serve via short-lived signed URLs.

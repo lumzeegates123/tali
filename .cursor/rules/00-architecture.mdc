@@ -19,7 +19,8 @@ Full rationale: `docs/architecture/architecture-principles.md`.
 4. **Domain logic lives in application/domain services.** Invariants (balanced postings, valid state
    transitions, stock rules) are enforced there, never only in the UI or database client.
 5. **External providers are reached only through interfaces/adapters** owned by the calling module
-   (payments, banks, WhatsApp, AI/LLM, speech, OCR, storage, email/SMS). Domain code never imports a vendor SDK.
+   (payments, banks, WhatsApp, AI/LLM, speech, OCR, storage, email/SMS, and cloud infrastructure such as object
+   storage, identity and queues). Domain code never imports a vendor SDK, including the AWS SDK.
 6. **TypeScript** is the primary language, with `strict` mode. No `any` in domain code; use `unknown` + validation.
 
 ## Surfaces and offline
@@ -36,6 +37,30 @@ Full rationale: `docs/architecture/architecture-principles.md`.
   default location per business, no branch management, no consolidated multi-location reporting, no transfers.
 - Post-MVP items (ambient Store Mode, RFID, sensors, autonomous financial decisions, advanced embedded finance,
   multi-country tax, multi-currency accounting) must not be built or scaffolded. See `docs/product/mvp-scope.md`.
+
+## Infrastructure (AWS)
+
+Direction approved 2026-09-27; details in `docs/decisions/ADR-001-aws-infrastructure.md` (ACCEPTED 2026-09-27)
+and `docs/architecture/architecture-principles.md` section 11. Do not create CDK code or provision AWS resources
+until both ADR-001 and the foundation infrastructure ADR are accepted (a proposed ADR is not sufficient).
+
+- The backend is **NestJS + TypeScript**, owned by Tali. **AWS provides infrastructure only** (RDS PostgreSQL,
+  Cognito, S3, ECS Fargate, ECR, SQS, Secrets Manager, KMS, CloudWatch, Route 53, ACM; Amplify Hosting is the
+  preferred candidate for the Next.js web app).
+- **No business logic in AWS services**: no business rules in Cognito triggers, database triggers/procedures,
+  SQS/S3 event handlers or functions outside the NestJS/domain application.
+- **Clients talk only to Tali's API.** Mobile and web never hold AWS credentials and never directly mutate
+  authoritative financial or inventory records through AWS services.
+- **AWS SDK calls live only in `infrastructure/` adapters** behind ports such as `ObjectStorageProvider`,
+  `IdentityProvider` and `QueueProvider`.
+- **Cognito authenticates; Tali authorizes.** Business membership, roles, permissions and device status come from
+  Tali's database, never from identity-provider claims alone.
+- **SQS is transport, not the source of truth.** Pending side effects are recorded in the PostgreSQL outbox;
+  consumers are idempotent (at-least-once delivery).
+- Infrastructure is code: AWS CDK in TypeScript under `infrastructure/cdk/`. Environments `local`, `development`,
+  `staging`, `production` never share authoritative databases.
+- Local development and tests must not require AWS for every request: Docker PostgreSQL plus development/test
+  adapters. No Redis/ElastiCache, SES or LocalStack without a concrete requirement and ADR.
 
 ## Layering (per module)
 
