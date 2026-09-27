@@ -1,0 +1,61 @@
+---
+description: External integration and webhook rules for Tali - provider adapters; authenticated, idempotent, traceable, auditable events; evidence-first reconciliation.
+globs: **/integrations/**,**/adapters/**,**/providers/**,**/webhooks/**,**/*webhook*.ts,**/*adapter*.ts,**/*provider*.ts,**/reconciliation/**
+alwaysApply: false
+---
+
+# Integration Rules
+
+Covers banks, payment providers, mobile money, WhatsApp, AI/LLM, speech, OCR, email/SMS, storage,
+and future regulated financial partners. Full rationale: `docs/architecture/reconciliation-principles.md`.
+
+## Adapters
+
+- Every provider sits behind a port (interface) defined by the consuming module; the adapter lives in `infrastructure/`.
+- Domain/application code never imports vendor SDKs or vendor types. Map provider payloads to internal types in the adapter.
+- Adapters handle timeouts, retries with backoff (only for idempotent calls), and map errors to internal error types.
+- Adding a new provider or regulated partner requires an ADR.
+
+## Channels
+
+- **WhatsApp is an adapter** onto the same backend, application services and AI proposal pipeline. It verifies the
+  sender, maps them to a business membership, and converts messages into the same commands/proposals used by the
+  app. No separate business logic, permissions or data store.
+- MVP: **one payment-provider integration** (provider chosen by ADR). Bank feeds come later.
+
+## Inbound events (webhooks, polling, statement imports, WhatsApp messages)
+
+External events must be **authenticated, idempotent, traceable and auditable**:
+
+1. **Authenticate**: verify signature/HMAC/mTLS/token where the provider supports it, with constant-time
+   comparison and timestamp/replay-window checks. Reject unverified events.
+2. **Persist raw first**: store the raw payload, provider, external event ID, received-at, verification result,
+   and resolved `business_id` (from stored connection config, never from payload fields alone).
+3. **Idempotent**: `UNIQUE (provider, external_event_id)` (or a content hash when no ID exists).
+   Duplicates are acknowledged, not reprocessed.
+4. **Acknowledge fast, process async** via a queue/outbox with an idempotent consumer.
+5. **Traceable**: every downstream record links back to the raw event ID; correlation IDs flow through logs.
+6. **Auditable**: the processing outcome (accepted, duplicate, rejected, failed) is recorded.
+7. Handle out-of-order and late events; never assume delivery order.
+
+## Evidence, not truth
+
+An inbound event is **OBSERVED evidence**. By itself it does not settle a receivable, post revenue, or
+change inventory. Terminology (OBSERVED, PROPOSED, CONFIRMED, EXTERNALLY_VERIFIED, RECONCILED, DISPUTED,
+CASH_COUNTED) is defined canonically in `docs/architecture/reconciliation-principles.md` section 2.
+
+- An authenticated event from a supported provider/bank can make a fact **EXTERNALLY_VERIFIED**. Customer claims,
+  WhatsApp messages and screenshots are `PAYMENT_CLAIM_EVIDENCE` and never externally verify anything.
+- Deterministic matching may **propose** exact/high-confidence matches. **MVP: a human confirms** before any match
+  settles or allocates a balance. AI never confirms or settles.
+- Automatic deterministic confirmation is allowed only later through an accepted ADR after measured validation.
+
+## Outbound calls that move money or commit the business
+
+- Require an idempotency key sent to the provider, a persisted outbound request record *before* the call,
+  and a status resolved by provider confirmation, not by the HTTP response alone.
+- Never blindly retry a non-idempotent money movement. Unknown outcomes go to a `pending_confirmation` state.
+
+## Credentials
+
+- Per-business provider credentials/tokens are encrypted, tenant scoped, least-privilege, rotatable, and never logged.

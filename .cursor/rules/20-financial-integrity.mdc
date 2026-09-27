@@ -1,0 +1,107 @@
+---
+description: Financial and inventory integrity rules for Tali - deterministic services, no hard deletes, reversal-based void, audit, balanced ledger from the first sale, safe money arithmetic, inventory movements, settlement rules.
+alwaysApply: true
+---
+
+# Financial Integrity Rules
+
+Applies to sales, payments, receivables, expenses, restocking, purchasing, ledger, reconciliation, inventory,
+cash sessions, and anything that changes what a business owns or owes.
+Rationale: `docs/architecture/data-principles.md`. Terminology (CONFIRMED, EXTERNALLY_VERIFIED, RECONCILED, ...):
+`docs/architecture/reconciliation-principles.md` section 2.
+
+## Mandatory
+
+1. **AI models never directly modify financial records.** AI authority is defined in `40-ai-safety.mdc`.
+2. **Financial operations go through deterministic domain services.** Same input + same state = same result.
+   No LLM calls, randomness, or unvalidated external data inside posting logic.
+3. **No silent hard deletes** of financial records: not via ORM `delete`, raw SQL, cascades, or cleanup jobs.
+4. **Corrections use reversal or adjustment transactions** that reference the original and carry a reason.
+5. **Every sensitive financial mutation writes an audit record** in the same transaction:
+   tenant, actor (user / staff / system / integration / AI proposal + approving user), device and location where
+   relevant, action, entity, before/after, reason, source channel, correlation/idempotency ID, timestamp.
+6. **Ledger postings must balance**: sum(debits) = sum(credits) per currency per journal entry.
+   Enforced in the domain service and verified by tests. Never post a single-sided entry.
+7. **No JavaScript floating-point money.** No `number` arithmetic on fractional amounts, no `parseFloat`,
+   no `toFixed` for money, no `Math.round(x * 100)` conversions.
+8. **Use integer minor units** (`bigint`) or the approved `Money` value object. Money always carries currency.
+   Operations involving different currencies are **rejected**; there is no currency conversion in the MVP.
+
+## Money handling
+
+```typescript
+// BAD
+const total = items.reduce((s, i) => s + i.price * i.qty, 0); // floats
+const tax = total * taxRate;                                  // float arithmetic
+
+// GOOD
+const total = Money.sum(items.map(i => i.unitPrice.multiply(i.quantity)), business.currency);
+// Tax treatment comes from approved business configuration; never hardcode a rate.
+const tax = total.percentage(TaxRate.fromBasisPoints(taxTreatment.rateBps), taxTreatment.rounding);
+```
+
+- Rounding mode is explicit at the call site. Allocation/splitting must not lose or create minor units
+  (use an allocate function that distributes remainders).
+- Parse money from integer minor units or decimal strings at the boundary; reject ambiguous input.
+- Percentages and rates are integers (basis points) or exact decimals, never floats.
+
+## Currency, pricing and tax
+
+- Currencies are ISO 4217 codes. **One currency per business in the MVP.**
+- **Never hardcode `NGN`** (or any currency, or `100` minor units) in domain logic. Take currency from the business or
+  the amount; `NGN` may appear only in configuration, seed data or pilot-market defaults.
+- **Multi-currency accounting and FX conversion are post-MVP.** Do not implement them.
+- Transaction lines store **price snapshots** (unit price, cost where known, discount, tax treatment). Never
+  recompute past transactions from current prices.
+- Discounts are simple (fixed amount or basis points), permission-checked and snapshotted. No promotion engine.
+- **Never invent or hardcode tax rules or rates** (Nigerian or otherwise). Tax treatment comes from approved business
+  configuration. Pilot tax/accounting configuration requires accounting review before production use.
+
+## Ledger from the first sale
+
+- The ledger posting foundation exists **before or together with the first sales implementation** and before any
+  other feature with accounting effects (e.g. restock with cost).
+- Sales and payments post correct, deterministic, balanced entries from their first production-capable release.
+  Never ship a financial feature "now" with accounting effects "later".
+
+## Void, cancel and reversal
+
+- A posted financial transaction is **never made to disappear through a status-only void**. Void/cancel of a posted
+  transaction creates the appropriate reversal/compensating records (ledger, inventory, receivable/payable) that
+  reference the original, with reason and audit trail. The original remains.
+- A draft/unposted record or proposal may be cancelled by status change with audit, without a financial reversal.
+- Posted amounts are immutable. Changing an amount means reverse + re-post.
+
+## Inventory
+
+- Every stock change is an **inventory movement** whose type comes from the canonical list in
+  `docs/architecture/data-principles.md` section 4. Do not invent types. `TRANSFER` is post-MVP.
+- Every movement has a `location_id` (location model: `data-principles.md` section 5; one default location in MVP).
+- Never "set" stock by overwriting a quantity field. A stock count produces a `COUNT_CORRECTION` for the difference.
+- Restock uses `PURCHASE_RECEIPT` (quantity, unit/pack, unit cost where known, source/reference). A stock purchase is
+  inventory acquisition, **not automatically an operating expense**; accounting follows approved posting rules.
+- Negative stock policy is explicit per business/product and enforced in the domain service.
+- Purchasing keeps **ordered, received, invoiced and paid quantities distinct** per line
+  (`data-principles.md` section 8). Never collapse or overwrite them to force agreement.
+
+## Settlement, confirmation and close
+
+- Financial documents follow explicit state machines (e.g. `draft -> posted -> reversed`). Invalid transitions throw.
+- **Settling a receivable/payable requires a CONFIRMED payment transaction.** Observed evidence, customer claims,
+  screenshots (`PAYMENT_CLAIM_EVIDENCE`) and AI proposals alone never settle balances.
+- **MVP: a human confirms** before any external payment match settles or allocates a balance. Deterministic matching
+  may only propose. Automatic deterministic confirmation needs a later accepted ADR after measured validation.
+- Daily close is an **operational close** (cash counted and compared to expected cash). It is not an
+  accounting-period close and does not lock the ledger. Cash counting does not externally verify cash transactions.
+- Closed accounting periods are not modified; corrections post in an open period.
+
+## Identity and idempotency
+
+- The true transaction identifier is an **immutable UUID**. Human receipt numbers are display identifiers
+  (business/device-scoped when issued offline), never the database identity.
+- Every financial mutation entry point accepts an idempotency key or natural dedupe key. Retries must not
+  double-post, double-charge, or double-move stock.
+- Offline commands use their client-generated UUID as idempotency key. Credible offline business events that conflict
+  with current server state are preserved as `NEEDS_ATTENTION` with the amounts actually charged; they are never
+  silently dropped or recalculated. Rejection only for the reasons in `docs/architecture/architecture-principles.md`
+  section 7.

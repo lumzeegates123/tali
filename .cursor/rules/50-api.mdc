@@ -1,0 +1,56 @@
+---
+description: API, controller and endpoint rules for Tali - thin handlers, validation, authn/authz, idempotency, error handling.
+globs: **/*controller*.ts,**/*route*.ts,**/*router*.ts,**/*handler*.ts,**/api/**,**/routes/**,**/interface/**,**/webhooks/**
+alwaysApply: false
+---
+
+# API Rules
+
+## Handlers are thin
+
+A handler does exactly: authenticate, resolve `BusinessContext` (authorize tenant + permission),
+validate input, call one application service, map result/errors. No business logic and no direct
+repository/ORM access for business data (see `00-architecture.mdc`).
+
+## Authentication and authorization
+
+- Every business resource endpoint requires authentication and an explicit permission check.
+- Default deny. Public endpoints are explicitly marked and reviewed.
+- `business_id` in path/body/header is a *claim* to be verified, never a fact (see `30-multitenancy.mdc`).
+- Return `404` (not `403`) for resources in another tenant to avoid disclosing existence.
+
+## Input validation
+
+- Validate every request body, query, path param and header with a schema (e.g. Zod) at the boundary.
+- Reject unknown fields on mutation endpoints. Enforce max lengths, sizes and array bounds.
+- Money arrives as integer minor units or a decimal **string**, never a JSON float. Currency is required.
+
+## Idempotency
+
+- Mutating endpoints that create financial/inventory effects require an `Idempotency-Key` header
+  (or a natural dedupe key). Store key + request hash + response. Replays return the original result;
+  the same key with a different payload returns `409`/`422`.
+
+## Responses and errors
+
+- Consistent error shape: `{ error: { code, message, details? } }`. No stack traces, SQL, or secrets in responses.
+- Use explicit response DTOs, not raw DB rows. Do not expose fields the caller is not authorized to see.
+- Monetary values in responses: integer minor units + currency (optionally a formatted string for display).
+
+## Other
+
+- Pagination is mandatory for list endpoints; cap page size.
+- Rate-limit authentication, OTP, AI and public endpoints.
+- Version the public API; breaking changes need an ADR.
+- Webhook endpoints follow `80-integrations.mdc` (verify signature, dedupe, persist, then process async).
+
+```typescript
+// GOOD
+router.post('/businesses/:businessId/expenses', async (req, res) => {
+  const ctx = await requireBusinessContext(req, { permission: 'expenses:create' });
+  const input = CreateExpenseInput.strict().parse(req.body);
+  const key = requireIdempotencyKey(req);
+  const result = await expenseService.createExpense(ctx, input, { idempotencyKey: key });
+  res.status(201).json(toExpenseDto(result));
+});
+```

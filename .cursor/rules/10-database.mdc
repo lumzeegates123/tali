@@ -1,0 +1,78 @@
+---
+description: Database, schema, migration and repository rules for Tali - tenant keys, append-only financial data, money/quantity columns, inventory movements, transactions.
+globs: **/*.sql,**/migrations/**,**/*.prisma,**/schema/**,**/*schema*.ts,**/*repository*.ts,**/*.repo.ts,**/infrastructure/**
+alwaysApply: false
+---
+
+# Database Rules
+
+Full rationale: `docs/architecture/data-principles.md`. Database technology is selected by ADR
+(a relational, ACID-compliant database is required for financial data).
+
+## Tenant scoping
+
+- Every business-owned table has a non-null `business_id` foreign key, indexed.
+- Unique constraints on business data include `business_id` (e.g. `UNIQUE (business_id, sku)`).
+- Repository methods take tenant context and always filter by `business_id`. No "find by id" without it.
+- Row-level security or equivalent is encouraged as defense in depth, never as the only control.
+
+## Money and quantities
+
+- Money columns: integer minor units (`BIGINT`) plus a `currency` column (ISO 4217). Never `FLOAT`/`REAL`/`DOUBLE`.
+- If a decimal type is approved by ADR, use exact `NUMERIC` with fixed scale, never binary floating point.
+- Stock quantities: integer base units, or exact `NUMERIC` for fractional goods (weight/volume). Never float.
+
+## Financial and inventory records are append-only
+
+- Posted ledger entries, payments, sales, receipts, inventory movements and audit records are **never
+  updated in place for amounts and never hard-deleted**. No `DELETE`, `TRUNCATE` or cascading delete on them.
+- Corrections are new rows (reversal/adjustment) referencing the original (`reverses_id`, `adjusts_id`).
+- Status changes on these records follow an explicit state machine and are audited.
+- Unposted drafts may be discarded only via a status (e.g. `discarded`) with an audit record.
+- Void/cancel of a **posted** record is never a status-only change; it requires reversal/compensating rows.
+- Foreign keys to financial records use `ON DELETE RESTRICT`.
+- Audit tables are insert-only for the application database role.
+
+## Inventory and locations
+
+- Stock is an `inventory_movements` table (type, quantity delta, unit/pack, unit cost where known, product
+  variant, `location_id` NOT NULL, source document/reference, actor, reason, timestamp). Movement types come only
+  from the canonical list in `docs/architecture/data-principles.md` section 4. On-hand is derived from movements.
+- A cached `quantity_on_hand` is allowed only if it is updated in the **same transaction** as the movement
+  and can be rebuilt from movements.
+- Location scoping follows `data-principles.md` section 5: sales (where operationally applicable), cash sessions,
+  purchasing/receiving and relevant staff actions carry `location_id`. Locations are tenant scoped.
+
+## Integrity
+
+- Write a mutation, its ledger postings, its inventory movements and its audit record in **one DB transaction**.
+- Enforce invariants with constraints where possible (NOT NULL, CHECK, FK, UNIQUE) in addition to domain code.
+- Idempotency: store idempotency keys / external event IDs with a UNIQUE constraint
+  (e.g. `UNIQUE (business_id, idempotency_key)`, `UNIQUE (provider, external_event_id)`).
+- Use row locks or optimistic versioning where concurrent writes could oversell stock or double-settle a balance.
+- Timestamps in UTC (`timestamptz` or equivalent). Store the business's time zone separately.
+- IDs: immutable UUID/ULID primary keys. Offline-created records keep their client-generated UUID.
+  Human document numbers (e.g. receipt numbers, business/device-scoped when issued offline) are separate display
+  columns, unique within their scope, and never the primary key.
+
+## Migrations
+
+- Forward-only and reviewed. Never edit a migration that has been applied to a shared environment.
+- No migration may drop or rewrite financial/audit history. Data backfills on financial tables need an ADR or explicit approval.
+- Never put secrets or real customer data in migrations or seeds.
+
+```sql
+-- BAD
+CREATE TABLE payments (id serial, business_id int, amount float);
+DELETE FROM payments WHERE id = 42;
+
+-- GOOD
+CREATE TABLE payments (
+  id uuid PRIMARY KEY,
+  business_id uuid NOT NULL REFERENCES businesses(id),
+  amount_minor bigint NOT NULL CHECK (amount_minor > 0),
+  currency char(3) NOT NULL,
+  status text NOT NULL,
+  reverses_id uuid NULL REFERENCES payments(id) ON DELETE RESTRICT
+);
+```

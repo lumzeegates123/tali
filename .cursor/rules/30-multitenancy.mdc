@@ -1,0 +1,55 @@
+---
+description: Multitenancy and tenant isolation rules for Tali - business_id scoping, server-side authorization, no cross-tenant access.
+alwaysApply: true
+---
+
+# Multitenancy Rules
+
+A **tenant is a business**. Users may belong to multiple businesses with different roles.
+**Cross-tenant data access is a critical security failure.** Treat it like leaking money.
+
+## Mandatory
+
+1. **Every business-owned record is tenant scoped** with a non-null `business_id`.
+2. **Never trust a `business_id` from the client** (body, query, header, path, WhatsApp message, AI output)
+   without verifying that the authenticated actor is an active member of that business with the required permission.
+3. Tenant context is resolved **server-side** once per request/job/event into a `BusinessContext`
+   (`businessId`, `actor`, `permissions`) and passed explicitly to application services.
+4. Every query on business data filters by `businessId` from `BusinessContext`. If a record is looked up by ID
+   first, ownership must be checked before any data is returned or changed.
+5. Related IDs in input (customer, product, supplier, account) must be verified to belong to the same business.
+
+## Everywhere, not just HTTP
+
+- **Background jobs, queues, outbox events**: carry `businessId` and re-validate it on consumption.
+- **Webhooks / integrations**: map the external account to a business via stored connection configuration,
+  never via payload fields alone.
+- **AI**: retrieval, tool calls, memory, embeddings and prompts are scoped to one business. An AI tool can
+  never access data the invoking user cannot access.
+- **Caches, file storage, search indexes, vector stores**: keys/paths/filters include `businessId`.
+- **Reports and analytics**: never aggregate across tenants in tenant-facing output. Cross-tenant analytics
+  for Tali itself requires an ADR, anonymization and restricted access.
+- **Admin/support access**: explicit, least-privilege, time-bound, and audited.
+- **Mobile devices and offline sync**: local stores and queues are partitioned by business and user; synced commands
+  are authorized against the **current** server-side membership and device status, never the `businessId` or clock
+  on the device alone. Device rules: `70-security.mdc`.
+- **Locations** are business-owned records; a `location_id` in input must be verified to belong to the same business.
+
+## Examples
+
+```typescript
+// BAD: trusts client businessId and uses an unscoped lookup
+const sale = await saleRepo.findById(req.params.id);
+await salesService.void(req.body.businessId, sale.id);
+
+// GOOD
+const ctx = await requireBusinessContext(req, { permission: 'sales:void' });
+const sale = await saleRepo.findById(ctx.businessId, req.params.id); // null if other tenant
+if (!sale) throw new NotFoundError();                                  // do not reveal existence
+await salesService.voidSale(ctx, sale.id, input.reason);
+```
+
+## Testing
+
+Every endpoint, service and job touching business data needs a test proving that an actor from business A
+cannot read or mutate business B's data (see `60-testing.mdc`).

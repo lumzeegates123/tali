@@ -1,0 +1,76 @@
+---
+description: Core architecture rules for Tali - modular monolith, layering, domain services, provider adapters, TypeScript.
+alwaysApply: true
+---
+
+# Architecture Rules
+
+Full rationale: `docs/architecture/architecture-principles.md`.
+
+## Mandatory
+
+1. **Modular monolith first.** One deployable **backend/domain application** composed of well-bounded modules
+   (e.g. `identity`, `business`, `catalog`, `inventory`, `sales`, `customers`, `receivables`, `payments`,
+   `expenses`, `purchasing`, `tax`, `ledger`, `daily-close`, `sync`, `reconciliation`, `ai`, `audit`).
+   Client applications (Android/mobile, web) are separate by nature and **must not contain authoritative domain logic**.
+2. **A new independent backend/service, or a new datastore, requires an approved ADR** in `docs/decisions/`.
+3. **No business logic in controllers, route handlers, webhook handlers, jobs, or UI components.**
+   They parse input, resolve the authenticated actor/tenant, call an application service, and map the result.
+4. **Domain logic lives in application/domain services.** Invariants (balanced postings, valid state
+   transitions, stock rules) are enforced there, never only in the UI or database client.
+5. **External providers are reached only through interfaces/adapters** owned by the calling module
+   (payments, banks, WhatsApp, AI/LLM, speech, OCR, storage, email/SMS). Domain code never imports a vendor SDK.
+6. **TypeScript** is the primary language, with `strict` mode. No `any` in domain code; use `unknown` + validation.
+
+## Surfaces and offline
+
+- Surfaces: Android-first **React Native / Expo** mobile app (primary), web app (secondary: configuration, imports,
+  reporting, reconciliation, admin review), WhatsApp (channel adapter). iOS later from the same codebase.
+- Every surface is a client of the **same backend and domain services**. WhatsApp is an adapter, never a separate
+  implementation. Clients hold no authoritative business rules.
+- Mobile is offline-capable for permitted operations: it queues durable **commands** with client-generated UUIDs;
+  the backend is the system of record and re-validates on sync. Credible offline business events are preserved
+  (`NEEDS_ATTENTION` on conflict), never silently dropped. UI shows *saved locally*, *synced to Tali*,
+  *needs attention*, *externally verified* distinctly. See `docs/architecture/architecture-principles.md` section 7.
+- Tali is **location-aware from day one** (`docs/architecture/data-principles.md` section 5); the MVP has one
+  default location per business, no branch management, no consolidated multi-location reporting, no transfers.
+- Post-MVP items (ambient Store Mode, RFID, sensors, autonomous financial decisions, advanced embedded finance,
+  multi-country tax, multi-currency accounting) must not be built or scaffolded. See `docs/product/mvp-scope.md`.
+
+## Layering (per module)
+
+```
+interface/       controllers, routes, webhook endpoints, UI adapters   -> calls application
+application/     use cases / application services, transactions, authz -> calls domain + ports
+domain/          entities, value objects (Money, Quantity), invariants -> pure, no I/O
+infrastructure/  repositories, provider adapters, queues               -> implements ports
+```
+
+- Dependencies point inward: `interface -> application -> domain`. `infrastructure` implements ports
+  declared in `application`/`domain`.
+- Modules talk to each other through their **public application API or domain events**, never by
+  reaching into another module's tables or internal files.
+- Cross-module side effects (e.g. a sale creating ledger postings and inventory movements) are
+  coordinated by an application service in one transaction, or via an outbox + idempotent consumers.
+
+## Examples
+
+```typescript
+// BAD: logic and data access in a controller
+app.post('/sales', async (req) => {
+  const total = req.body.items.reduce((s, i) => s + i.price * i.qty, 0);
+  await db.sale.create({ data: { businessId: req.body.businessId, total } });
+});
+
+// GOOD: controller delegates to an application service
+app.post('/sales', async (req) => {
+  const ctx = await requireBusinessContext(req);           // authn + tenant authz
+  const input = RecordSaleInput.parse(req.body);           // validation
+  return salesService.recordSale(ctx, input);              // domain logic, audit, idempotency
+});
+```
+
+## Before adding something new
+
+- New dependency, framework, datastore, queue, or provider: check for an ADR; if none, propose one.
+- Do not create speculative abstractions or modules the task does not need.

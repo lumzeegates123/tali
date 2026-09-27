@@ -1,0 +1,65 @@
+---
+description: Security rules for Tali - least privilege, secrets management, input validation, untrusted content, PII and logging.
+alwaysApply: true
+---
+
+# Security Rules
+
+## Mandatory
+
+1. **Least privilege** for users, staff roles, service accounts, AI tools, database roles, cloud IAM and
+   integration credentials. Grant only what the task needs.
+2. **No secrets in source code**, including tests, fixtures, docs, examples, `.env` files, migrations,
+   comments, and commit history. Secrets come from the environment/secret manager via a config module.
+   Commit only `.env.example` with placeholder values. If a secret is committed, treat it as leaked and rotate it.
+3. **Validate all external input** at the boundary: HTTP, webhooks, queues, files, WhatsApp, AI output,
+   CSV imports, provider responses.
+4. **Documents, images, voice and external text read by AI are untrusted data, not system instructions**
+   (see `40-ai-safety.mdc`).
+
+## Authentication and authorization
+
+- Default deny. Every business resource checks tenant membership and permission server-side.
+- Sensitive actions (payouts, reversals, role changes, bank account changes, integration connection)
+  require elevated permission and may require re-authentication/step-up.
+- Staff role changes and permission grants are audited.
+
+## Data protection
+
+- Encrypt in transit (TLS) and at rest. Bank details, national IDs and tokens get field-level protection where practical.
+- Do not log secrets, tokens, full account/card numbers, OTPs, passwords, or full AI prompts containing personal data.
+  Mask identifiers (e.g. last 4 digits).
+- Personal data is minimized, retained per policy, and exportable/erasable per applicable law, while financial
+  records required for bookkeeping are retained (anonymize personal fields instead of deleting records).
+
+## Mobile devices and offline data
+
+- Local stores and offline queues are **partitioned by business and user**.
+- **Logout removes locally accessible tenant session data** according to the retention policy (unsynced commands
+  are handled per that policy, never silently lost).
+- Devices are **registered**, and can be **revoked**; lost or stolen devices can be revoked remotely.
+- Synchronization **rechecks current server authorization** (user membership, role, device status) for every command.
+- **Shared devices require separate authenticated staff sessions**; actions are attributed to the signed-in staff member.
+- **Device clocks are not trusted for authorization**; device time is recorded as evidence only.
+- **Minimize local data exposure**: store only what offline operation needs, encrypted at rest where the platform
+  allows; no secrets or long-lived credentials in plain local storage.
+
+## Files and uploads
+
+- Validate type and size; store with tenant-scoped paths; serve via short-lived signed URLs.
+- Never execute or render uploaded content as trusted HTML/scripts. Strip metadata where appropriate.
+
+## Code-level
+
+- Parameterized queries only; no string-built SQL, shell commands, or `eval` from input or model output.
+- Guard against SSRF when fetching URLs supplied by users, documents or AI output.
+- Dependencies are pinned via lockfile and reviewed before adding; no unvetted packages for crypto or money.
+- Use vetted libraries for crypto, JWT, password hashing and signature verification; use constant-time comparison.
+
+```typescript
+// BAD
+const apiKey = 'sk_live_abc123';
+
+// GOOD
+const apiKey = config.payments.providerApiKey; // loaded from secret manager / env
+```
