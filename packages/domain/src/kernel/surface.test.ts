@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import packageJson from "../../package.json" with { type: "json" };
-import * as kernel from "./index";
+import * as kernel from "./index.js";
 
 /**
  * The client-safe kernel surface is pinned. Adding an export requires changing
@@ -47,7 +47,8 @@ describe("@tali/domain/kernel surface", () => {
 
   it("exposes only the root and kernel subpaths from the package", () => {
     expect(Object.keys(packageJson.exports).sort()).toEqual([".", "./kernel"]);
-    expect(packageJson.exports["./kernel"].default).toBe("./src/kernel/index.ts");
+    expect(packageJson.exports["./kernel"].default).toBe("./dist/kernel/index.js");
+    expect(packageJson.exports["./kernel"].types).toBe("./dist/kernel/index.d.ts");
   });
 
   it("has no runtime dependencies", () => {

@@ -1,6 +1,6 @@
 import type { Id } from "@tali/domain";
 import { parseId } from "@tali/domain";
-import type { IdGenerator } from "../ports/id-generator";
+import type { IdGenerator } from "../ports/id-generator.js";
 
 const DEFAULT_BASE_EPOCH_MS = Date.UTC(2026, 0, 1);
 

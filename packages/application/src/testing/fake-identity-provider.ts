@@ -1,6 +1,6 @@
-import { AuthenticationError } from "../errors/application-error";
-import type { Clock } from "../ports/clock";
-import type { IdentityProvider, VerifiedIdentity } from "../ports/identity-provider";
+import { AuthenticationError } from "../errors/application-error.js";
+import type { Clock } from "../ports/clock.js";
+import type { IdentityProvider, VerifiedIdentity } from "../ports/identity-provider.js";
 
 /** An identity provider for tests: tokens are opaque handles registered in memory. */
 export class FakeIdentityProvider implements IdentityProvider {

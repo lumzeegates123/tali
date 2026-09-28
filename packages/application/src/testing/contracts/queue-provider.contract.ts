@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { QueueMessage, QueueProvider } from "../../ports/queue-provider";
+import type { QueueMessage, QueueProvider } from "../../ports/queue-provider.js";
 
 export interface QueueProviderContractSetup {
   readonly queue: QueueProvider;

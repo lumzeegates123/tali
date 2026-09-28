@@ -1,4 +1,4 @@
-import { KernelError } from "./errors";
+import { KernelError } from "./errors.js";
 
 /**
  * Named rounding modes, always chosen explicitly at the call site.

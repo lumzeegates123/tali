@@ -6,3 +6,10 @@ packages:
 engineStrict: true
 saveExact: true
 strictPeerDependencies: true
+
+# Install scripts are denied by default. Allowed exceptions:
+#   prisma           preinstall: Node.js version check only
+#   @prisma/engines  postinstall: downloads the checksum-verified schema engine used by prisma migrate
+allowBuilds:
+  "@prisma/engines": true
+  prisma: true

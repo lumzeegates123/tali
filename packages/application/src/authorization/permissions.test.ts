@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { PermissionDeniedError } from "../errors/application-error";
+import { PermissionDeniedError } from "../errors/application-error.js";
 import {
   definePermissionCatalogue,
   hasPermission,
   isPermissionName,
   permissionSet,
   requirePermission,
-} from "./permissions";
+} from "./permissions.js";
 
 describe("permission catalogue", () => {
   it("validates names and rejects duplicates", () => {

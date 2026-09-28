@@ -1,9 +1,9 @@
-import { allocateByWeights, allocateEvenly } from "./allocation";
-import type { CurrencyCode, CurrencyDefinition } from "./currency";
-import { parseCurrencyCode } from "./currency";
-import { KernelError } from "./errors";
-import type { RoundingMode } from "./rounding";
-import { absBigInt, divideAndRound } from "./rounding";
+import { allocateByWeights, allocateEvenly } from "./allocation.js";
+import type { CurrencyCode, CurrencyDefinition } from "./currency.js";
+import { parseCurrencyCode } from "./currency.js";
+import { KernelError } from "./errors.js";
+import type { RoundingMode } from "./rounding.js";
+import { absBigInt, divideAndRound } from "./rounding.js";
 
 const MINOR_UNITS_PATTERN = /^-?(0|[1-9][0-9]*)$/;
 const DECIMAL_PATTERN = /^(-)?(0|[1-9][0-9]*)(?:\.([0-9]+))?$/;

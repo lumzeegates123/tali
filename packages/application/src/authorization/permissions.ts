@@ -1,4 +1,4 @@
-import { PermissionDeniedError } from "../errors/application-error";
+import { PermissionDeniedError } from "../errors/application-error.js";
 
 declare const permissionBrand: unique symbol;
 

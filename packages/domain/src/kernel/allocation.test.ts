@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { allocateByWeights, allocateEvenly } from "./allocation";
-import { KernelError } from "./errors";
+import { allocateByWeights, allocateEvenly } from "./allocation.js";
+import { KernelError } from "./errors.js";
 
 /** Deterministic pseudo-random sequence for property-style checks (tests only). */
 function* lcg(seed: bigint): Generator<bigint> {

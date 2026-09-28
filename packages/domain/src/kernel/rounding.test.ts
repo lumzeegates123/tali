@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { KernelError } from "./errors";
-import { divideAndRound, RoundingMode } from "./rounding";
+import { KernelError } from "./errors.js";
+import { divideAndRound, RoundingMode } from "./rounding.js";
 
 // Each row: value (numerator / 10), then the expected result per mode.
 const cases: [bigint, Record<RoundingMode, bigint>][] = [

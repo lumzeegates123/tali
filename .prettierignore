@@ -7,3 +7,4 @@ pnpm-lock.yaml
 # Governance and documentation Markdown is hand-formatted; do not reflow it.
 *.md
 *.mdc
+**/generated/

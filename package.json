@@ -8,14 +8,18 @@
     "pnpm": "11.28.0"
   },
   "scripts": {
+    "build": "turbo run build",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
+    "test:integration": "turbo run test:integration --concurrency=1",
+    "db:up": "docker compose up --detach --wait",
+    "db:down": "docker compose down",
     "lint": "eslint . --max-warnings=0",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "boundaries": "node tooling/dependency-boundaries.mjs",
     "text-integrity": "node tooling/text-integrity/src/cli.mjs",
-    "verify": "pnpm run text-integrity && pnpm run format:check && pnpm run lint && pnpm run typecheck && pnpm run boundaries && pnpm run test"
+    "verify": "pnpm run text-integrity && pnpm run format:check && pnpm run build && pnpm run lint && pnpm run typecheck && pnpm run boundaries && pnpm run test"
   },
   "devDependencies": {
     "@tali/eslint-config": "workspace:*",

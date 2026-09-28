@@ -44,6 +44,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Format
         run: pnpm run format:check
+      - name: Build
+        run: pnpm run build
       - name: Lint
         run: pnpm run lint
       - name: Typecheck
@@ -52,6 +54,62 @@ jobs:
         run: pnpm run boundaries
       - name: Unit tests
         run: pnpm run test
+
+  database:
+    name: Migrations and integration tests (PostgreSQL)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Disposable CI database. Credentials are synthetic and identical to
+    # docker-compose.yml; they grant access to nothing outside this job.
+    services:
+      postgres:
+        image: postgres:18.6-alpine
+        env:
+          POSTGRES_USER: tali_admin
+          POSTGRES_PASSWORD: local-only-admin
+          POSTGRES_DB: postgres
+        ports:
+          - 55433:5432
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U tali_admin -d postgres"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      TALI_ENV: test
+      PRISMA_HIDE_UPDATE_MESSAGE: "1"
+      MIGRATION_DATABASE_URL: postgresql://tali_owner:local-only-owner@localhost:55433/tali_test
+      SHADOW_DATABASE_URL: postgresql://tali_owner:local-only-owner@localhost:55433/tali_test_shadow
+      TEST_MIGRATION_DATABASE_URL: postgresql://tali_owner:local-only-owner@localhost:55433/tali_test
+      TEST_DATABASE_URL: postgresql://tali_app:local-only-app@localhost:55433/tali_test
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5.0.0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Bootstrap roles and databases
+        run: >
+          docker exec -i "${{ job.services.postgres.id }}"
+          psql --no-psqlrc --set ON_ERROR_STOP=1 --username tali_admin --dbname postgres
+          -v app_db=tali_test -v owner_password=local-only-owner -v app_password=local-only-app
+          -f - < packages/database/sql/bootstrap-roles.sql
+      - name: Build
+        run: pnpm run build
+      - name: Apply migrations (migrate deploy)
+        run: pnpm --filter @tali/database run db:migrate:deploy
+      - name: Migration status
+        run: pnpm --filter @tali/database run db:migrate:status
+      - name: Drift check (migrations vs schema and database)
+        run: pnpm --filter @tali/database run db:drift
+      - name: Verify schema, constraints and role privileges
+        run: pnpm --filter @tali/database run db:verify-schema
+      - name: Integration tests (database, api, worker)
+        run: pnpm run test:integration
 
   secret-scan:
     name: Secret scan (gitleaks)

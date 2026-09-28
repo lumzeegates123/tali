@@ -1,0 +1,124 @@
+import { describe, expect, it } from "vitest";
+import { testDatabaseUrls } from "../../src/testing/index.js";
+import { insertConstraintProbe } from "../support/fixture-repositories.js";
+import { useFixtureHarness, uuid } from "../support/harness.js";
+import { sqlState } from "../support/pg.js";
+import { prisma } from "../support/prisma-cli.js";
+
+const COMMITTED_MIGRATIONS = ["20260927231057_foundation_spike", "20260928025500_remove_foundation_spike"];
+
+/**
+ * Criterion E and the migration chain. The global setup has already run
+ * `migrate deploy` against this database: the spike migration, then the
+ * approved cleanup migration that removes the temporary foundation_spike schema.
+ */
+describe("E. migration chain", () => {
+  const { owner } = useFixtureHarness();
+
+  it("migrate deploy recorded every committed migration, in order, as fully applied", async () => {
+    const { rows } = await owner.query<{ migration_name: string; finished: boolean; rolled_back: boolean }>(
+      `SELECT migration_name, finished_at IS NOT NULL AS finished, rolled_back_at IS NOT NULL AS rolled_back
+       FROM public._prisma_migrations ORDER BY migration_name`,
+    );
+    expect(rows.map((row) => row.migration_name)).toEqual(COMMITTED_MIGRATIONS);
+    expect(rows.every((row) => row.finished && !row.rolled_back)).toBe(true);
+  });
+
+  it("re-running migrate deploy is a no-op", () => {
+    const result = prisma(["migrate", "deploy"], testDatabaseUrls().owner);
+    expect(result.status).toBe(0);
+    expect(result.output).toMatch(/No pending migrations to apply/);
+  });
+
+  it("migrate status reports the database schema is up to date", () => {
+    const result = prisma(["migrate", "status"], testDatabaseUrls().owner);
+    expect(result.status).toBe(0);
+    expect(result.output).toMatch(/Database schema is up to date/);
+  });
+
+  // --from-migrations replays the whole chain from zero in the shadow database.
+  it.each([
+    ["the Prisma schema", ["--to-schema", "prisma/schema"]],
+    ["the migrated database", ["--to-config-datasource"]],
+  ])("the chain replayed from zero has no drift against %s", (_label, target) => {
+    const shadow = new URL(testDatabaseUrls().owner);
+    shadow.pathname = `${shadow.pathname}_shadow`;
+    const result = prisma(
+      ["migrate", "diff", "--from-migrations", "prisma/migrations", ...target, "--exit-code"],
+      testDatabaseUrls().owner,
+      shadow.toString(),
+    );
+    expect(result.output).toMatch(/No difference detected/);
+    expect(result.status).toBe(0);
+  });
+
+  it("the cleanup migration left no foundation_spike schema or objects", async () => {
+    const schemas = await owner.query(`SELECT 1 FROM pg_namespace WHERE nspname = 'foundation_spike'`);
+    expect(schemas.rows).toEqual([]);
+    const objects = await owner.query(
+      `SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'foundation_spike'`,
+    );
+    expect(objects.rows).toEqual([]);
+  });
+
+  it("the migration chain creates no application tables yet (only Prisma's migration table)", async () => {
+    const { rows } = await owner.query<{ name: string }>(
+      `SELECT schemaname || '.' || tablename AS name FROM pg_tables
+       WHERE schemaname NOT IN ('pg_catalog', 'information_schema', 'test_fixtures') ORDER BY 1`,
+    );
+    expect(rows.map((row) => row.name)).toEqual(["public._prisma_migrations"]);
+  });
+});
+
+/**
+ * Custom constraints (CHECK, partial unique index) on the test-only fixture
+ * table, exercised as the application role through the Prisma unit of work.
+ */
+describe("E. custom constraints", () => {
+  const { unitOfWork, owner } = useFixtureHarness();
+  const insert = (id: number, scopeKey: string, isDefault: boolean, amountMinor: bigint) =>
+    unitOfWork.run((scope) => insertConstraintProbe(scope, { id: uuid(id), scopeKey, isDefault, amountMinor }));
+
+  it("CHECK constraint rejects a negative amount (through Prisma, as the app role)", async () => {
+    await expect(insert(1, "scope-a", false, -1n)).rejects.toThrow(
+      /constraint_probe_amount_minor_non_negative|check constraint|23514/i,
+    );
+    await expect(insert(2, "scope-a", false, 0n)).resolves.toBeUndefined();
+  });
+
+  it("CHECK constraint is enforced at SQL level (SQLSTATE 23514)", async () => {
+    const state = await sqlState(
+      owner.query(
+        `INSERT INTO test_fixtures.constraint_probe (id, scope_key, is_default, amount_minor) VALUES ($1, 's', false, -5)`,
+        [uuid(9)],
+      ),
+    );
+    expect(state).toBe("23514");
+  });
+
+  it("partial unique index allows one default per scope, any number of non-defaults", async () => {
+    await insert(1, "scope-a", true, 1n);
+    await insert(2, "scope-a", false, 1n);
+    await insert(3, "scope-a", false, 1n);
+    await insert(4, "scope-b", true, 1n);
+    await expect(insert(5, "scope-a", true, 1n)).rejects.toThrow();
+    const state = await sqlState(
+      owner.query(
+        `INSERT INTO test_fixtures.constraint_probe (id, scope_key, is_default, amount_minor) VALUES ($1, 'scope-b', true, 1)`,
+        [uuid(6)],
+      ),
+    );
+    expect(state).toBe("23505");
+  });
+
+  it("a violation inside a unit of work rolls the whole transaction back", async () => {
+    await expect(
+      unitOfWork.run(async (scope) => {
+        await insertConstraintProbe(scope, { id: uuid(1), scopeKey: "scope-a", isDefault: true, amountMinor: 1n });
+        await insertConstraintProbe(scope, { id: uuid(2), scopeKey: "scope-a", isDefault: true, amountMinor: 1n });
+      }),
+    ).rejects.toThrow();
+    const { rows } = await owner.query<{ n: string }>(`SELECT count(*) AS n FROM test_fixtures.constraint_probe`);
+    expect(rows[0]?.n).toBe("0");
+  });
+});

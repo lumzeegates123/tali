@@ -1,6 +1,6 @@
-export type { Clock } from "./clock";
-export type { IdGenerator } from "./id-generator";
-export type { IdentityProvider, VerifiedIdentity } from "./identity-provider";
+export type { Clock } from "./clock.js";
+export type { IdGenerator } from "./id-generator.js";
+export type { IdentityProvider, VerifiedIdentity } from "./identity-provider.js";
 export type {
   DownloadUrl,
   DownloadUrlRequest,
@@ -10,8 +10,8 @@ export type {
   StoredObjectInfo,
   UploadTarget,
   UploadTargetRequest,
-} from "./object-storage-provider";
-export { isObjectKey } from "./object-storage-provider";
+} from "./object-storage-provider.js";
+export { isObjectKey } from "./object-storage-provider.js";
 export type {
   DeliveryReceipt,
   JsonValue,
@@ -19,5 +19,5 @@ export type {
   QueueProvider,
   ReceivedMessage,
   ReceiveOptions,
-} from "./queue-provider";
-export type { IsolationLevel, TransactionScope, UnitOfWork, UnitOfWorkOptions } from "./unit-of-work";
+} from "./queue-provider.js";
+export type { IsolationLevel, TransactionScope, UnitOfWork, UnitOfWorkOptions } from "./unit-of-work.js";

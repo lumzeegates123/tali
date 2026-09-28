@@ -1,4 +1,4 @@
-import type { Clock } from "../ports/clock";
+import type { Clock } from "../ports/clock.js";
 
 /** A controllable clock for tests. Time moves only when told to. */
 export class FixedClock implements Clock {

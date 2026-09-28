@@ -60,6 +60,27 @@ module.exports = {
       to: { path: "node_modules/(@prisma|prisma)/" },
     },
     {
+      name: "pg-only-in-database",
+      severity: "error",
+      comment: "The PostgreSQL driver is an implementation detail of packages/database.",
+      from: { pathNot: "^packages/database/" },
+      to: { path: "node_modules/(pg|pg-[^/]+|@prisma/adapter-pg)/" },
+    },
+    {
+      name: "database-test-fixtures-not-in-production",
+      severity: "error",
+      comment: "Test-only fixture tables and adapters (packages/database/test) are never reachable from shipped code.",
+      from: { path: "^(apps|packages)/[^/]+/src/", pathNot: TEST_FILE },
+      to: { path: "^packages/database/test/" },
+    },
+    {
+      name: "database-testing-is-not-production",
+      severity: "error",
+      comment: "@tali/database/testing is for integration tests only.",
+      from: { path: "^(apps|packages)/[^/]+/src/", pathNot: ["^packages/database/", TEST_FILE] },
+      to: { path: "^packages/database/src/testing/" },
+    },
+    {
       name: "nestjs-only-in-server-apps",
       severity: "error",
       from: { pathNot: "^apps/(api|worker)/" },
@@ -230,9 +251,12 @@ module.exports = {
     },
   ],
   options: {
-    doNotFollow: { path: "node_modules" },
+    // Prisma's generated client has internal import cycles; it is vendor output, reached only from packages/database.
+    doNotFollow: { path: ["node_modules", "^packages/database/src/generated/"] },
     exclude: { path: ["(^|/)(dist|coverage|\\.turbo)/"] },
     tsPreCompilationDeps: true,
+    // Maps exported workspace subpaths back to source; see the file for why.
+    webpackConfig: { fileName: "tooling/dependency-cruiser/workspace-source-aliases.cjs" },
     enhancedResolveOptions: {
       exportsFields: ["exports"],
       conditionNames: ["types", "import", "default"],

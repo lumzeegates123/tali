@@ -1,4 +1,4 @@
-import { KernelError } from "./errors";
+import { KernelError } from "./errors.js";
 
 declare const uuidBrand: unique symbol;
 declare const idBrand: unique symbol;

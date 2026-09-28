@@ -1,13 +1,13 @@
 import { z } from "zod";
-import type { ConfigurationIssue, EnvSource, TaliEnv } from "../common/environment";
+import type { ConfigurationIssue, EnvSource, TaliEnv } from "../common/environment.js";
 import {
   ConfigurationError,
   isDeployedEnvironment,
   issuesFromZod,
   SECRET_NAME_PATTERN,
   TaliEnvSchema,
-} from "../common/environment";
-import { SERVER_ONLY_ENV_KEYS } from "../common/server-keys";
+} from "../common/environment.js";
+import { SERVER_ONLY_ENV_KEYS } from "../common/server-keys.js";
 
 export const WEB_PUBLIC_PREFIX = "NEXT_PUBLIC_";
 export const MOBILE_PUBLIC_PREFIX = "EXPO_PUBLIC_";

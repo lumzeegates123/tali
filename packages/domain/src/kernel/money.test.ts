@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { defineCurrency, parseCurrencyCode } from "./currency";
-import { KernelError } from "./errors";
-import { Money } from "./money";
-import { RoundingMode } from "./rounding";
+import { defineCurrency, parseCurrencyCode } from "./currency.js";
+import { KernelError } from "./errors.js";
+import { Money } from "./money.js";
+import { RoundingMode } from "./rounding.js";
 
 const NGN = parseCurrencyCode("NGN");
 const USD = parseCurrencyCode("USD");

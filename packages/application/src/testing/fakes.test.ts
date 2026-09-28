@@ -1,6 +1,12 @@
-import type { ObjectKey } from "../ports/object-storage-provider";
+import type { ObjectKey } from "../ports/object-storage-provider.js";
 import { describe, expect, it } from "vitest";
-import { FixedClock, InMemoryObjectStorage, InMemoryQueue, InMemoryUnitOfWork, SequentialIdGenerator } from "./index";
+import {
+  FixedClock,
+  InMemoryObjectStorage,
+  InMemoryQueue,
+  InMemoryUnitOfWork,
+  SequentialIdGenerator,
+} from "./index.js";
 
 describe("SequentialIdGenerator", () => {
   it("is deterministic across instances", () => {

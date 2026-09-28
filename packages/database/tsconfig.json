@@ -1,0 +1,4 @@
+{
+  "extends": "@tali/tsconfig/node-lib.json",
+  "include": ["src", "test", "prisma.config.ts", "vitest.config.ts", "vitest.integration.config.ts"]
+}

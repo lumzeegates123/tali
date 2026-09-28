@@ -1,5 +1,5 @@
-import { ValidationError } from "../errors/application-error";
-import type { Clock } from "../ports/clock";
+import { ValidationError } from "../errors/application-error.js";
+import type { Clock } from "../ports/clock.js";
 import type {
   DownloadUrl,
   DownloadUrlRequest,
@@ -9,8 +9,8 @@ import type {
   StoredObjectInfo,
   UploadTarget,
   UploadTargetRequest,
-} from "../ports/object-storage-provider";
-import { isObjectKey } from "../ports/object-storage-provider";
+} from "../ports/object-storage-provider.js";
+import { isObjectKey } from "../ports/object-storage-provider.js";
 
 const MAX_SIGNED_URL_SECONDS = 3600;
 

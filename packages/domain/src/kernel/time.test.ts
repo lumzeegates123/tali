@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { KernelError } from "./errors";
-import { BusinessDate, parseTimeZoneId } from "./time";
+import { KernelError } from "./errors.js";
+import { BusinessDate, parseTimeZoneId } from "./time.js";
 
 describe("BusinessDate", () => {
   it("parses and prints YYYY-MM-DD", () => {

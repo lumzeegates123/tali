@@ -22,6 +22,11 @@ export const SERVER_ENV_KEYS = [
   "API_CORS_ORIGINS",
   "LOG_LEVEL",
   "SERVICE_NAME",
+  "SHUTDOWN_GRACE_PERIOD_MS",
+  "WORKER_POLL_INTERVAL_MS",
+  "WORKER_HEARTBEAT_FILE",
+  "WORKER_HEARTBEAT_INTERVAL_MS",
+  "WORKER_SMOKE_ON_START",
 ] as const;
 
 /** Server variables that are secret or infrastructure-internal and must never reach a client. */

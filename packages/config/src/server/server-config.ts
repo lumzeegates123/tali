@@ -1,7 +1,7 @@
 import { z } from "zod";
-import type { ConfigurationIssue, EnvSource, TaliEnv } from "../common/environment";
-import { ConfigurationError, isDeployedEnvironment, issuesFromZod, TaliEnvSchema } from "../common/environment";
-import { SERVER_ENV_KEYS } from "../common/server-keys";
+import type { ConfigurationIssue, EnvSource, TaliEnv } from "../common/environment.js";
+import { ConfigurationError, isDeployedEnvironment, issuesFromZod, TaliEnvSchema } from "../common/environment.js";
+import { SERVER_ENV_KEYS } from "../common/server-keys.js";
 
 const AWS_REGION = /^[a-z]{2}(-gov)?-[a-z]+-[0-9]$/;
 const COGNITO_USER_POOL_ID = /^[a-z]{2}(-gov)?-[a-z]+-[0-9]_[A-Za-z0-9]+$/;
@@ -23,6 +23,11 @@ const csvList = z
       .filter((item) => item !== ""),
   );
 
+const booleanFlag = z
+  .enum(["true", "false"], { error: "must be true or false" })
+  .default("false")
+  .transform((value) => value === "true");
+
 const RawServerEnvSchema = z.object({
   TALI_ENV: TaliEnvSchema,
   DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/, error: "must be a postgres:// or postgresql:// URL" }),
@@ -42,6 +47,11 @@ const RawServerEnvSchema = z.object({
   API_CORS_ORIGINS: csvList,
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
   SERVICE_NAME: z.string().trim().min(1).max(64).default("tali"),
+  SHUTDOWN_GRACE_PERIOD_MS: z.coerce.number().int().min(0).max(120_000).default(10_000),
+  WORKER_POLL_INTERVAL_MS: z.coerce.number().int().min(10).max(60_000).default(1_000),
+  WORKER_HEARTBEAT_FILE: optionalText,
+  WORKER_HEARTBEAT_INTERVAL_MS: z.coerce.number().int().min(100).max(60_000).default(5_000),
+  WORKER_SMOKE_ON_START: booleanFlag,
 });
 
 type RawServerEnv = z.infer<typeof RawServerEnvSchema>;
@@ -70,7 +80,25 @@ export interface ServerConfig {
   readonly identity: IdentityConfig;
   readonly objectStorage: ObjectStorageConfig;
   readonly queue: QueueConfig;
-  readonly api: { readonly port: number; readonly corsOrigins: readonly string[] };
+  readonly api: {
+    readonly port: number;
+    readonly corsOrigins: readonly string[];
+    /**
+     * Test/local-only diagnostic routes (for example the identity-guard probe).
+     * Derived from TALI_ENV alone, with no override: it is impossible to enable
+     * in a deployed environment.
+     */
+    readonly testRoutesEnabled: boolean;
+  };
+  readonly worker: {
+    readonly pollIntervalMs: number;
+    /** File the worker rewrites on every heartbeat; omitted disables the file heartbeat. */
+    readonly heartbeatFile: string | undefined;
+    readonly heartbeatIntervalMs: number;
+    /** Publishes one harmless smoke message on start (local/test only). */
+    readonly smokeOnStart: boolean;
+  };
+  readonly lifecycle: { readonly shutdownGracePeriodMs: number };
   readonly observability: { readonly logLevel: RawServerEnv["LOG_LEVEL"]; readonly serviceName: string };
 }
 
@@ -184,9 +212,24 @@ export function loadServerConfig(env: EnvSource): ServerConfig {
     identity: identityConfig(raw, issues),
     objectStorage: objectStorageConfig(raw, issues),
     queue: queueConfig(raw, issues),
-    api: { port: raw.API_PORT, corsOrigins: raw.API_CORS_ORIGINS },
+    api: {
+      port: raw.API_PORT,
+      corsOrigins: raw.API_CORS_ORIGINS,
+      testRoutesEnabled: raw.TALI_ENV === "local" || raw.TALI_ENV === "test",
+    },
+    worker: {
+      pollIntervalMs: raw.WORKER_POLL_INTERVAL_MS,
+      heartbeatFile: raw.WORKER_HEARTBEAT_FILE,
+      heartbeatIntervalMs: raw.WORKER_HEARTBEAT_INTERVAL_MS,
+      smokeOnStart: raw.WORKER_SMOKE_ON_START,
+    },
+    lifecycle: { shutdownGracePeriodMs: raw.SHUTDOWN_GRACE_PERIOD_MS },
     observability: { logLevel: raw.LOG_LEVEL, serviceName: raw.SERVICE_NAME },
   };
+
+  if (raw.WORKER_SMOKE_ON_START && raw.TALI_ENV !== "local" && raw.TALI_ENV !== "test") {
+    issues.forbid("WORKER_SMOKE_ON_START", "is allowed only when TALI_ENV is local or test");
+  }
 
   if (issues.issues.length > 0) {
     throw new ConfigurationError("server", issues.issues);
