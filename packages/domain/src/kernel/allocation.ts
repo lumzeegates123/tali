@@ -1,5 +1,5 @@
-import { KernelError } from "./errors";
-import { absBigInt } from "./rounding";
+import { KernelError } from "./errors.js";
+import { absBigInt } from "./rounding.js";
 
 /**
  * Splits an integer total in proportion to non-negative integer weights using

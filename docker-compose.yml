@@ -1,0 +1,60 @@
+# Local development infrastructure: PostgreSQL only (ADR-002 section 16).
+# No Redis, LocalStack, Kafka or other auxiliary services.
+#
+# All credentials below are synthetic, local-only values. They are not secrets
+# and must never be reused for any shared or deployed environment.
+#
+#   postgres       development database  localhost:55432  tali_local (persistent volume)
+#   postgres-test  integration tests     localhost:55433  tali_test  (tmpfs, disposable)
+#
+# Host ports avoid the common 5432/5433 so Tali never shares a port with (or
+# accidentally connects to) another local PostgreSQL. Override with
+# TALI_POSTGRES_PORT / TALI_POSTGRES_TEST_PORT if needed.
+
+name: tali
+
+x-postgres: &postgres
+  image: postgres:18.6-alpine
+  environment: &postgres-env
+    POSTGRES_USER: tali_admin
+    POSTGRES_PASSWORD: local-only-admin
+    POSTGRES_DB: postgres
+    TALI_OWNER_PASSWORD: local-only-owner
+    TALI_APP_PASSWORD: local-only-app
+  volumes:
+    - ./packages/database/sql/bootstrap-roles.sql:/tali/bootstrap-roles.sql:ro
+    - ./packages/database/sql/docker-init.sh:/docker-entrypoint-initdb.d/10-tali-bootstrap.sh:ro
+  healthcheck:
+    # TCP (not the init-time unix socket) so the service reports healthy only
+    # after the bootstrap script has finished and the server is listening.
+    test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U tali_admin -d postgres"]
+    interval: 2s
+    timeout: 3s
+    retries: 30
+    start_period: 5s
+
+services:
+  postgres:
+    <<: *postgres
+    environment:
+      <<: *postgres-env
+      TALI_DATABASE: tali_local
+    ports:
+      - "127.0.0.1:${TALI_POSTGRES_PORT:-55432}:5432"
+    volumes:
+      - ./packages/database/sql/bootstrap-roles.sql:/tali/bootstrap-roles.sql:ro
+      - ./packages/database/sql/docker-init.sh:/docker-entrypoint-initdb.d/10-tali-bootstrap.sh:ro
+      - tali-postgres-data:/var/lib/postgresql
+
+  postgres-test:
+    <<: *postgres
+    environment:
+      <<: *postgres-env
+      TALI_DATABASE: tali_test
+    ports:
+      - "127.0.0.1:${TALI_POSTGRES_TEST_PORT:-55433}:5432"
+    tmpfs:
+      - /var/lib/postgresql:size=512m
+
+volumes:
+  tali-postgres-data:

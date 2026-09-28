@@ -1,4 +1,4 @@
-import { KernelError } from "./errors";
+import { KernelError } from "./errors.js";
 
 declare const timeZoneBrand: unique symbol;
 

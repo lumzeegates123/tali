@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { ConfigurationError } from "../common/environment";
-import { SERVER_ENV_KEYS } from "../common/server-keys";
-import { loadServerConfig, SERVER_SCHEMA_KEYS } from "./server-config";
+import { ConfigurationError } from "../common/environment.js";
+import { SERVER_ENV_KEYS } from "../common/server-keys.js";
+import { loadServerConfig, SERVER_SCHEMA_KEYS } from "./server-config.js";
 
 const SECRET_PASSWORD = "p4ssw0rd-that-must-not-leak";
 
@@ -50,7 +50,14 @@ describe("loadServerConfig", () => {
       signedUrlTtlSeconds: 300,
     });
     expect(config.queue).toEqual({ provider: "memory" });
-    expect(config.api).toEqual({ port: 3000, corsOrigins: [] });
+    expect(config.api).toEqual({ port: 3000, corsOrigins: [], testRoutesEnabled: true });
+    expect(config.worker).toEqual({
+      pollIntervalMs: 1_000,
+      heartbeatFile: undefined,
+      heartbeatIntervalMs: 5_000,
+      smokeOnStart: false,
+    });
+    expect(config.lifecycle).toEqual({ shutdownGracePeriodMs: 10_000 });
     expect(config.observability).toEqual({ logLevel: "info", serviceName: "tali" });
     expect(Object.isFrozen(config)).toBe(true);
   });
@@ -119,6 +126,39 @@ describe("loadServerConfig", () => {
     expect(JSON.stringify(error.issues)).not.toContain(SECRET_PASSWORD);
     const invalidUrl = configError({ ...localEnv, DATABASE_URL: `mysql://${SECRET_PASSWORD}@x` });
     expect(invalidUrl.message).not.toContain(SECRET_PASSWORD);
+  });
+
+  it("enables test-only routes in local and test, and never in a deployed environment", () => {
+    expect(loadServerConfig({ ...localEnv, TALI_ENV: "test", IDENTITY_PROVIDER: "fake" }).api.testRoutesEnabled).toBe(
+      true,
+    );
+    for (const env of ["development", "staging", "production"]) {
+      expect(loadServerConfig({ ...deployedEnv, TALI_ENV: env }).api.testRoutesEnabled).toBe(false);
+    }
+  });
+
+  it("allows the worker smoke message only in local or test", () => {
+    expect(loadServerConfig({ ...localEnv, WORKER_SMOKE_ON_START: "true" }).worker.smokeOnStart).toBe(true);
+    expect(configError({ ...deployedEnv, WORKER_SMOKE_ON_START: "true" }).issues.map((issue) => issue.key)).toEqual([
+      "WORKER_SMOKE_ON_START",
+    ]);
+    expect(configError({ ...localEnv, WORKER_SMOKE_ON_START: "yes" }).issues.map((issue) => issue.key)).toEqual([
+      "WORKER_SMOKE_ON_START",
+    ]);
+  });
+
+  it("validates worker and lifecycle bounds", () => {
+    const keys = configError({
+      ...localEnv,
+      WORKER_POLL_INTERVAL_MS: "1",
+      WORKER_HEARTBEAT_INTERVAL_MS: "999999",
+      SHUTDOWN_GRACE_PERIOD_MS: "-1",
+    }).issues.map((issue) => issue.key);
+    expect(keys.sort()).toEqual([
+      "SHUTDOWN_GRACE_PERIOD_MS",
+      "WORKER_HEARTBEAT_INTERVAL_MS",
+      "WORKER_POLL_INTERVAL_MS",
+    ]);
   });
 
   it("reads only known keys", () => {

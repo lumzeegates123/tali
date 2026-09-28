@@ -1,0 +1,4 @@
+{
+  "extends": "@tali/tsconfig/nest-app.json",
+  "include": ["src", "test", "vitest.config.ts", "vitest.integration.config.ts"]
+}

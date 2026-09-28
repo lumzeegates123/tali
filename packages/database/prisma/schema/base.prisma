@@ -1,0 +1,21 @@
+// Datasource and generator (ADR-002 section 5). This directory is a
+// multi-file schema: one file per module (plan section 2).
+//
+// No connection URL lives here. The CLI reads it from prisma.config.ts
+// (migration role); the runtime connects through the pg driver adapter
+// (application role) in src/client.
+//
+// The generated client is written to src/generated/prisma (gitignored) and is
+// internal to packages/database: nothing under src/generated is exported.
+
+generator client {
+  provider            = "prisma-client"
+  output              = "../../src/generated/prisma"
+  moduleFormat        = "esm"
+  runtime             = "nodejs"
+  importFileExtension = "js"
+}
+
+datasource db {
+  provider = "postgresql"
+}

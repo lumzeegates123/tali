@@ -6,15 +6,16 @@
   "sideEffects": false,
   "exports": {
     "./server": {
-      "types": "./src/server/index.ts",
-      "default": "./src/server/index.ts"
+      "types": "./dist/server/index.d.ts",
+      "default": "./dist/server/index.js"
     },
     "./public": {
-      "types": "./src/public/index.ts",
-      "default": "./src/public/index.ts"
+      "types": "./dist/public/index.d.ts",
+      "default": "./dist/public/index.js"
     }
   },
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },

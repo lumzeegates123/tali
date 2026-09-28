@@ -1,7 +1,7 @@
 import type { CurrencyCode, Id, TimeZoneId } from "@tali/domain";
-import type { Permission, PermissionSet } from "../authorization/permissions";
-import { requirePermission } from "../authorization/permissions";
-import { LocationRequiredError, ValidationError } from "../errors/application-error";
+import type { Permission, PermissionSet } from "../authorization/permissions.js";
+import { requirePermission } from "../authorization/permissions.js";
+import { LocationRequiredError, ValidationError } from "../errors/application-error.js";
 
 export type BusinessId = Id<"Business">;
 export type LocationId = Id<"Location">;

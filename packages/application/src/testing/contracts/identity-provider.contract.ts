@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { AuthenticationError } from "../../errors/application-error";
-import type { IdentityProvider } from "../../ports/identity-provider";
+import { AuthenticationError } from "../../errors/application-error.js";
+import type { IdentityProvider } from "../../ports/identity-provider.js";
 
 export interface IdentityProviderContractSetup {
   readonly provider: IdentityProvider;

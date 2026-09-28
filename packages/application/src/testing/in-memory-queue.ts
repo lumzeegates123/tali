@@ -1,5 +1,5 @@
-import { ValidationError } from "../errors/application-error";
-import type { Clock } from "../ports/clock";
+import { ValidationError } from "../errors/application-error.js";
+import type { Clock } from "../ports/clock.js";
 import type {
   DeliveryReceipt,
   JsonValue,
@@ -7,7 +7,7 @@ import type {
   QueueProvider,
   ReceivedMessage,
   ReceiveOptions,
-} from "../ports/queue-provider";
+} from "../ports/queue-provider.js";
 
 interface Entry {
   readonly message: QueueMessage;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ObjectKey, ObjectStorageProvider } from "../../ports/object-storage-provider";
+import type { ObjectKey, ObjectStorageProvider } from "../../ports/object-storage-provider.js";
 
 export interface ObjectStorageContractSetup {
   readonly storage: ObjectStorageProvider;

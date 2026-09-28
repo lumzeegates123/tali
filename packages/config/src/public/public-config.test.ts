@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { ConfigurationError, SECRET_NAME_PATTERN } from "../common/environment";
-import { SERVER_ONLY_ENV_KEYS } from "../common/server-keys";
-import { loadMobilePublicConfig, loadWebPublicConfig, PUBLIC_ENV_SUFFIXES } from "./public-config";
+import { ConfigurationError, SECRET_NAME_PATTERN } from "../common/environment.js";
+import { SERVER_ONLY_ENV_KEYS } from "../common/server-keys.js";
+import { loadMobilePublicConfig, loadWebPublicConfig, PUBLIC_ENV_SUFFIXES } from "./public-config.js";
 
 describe("public config", () => {
   it("loads web and mobile configuration from their own prefixes only", () => {

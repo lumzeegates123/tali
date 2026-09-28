@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { ErrorEnvelopeSchema } from "./error-envelope";
-import { MoneyWireSchema } from "./money";
+import { ErrorEnvelopeSchema } from "./error-envelope.js";
+import { LivenessResponseSchema, ReadinessResponseSchema } from "./health.js";
+import { MoneyWireSchema } from "./money.js";
 
 describe("MoneyWireSchema", () => {
   it("accepts the ADR-002 wire format", () => {
@@ -21,6 +22,24 @@ describe("MoneyWireSchema", () => {
   it("rejects malformed currencies and unknown fields", () => {
     expect(MoneyWireSchema.safeParse({ amountMinor: "1", currency: "ngn" }).success).toBe(false);
     expect(MoneyWireSchema.safeParse({ amountMinor: "1", currency: "NGN", extra: true }).success).toBe(false);
+  });
+});
+
+describe("health contracts", () => {
+  it("accepts the liveness and readiness bodies", () => {
+    expect(LivenessResponseSchema.safeParse({ status: "ok" }).success).toBe(true);
+    expect(ReadinessResponseSchema.safeParse({ status: "ready", checks: { database: "up" } }).success).toBe(true);
+    expect(ReadinessResponseSchema.safeParse({ status: "not_ready", checks: { database: "down" } }).success).toBe(true);
+  });
+
+  it("rejects leaked detail such as error messages or connection strings", () => {
+    expect(
+      ReadinessResponseSchema.safeParse({ status: "not_ready", checks: { database: "down" }, error: "ECONNREFUSED" })
+        .success,
+    ).toBe(false);
+    expect(ReadinessResponseSchema.safeParse({ status: "ready", checks: { database: "postgres://x" } }).success).toBe(
+      false,
+    );
   });
 });
 

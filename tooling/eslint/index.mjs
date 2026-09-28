@@ -102,10 +102,75 @@ function workspaceBan(packages, message) {
 
 /**
  * @param {PatternRule[]} patterns
+ * @param {PatternRule[]} [vendorBans]
  */
-function restrictedImports(patterns) {
-  return ["error", { patterns: [...VENDOR_SDK_BANS, ...patterns] }];
+function restrictedImports(patterns, vendorBans = VENDOR_SDK_BANS) {
+  return ["error", { patterns: [...vendorBans, ...patterns] }];
 }
+
+/** packages/database owns Prisma and pg; every other vendor ban still applies. */
+const DATABASE_VENDOR_BANS = VENDOR_SDK_BANS.filter((rule) => !rule.message.startsWith("@prisma/client"));
+
+/** The deployable apps own NestJS; every other vendor ban still applies. */
+const APP_VENDOR_BANS = VENDOR_SDK_BANS.filter((rule) => !rule.message.startsWith("@nestjs/*"));
+
+/** @type {PatternRule[]} */
+const APP_PERSISTENCE_BANS = [
+  {
+    regex: specifiers(["@prisma/", "prisma", "pg", "postgres"]),
+    message: "Apps reach PostgreSQL only through packages/database (ADR-002 section 19).",
+  },
+];
+
+/** @type {PatternRule[]} */
+const API_WORKSPACE_BANS = [
+  workspaceBan(["@tali/worker", "@tali/ui", "@tali/ai"], "apps/api composes application, adapters and config only."),
+];
+
+/** @type {PatternRule[]} */
+const WORKER_WORKSPACE_BANS = [
+  workspaceBan(["@tali/api", "@tali/ui"], "apps/worker never depends on another app or on UI code."),
+];
+
+/** @type {PatternRule[]} */
+const CONTROLLER_BANS = [
+  workspaceBan(
+    ["@tali/database", "@tali/integrations"],
+    "Controllers call application use cases; they never touch adapters or persistence (ADR-002 section 19).",
+  ),
+];
+
+/** @type {PatternRule[]} */
+const HANDLER_BANS = [
+  workspaceBan(
+    ["@tali/database", "@tali/integrations"],
+    "Worker handlers invoke application contracts; they never import packages/database or adapters.",
+  ),
+];
+
+/** NestJS modules are decorated classes with static factories by design. */
+const NEST_CLASS_RULES = {
+  "@typescript-eslint/no-extraneous-class": ["error", { allowWithDecorator: true }],
+};
+
+/**
+ * Append-only models: the application role has no UPDATE/DELETE grant (the
+ * database enforces it); this gives the same answer at lint time (ADR-002
+ * section 19). Add each protected model's Prisma delegate name here, in the
+ * same change as the migration that revokes its UPDATE/DELETE. No protected
+ * model exists yet (the Wave B spike model was removed).
+ * @type {string[]}
+ */
+const PROTECTED_MODEL_DELEGATES = [];
+const BANNED_PROTECTED_MUTATIONS =
+  PROTECTED_MODEL_DELEGATES.length === 0
+    ? []
+    : [
+        {
+          selector: `CallExpression[callee.property.name=/^(update|updateMany|updateManyAndReturn|upsert|delete|deleteMany)$/][callee.object.property.name=/^(${PROTECTED_MODEL_DELEGATES.join("|")})$/]`,
+          message: "Protected (append-only) models are never updated or deleted. Record a correction as a new row.",
+        },
+      ];
 const BANNED_RAW_SQL = [
   {
     selector: "MemberExpression[property.name=/^\\$(queryRawUnsafe|executeRawUnsafe)$/]",
@@ -140,7 +205,7 @@ const DETERMINISM_PROPERTIES = [
 export function createConfig({ tsconfigRootDir }) {
   return defineConfig(
     {
-      ignores: ["**/node_modules/**", "**/dist/**", "**/coverage/**", "**/.turbo/**"],
+      ignores: ["**/node_modules/**", "**/dist/**", "**/coverage/**", "**/.turbo/**", "**/generated/**"],
     },
     js.configs.recommended,
     {
@@ -228,12 +293,63 @@ export function createConfig({ tsconfigRootDir }) {
       },
     },
     {
+      files: ["packages/database/**/*.ts"],
+      rules: {
+        "no-restricted-imports": restrictedImports(
+          [
+            workspaceBan(
+              ["@tali/integrations", "@tali/shared", "@tali/ai", "@tali/ui", "@tali/api", "@tali/worker"],
+              "packages/database depends only on application and domain (ADR-002 section 6).",
+            ),
+            { regex: specifiers(["@nestjs/", "express"]), message: "packages/database is framework-free." },
+          ],
+          DATABASE_VENDOR_BANS,
+        ),
+        "no-restricted-syntax": ["error", ...BANNED_RAW_SQL, ...BANNED_PROTECTED_MUTATIONS],
+      },
+    },
+    {
       files: ["packages/config/**/*.ts"],
       rules: {
         "no-restricted-imports": restrictedImports([
           ...FRAMEWORK_AND_INFRA_BANS,
           workspaceBan(["@tali/"], "packages/config depends on no workspace package."),
         ]),
+      },
+    },
+    {
+      files: ["apps/api/**/*.ts"],
+      rules: {
+        ...NEST_CLASS_RULES,
+        "no-restricted-imports": restrictedImports([...APP_PERSISTENCE_BANS, ...API_WORKSPACE_BANS], APP_VENDOR_BANS),
+      },
+    },
+    {
+      files: ["apps/api/src/**/*.controller.ts"],
+      rules: {
+        "no-restricted-imports": restrictedImports(
+          [...APP_PERSISTENCE_BANS, ...API_WORKSPACE_BANS, ...CONTROLLER_BANS],
+          APP_VENDOR_BANS,
+        ),
+      },
+    },
+    {
+      files: ["apps/worker/**/*.ts"],
+      rules: {
+        ...NEST_CLASS_RULES,
+        "no-restricted-imports": restrictedImports(
+          [...APP_PERSISTENCE_BANS, ...WORKER_WORKSPACE_BANS],
+          APP_VENDOR_BANS,
+        ),
+      },
+    },
+    {
+      files: ["apps/worker/src/handlers/**/*.ts"],
+      rules: {
+        "no-restricted-imports": restrictedImports(
+          [...APP_PERSISTENCE_BANS, ...WORKER_WORKSPACE_BANS, ...HANDLER_BANS],
+          APP_VENDOR_BANS,
+        ),
       },
     },
   );

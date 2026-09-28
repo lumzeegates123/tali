@@ -1,4 +1,4 @@
-import type { TransactionScope, UnitOfWork, UnitOfWorkOptions } from "../ports/unit-of-work";
+import type { TransactionScope, UnitOfWork, UnitOfWorkOptions } from "../ports/unit-of-work.js";
 
 /**
  * Records commits and rollbacks for tests. It provides no isolation and does

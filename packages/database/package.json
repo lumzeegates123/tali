@@ -1,0 +1,45 @@
+{
+  "name": "@tali/database",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing/index.d.ts",
+      "default": "./dist/testing/index.js"
+    }
+  },
+  "scripts": {
+    "build": "prisma generate && tsc -p tsconfig.build.json",
+    "typecheck": "prisma generate && tsc --noEmit -p tsconfig.json",
+    "test": "prisma generate && vitest run",
+    "test:integration": "prisma generate && vitest run --config vitest.integration.config.ts",
+    "db:generate": "prisma generate",
+    "db:migrate:dev": "node scripts/guard-local.mjs && prisma migrate dev",
+    "db:migrate:deploy": "prisma migrate deploy",
+    "db:migrate:status": "prisma migrate status",
+    "db:drift": "node scripts/check-drift.mjs",
+    "db:verify-schema": "node scripts/verify-schema.mjs"
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "7.10.0",
+    "@prisma/client": "7.10.0",
+    "@tali/application": "workspace:*",
+    "@tali/domain": "workspace:*",
+    "pg": "8.23.0"
+  },
+  "devDependencies": {
+    "@tali/tsconfig": "workspace:*",
+    "@types/node": "24.19.0",
+    "@types/pg": "8.23.1",
+    "prisma": "7.10.0",
+    "typescript": "6.0.3",
+    "vite": "8.3.1",
+    "vitest": "5.0.2"
+  }
+}

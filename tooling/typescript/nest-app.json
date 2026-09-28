@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "display": "Tali NestJS server app (apps/api, apps/worker only)",
+  "extends": "./node-lib.json",
+  "compilerOptions": {
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": false
+  }
+}

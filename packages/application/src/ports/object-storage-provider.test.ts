@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isObjectKey } from "./object-storage-provider";
+import { isObjectKey } from "./object-storage-provider.js";
 
 describe("isObjectKey", () => {
   it("accepts relative, slash-separated keys", () => {

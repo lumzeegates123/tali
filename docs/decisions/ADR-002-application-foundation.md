@@ -2,6 +2,7 @@
 
 - Status: ACCEPTED (2026-09-27)
 - Date: 2026-09-27
+- Amended: 2026-09-27, section 27 (implementation validation of the Prisma foundation spike; no decision changed)
 - Deciders: Tali maintainers (human approval given 2026-09-27, subject to four clarifications incorporated before
   acceptance: local asynchronous development, UTF-8 enforcement, currency storage and rate precision, mobile
   compatibility spikes)
@@ -447,3 +448,65 @@ enforcement.
 - `70-security.mdc`: server/public config split, no secrets in source, no AWS credentials in clients.
 - ADR-001: AWS SDK only in `packages/integrations`; local development without AWS; no LocalStack; no provisioning.
 - This ADR changes no existing rule.
+
+## 27. Amendment: implementation validation of the Prisma foundation spike (2026-09-27)
+
+This amendment records the outcome that section 12 requires. It records evidence only: it changes no decision in
+this ADR and relaxes no rule, so no superseding ADR is needed. It was added at the maintainers' direction during the
+Wave B closeout.
+
+**Outcome: GO.** The Wave B Prisma foundation spike completed with a GO result. Evidence, versions and test details are
+in `docs/audits/prisma-foundation-spike.md`. Kysely and Drizzle were not evaluated because no criterion failed
+materially.
+
+| Section 12 criterion | Spike criterion | Result |
+| --- | --- | --- |
+| 1. Interactive transactions | A | PASS WITH LIMITATION |
+| 2. `SELECT ... FOR UPDATE` | B | PASS WITH LIMITATION |
+| 3. `FOR UPDATE SKIP LOCKED` batch claiming | C | PASS WITH LIMITATION |
+| 4. `BIGINT` <-> `bigint` | D | PASS |
+| 5. Custom SQL migrations via `migrate deploy` | E | PASS WITH LIMITATION |
+| 6. Multi-file schema | F | PASS |
+| 7. Type containment | G | PASS |
+
+**Material limitation (E).** Prisma's own drift representation does not fully represent certain custom SQL
+constructs, including CHECK constraints, partial indexes and grants. In the spike, Prisma's migration and drift
+checks (`migrate status`, `migrate diff --exit-code`) applied such migrations without error, but reported no
+difference after a CHECK constraint or partial index was dropped manually, and they do not compare grants at all.
+Prisma therefore does **not** validate these constructs natively.
+
+The accepted mitigation is explicit database verification with `packages/database/scripts/verify-schema.mjs`,
+in addition to Prisma's migration and drift checks. It runs after `migrate deploy` in CI and checks the PostgreSQL
+catalog directly for:
+
+- applied versus committed migrations;
+- each expected CHECK constraint and partial unique index;
+- the application role's exact table privileges, attributes, ownership, `CREATE` rights and default privileges;
+- destructive statements in committed migrations.
+
+Every future custom SQL object must be added to its expectations in the same change as the migration that creates it.
+
+**Other limitations (A, B, C).** These are accepted as documented in the audit:
+
+- Row-locking and `SKIP LOCKED` queries use parameterized `$queryRaw` inside `packages/database`, as section 12
+  permits.
+- A serialization failure surfaces as the driver adapter error `TransactionWriteConflict` rather than a SQLSTATE,
+  and must be mapped when a retry policy is introduced.
+- Interactive transactions hold a pooled connection and are bounded by configured timeouts.
+
+**Status of the conditional acceptance.** The conditional acceptance of Prisma in section 12 is now satisfied for
+the foundation. This is subject to:
+
+- the limitations documented above and in the audit;
+- continued verification. The criteria stay under regression test in CI (`packages/database/test/integration`).
+  `verify-schema.mjs` and the drift checks run on every change. A Prisma major-version upgrade requires the spike
+  criteria to be re-run before adoption.
+
+All other section 12 conditions remain in force.
+
+**Spike cleanup.** The temporary `foundation_spike` PostgreSQL schema was removed by the forward migration
+`20260928025500_remove_foundation_spike`, which records the maintainers' explicit approval. The original spike
+migration was not edited. The criteria's regression tests now run against test-only fixture tables that the
+integration-test setup creates in the disposable test database. These tables are not part of the migration chain.
+Because no Prisma model exists yet, Prisma's generated model API for `BigInt` fields is not currently exercised. The
+first repository built on a real model must cover it again.

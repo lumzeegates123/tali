@@ -5,7 +5,7 @@ import {
   describeObjectStorageProviderContract,
   describeQueueProviderContract,
   describeUnitOfWorkContract,
-} from "./contracts/index";
+} from "./contracts/index.js";
 import {
   FakeIdentityProvider,
   FixedClock,
@@ -13,7 +13,7 @@ import {
   InMemoryQueue,
   InMemoryUnitOfWork,
   SequentialIdGenerator,
-} from "./index";
+} from "./index.js";
 
 const START = "2026-09-27T10:00:00.000Z";
 

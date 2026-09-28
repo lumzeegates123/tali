@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { KernelError } from "./errors";
-import { isUuidV7, parseId, parseUuid, uuidVersion } from "./ids";
+import { KernelError } from "./errors.js";
+import { isUuidV7, parseId, parseUuid, uuidVersion } from "./ids.js";
 
 const V7 = "01928c6e-8b3a-7c4d-9e5f-0a1b2c3d4e5f";
 const V4 = "3b241101-e2bb-4255-8caf-4136c566a962";

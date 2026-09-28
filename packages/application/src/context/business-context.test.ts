@@ -1,14 +1,14 @@
 import { parseCurrencyCode, parseId, parseTimeZoneId } from "@tali/domain";
 import { describe, expect, it } from "vitest";
-import { definePermissionCatalogue, permissionSet } from "../authorization/permissions";
-import { LocationRequiredError, PermissionDeniedError, ValidationError } from "../errors/application-error";
-import type { BusinessContext } from "./business-context";
+import { definePermissionCatalogue, permissionSet } from "../authorization/permissions.js";
+import { LocationRequiredError, PermissionDeniedError, ValidationError } from "../errors/application-error.js";
+import type { BusinessContext } from "./business-context.js";
 import {
   isLocationBound,
   parseCorrelationId,
   requireContextPermission,
   requireLocationBound,
-} from "./business-context";
+} from "./business-context.js";
 
 const testPermissions = definePermissionCatalogue(["contract-test:read", "contract-test:write"]);
 

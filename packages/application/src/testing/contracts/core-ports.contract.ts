@@ -1,8 +1,8 @@
 import { isUuidV7 } from "@tali/domain";
 import { describe, expect, it } from "vitest";
-import type { Clock } from "../../ports/clock";
-import type { IdGenerator } from "../../ports/id-generator";
-import type { UnitOfWork } from "../../ports/unit-of-work";
+import type { Clock } from "../../ports/clock.js";
+import type { IdGenerator } from "../../ports/id-generator.js";
+import type { UnitOfWork } from "../../ports/unit-of-work.js";
 
 /**
  * UUIDv7 acceptance checks from ADR-002 section 14 (version and variant bits,
