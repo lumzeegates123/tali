@@ -114,21 +114,31 @@ describe("worker lifecycle (in-process, standalone Nest context)", () => {
     expect(queue.size).toBe(1);
   });
 
-  it("shuts down gracefully: in-flight work finishes, then the worker reports stopped", async () => {
+  it("shuts down gracefully: the in-flight message finishes, nothing new starts, then the worker reports stopped", async () => {
     let release!: () => void;
+    const started: string[] = [];
     const finished: string[] = [];
     const slow: MessageHandler = {
       type: "test.slow",
       async handle(message) {
+        started.push(message.id);
         await new Promise<void>((resolve) => {
           release = resolve;
         });
         finished.push(message.id);
       },
     };
+    const slowMessage = (id: string): QueueMessage => ({
+      id,
+      type: "test.slow",
+      schemaVersion: 1,
+      correlationId: id,
+      payload: null,
+    });
     const { runtime, queue, context: ctx, logs } = await start([slow]);
-    await queue.publish([{ id: "s-1", type: "test.slow", schemaVersion: 1, correlationId: "s-1", payload: null }]);
-    await waitFor(() => typeof release === "function");
+    // One batch of three: s-1 is in flight when shutdown begins; s-2 and s-3 were received but not started.
+    await queue.publish([slowMessage("s-1"), slowMessage("s-2"), slowMessage("s-3")]);
+    await waitFor(() => started.length === 1);
 
     const closing = ctx.close();
     context = undefined;
@@ -137,13 +147,27 @@ describe("worker lifecycle (in-process, standalone Nest context)", () => {
     release();
     await closing;
 
+    expect(started).toEqual(["s-1"]);
     expect(finished).toEqual(["s-1"]);
-    expect(queue.size).toBe(0);
+    expect(queue.size).toBe(2);
     expect(runtime.heartbeat.state).toBe("stopped");
+    expect(runtime.heartbeat.counts).toEqual({ processed: 1, failed: 0 });
+
+    await queue.publish([slowMessage("s-4")]);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(started).toEqual(["s-1"]);
+
     const order = logs
       .map((entry) => entry["msg"])
-      .filter((msg) => msg === "worker stopping" || msg === "worker stopped");
-    expect(order).toEqual(["worker stopping", "worker stopped"]);
+      .filter(
+        (msg) => typeof msg === "string" && /^(worker stopping|worker stopped|message released unhandled)/.test(msg),
+      );
+    expect(order).toEqual([
+      "worker stopping",
+      "message released unhandled: worker stopping",
+      "message released unhandled: worker stopping",
+      "worker stopped",
+    ]);
   });
 
   it("the loop is resolvable from the context (DI wiring with explicit tokens)", async () => {

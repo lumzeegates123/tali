@@ -31,6 +31,13 @@ const APPROVED_DESTRUCTIVE_MIGRATIONS = {
 /** Schemas that were removed and must never exist again. */
 const REMOVED_SCHEMAS = ["foundation_spike"];
 
+/**
+ * Test-only schemas (packages/database/test/support/fixtures.ts). They are
+ * created by the integration-test setup in the disposable test database only:
+ * never mentioned by a migration, never present in a verified database.
+ */
+const TEST_ONLY_SCHEMAS = ["test_fixtures"];
+
 /** Exact table privileges expected for the application role. */
 const EXPECTED_APP_PRIVILEGES = {};
 
@@ -58,6 +65,11 @@ for (const name of migrationNames) {
   const lines = readFileSync(join(migrationsDir, name, "migration.sql"), "utf8").split("\n");
   lines.forEach((line, index) => {
     const where = `${name}/migration.sql:${index + 1}`;
+    for (const schema of TEST_ONLY_SCHEMAS) {
+      if (new RegExp(`\\b${schema}\\b`, "i").test(line)) {
+        fail(`${where}: test-only schema ${schema} must never appear in the migration chain: ${line.trim()}`);
+      }
+    }
     if (line.includes(ALLOW_MARKER) && !approved) {
       fail(`${where}: ${ALLOW_MARKER} used in a migration without recorded approval: ${line.trim()}`);
     }
@@ -102,6 +114,10 @@ try {
   for (const schema of REMOVED_SCHEMAS) {
     const { rows } = await client.query(`SELECT 1 FROM pg_namespace WHERE nspname = $1`, [schema]);
     if (rows.length > 0) fail(`removed schema ${schema} exists`);
+  }
+  for (const schema of TEST_ONLY_SCHEMAS) {
+    const { rows } = await client.query(`SELECT 1 FROM pg_namespace WHERE nspname = $1`, [schema]);
+    if (rows.length > 0) fail(`test-only schema ${schema} exists; it belongs only to a running integration test`);
   }
 
   for (const check of EXPECTED_CHECKS) {
@@ -177,5 +193,5 @@ if (failures.length > 0) {
   process.exit(1);
 }
 console.log(
-  `Schema verification passed (${migrationNames.length} migration(s), ${Object.keys(APPROVED_DESTRUCTIVE_MIGRATIONS).length} approved destructive migration(s), ${Object.keys(EXPECTED_APP_PRIVILEGES).length} table grant sets, ${EXPECTED_CHECKS.length} CHECK, ${EXPECTED_PARTIAL_UNIQUE_INDEXES.length} partial unique index, removed schemas absent: ${REMOVED_SCHEMAS.join(", ")}).`,
+  `Schema verification passed (${migrationNames.length} migration(s), ${Object.keys(APPROVED_DESTRUCTIVE_MIGRATIONS).length} approved destructive migration(s), ${Object.keys(EXPECTED_APP_PRIVILEGES).length} table grant sets, ${EXPECTED_CHECKS.length} CHECK, ${EXPECTED_PARTIAL_UNIQUE_INDEXES.length} partial unique index, removed schemas absent: ${REMOVED_SCHEMAS.join(", ")}, test-only schemas absent: ${TEST_ONLY_SCHEMAS.join(", ")}).`,
 );

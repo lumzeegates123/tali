@@ -76,6 +76,7 @@ jobs:
           --health-timeout 3s
           --health-retries 30
     env:
+      TALI_ENV: test
       PRISMA_HIDE_UPDATE_MESSAGE: "1"
       MIGRATION_DATABASE_URL: postgresql://tali_owner:local-only-owner@localhost:55433/tali_test
       SHADOW_DATABASE_URL: postgresql://tali_owner:local-only-owner@localhost:55433/tali_test_shadow

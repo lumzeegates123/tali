@@ -105,18 +105,40 @@ describe("worker process", () => {
   // Windows cannot deliver SIGTERM to a child process (kill() terminates it
   // outright), so graceful shutdown on a real signal is verified on Linux (CI).
   it.skipIf(process.platform === "win32")(
-    "shuts down gracefully on SIGTERM",
+    "shuts down gracefully on SIGTERM and exits 0 without re-raising the signal",
     async () => {
       const heartbeatFile = join(dir, "heartbeat-sigterm.json");
-      const worker = spawnWorker({ ...BASE_ENV, WORKER_HEARTBEAT_FILE: heartbeatFile });
-      await waitForOutput(() => worker.output().stdout, /"msg":"worker ready"/);
+      const worker = spawnWorker({ ...BASE_ENV, WORKER_SMOKE_ON_START: "true", WORKER_HEARTBEAT_FILE: heartbeatFile });
+      await waitForOutput(() => worker.output().stdout, /"msg":"smoke check completed"/);
       worker.child.kill("SIGTERM");
-      await worker.exited;
-      const { stdout } = worker.output();
-      expect(stdout).toMatch(/"msg":"worker stopping","signal":"SIGTERM"/);
-      expect(stdout).toMatch(/"msg":"worker stopped"/);
-      const record = JSON.parse(await readFile(heartbeatFile, "utf8")) as { state: string };
-      expect(record.state).toBe("stopped");
+      const exit = await worker.exited;
+      const { stdout, stderr } = worker.output();
+
+      expect(exit).toEqual({ code: 0, signal: null });
+      expect(stderr).toBe("");
+
+      const entries = stdout
+        .split("\n")
+        .filter((line) => line.startsWith("{"))
+        .map((line) => JSON.parse(line) as { msg: string; signal?: string });
+      const LIFECYCLE = [
+        "worker ready",
+        "smoke check completed",
+        "shutdown requested",
+        "worker stopping",
+        "worker stopped",
+        "shutdown complete",
+      ];
+      expect(entries.map((entry) => entry.msg).filter((msg) => LIFECYCLE.includes(msg))).toEqual(LIFECYCLE);
+      expect(entries).toContainEqual(expect.objectContaining({ msg: "shutdown requested", signal: "SIGTERM" }));
+      const stoppingAt = entries.findIndex((entry) => entry.msg === "worker stopping");
+      const handledAfterStop = entries
+        .slice(stoppingAt)
+        .filter((entry) => entry.msg === "smoke check completed" || entry.msg.startsWith("message handling failed"));
+      expect(handledAfterStop).toEqual([]);
+
+      const record = JSON.parse(await readFile(heartbeatFile, "utf8")) as { state: string; processed: number };
+      expect(record).toMatchObject({ state: "stopped", processed: 1 });
     },
     20_000,
   );

@@ -24,7 +24,7 @@ export function useFixtureHarness(options: { readonly transactionTimeoutMs?: num
   const owner = ownerPool();
 
   beforeEach(async () => {
-    await truncateFixtures(owner);
+    await truncateFixtures();
   });
 
   afterAll(async () => {

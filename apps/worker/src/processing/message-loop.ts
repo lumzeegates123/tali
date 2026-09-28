@@ -20,8 +20,9 @@ const MAX_RETRY_DELAY_SECONDS = 60;
 /**
  * Polls the QueueProvider, dispatches each message to the handler for its
  * type, acknowledges on success and releases (with backoff) on failure.
- * Delivery is at-least-once. Graceful shutdown: stop polling, let the batch in
- * flight finish, then report `stopped`.
+ * Delivery is at-least-once. Graceful shutdown: stop polling, let the message
+ * being handled finish, release the rest of the received batch unhandled (it
+ * is redelivered later), then report `stopped`.
  */
 @Injectable()
 export class MessageLoop implements OnApplicationBootstrap, BeforeApplicationShutdown, OnApplicationShutdown {
@@ -31,6 +32,7 @@ export class MessageLoop implements OnApplicationBootstrap, BeforeApplicationShu
   readonly #logger: Logger;
   readonly #pollIntervalMs: number;
   #running = false;
+  #stopping = false;
   #timer: NodeJS.Timeout | undefined;
   #inFlight: Promise<void> = Promise.resolve();
 
@@ -55,9 +57,10 @@ export class MessageLoop implements OnApplicationBootstrap, BeforeApplicationShu
     this.#schedule(0);
   }
 
-  async beforeApplicationShutdown(signal?: string): Promise<void> {
-    this.#logger.info("worker stopping", { signal });
+  async beforeApplicationShutdown(): Promise<void> {
+    this.#logger.info("worker stopping");
     this.#running = false;
+    this.#stopping = true;
     clearTimeout(this.#timer);
     await this.#heartbeat.transition("stopping");
     await this.#inFlight;
@@ -75,6 +78,11 @@ export class MessageLoop implements OnApplicationBootstrap, BeforeApplicationShu
       visibilityTimeoutSeconds: VISIBILITY_TIMEOUT_SECONDS,
     });
     for (const delivery of received) {
+      if (this.#stopping) {
+        await this.#queue.release(delivery.receipt, 0);
+        this.#logger.info("message released unhandled: worker stopping", { messageId: delivery.message.id });
+        continue;
+      }
       await this.#dispatch(delivery);
     }
     return received.length;

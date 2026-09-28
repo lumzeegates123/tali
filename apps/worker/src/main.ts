@@ -4,28 +4,41 @@ import { createWorkerRuntime, publishSmokeMessage } from "./composition/worker-r
 
 /**
  * Worker process entry point: validate config (fail fast), compose, start the
- * message loop, and shut down gracefully on SIGTERM/SIGINT (Nest shutdown
- * hooks: stop polling, finish in-flight work, report stopped).
+ * message loop, and shut down gracefully on SIGTERM/SIGINT.
+ *
+ * Shutdown closes the Nest context, whose hooks stop intake, wait for the
+ * message in flight and report stopped. The process then exits 0 because
+ * nothing keeps the event loop alive; the signal is not re-raised. A shutdown
+ * that exceeds the grace period, or fails, exits 1.
  */
 async function main(): Promise<void> {
   const config = loadServerConfig(process.env);
   const runtime = createWorkerRuntime(config);
   const context = await createWorkerContext(runtime);
 
-  const forceExit = () => {
-    const timer = setTimeout(() => {
+  let shuttingDown = false;
+  const shutdown = async (signal: NodeJS.Signals): Promise<void> => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    runtime.logger.info("shutdown requested", { signal });
+    const forced = setTimeout(() => {
       runtime.logger.error("shutdown grace period exceeded; exiting", {
         gracePeriodMs: config.lifecycle.shutdownGracePeriodMs,
       });
       process.exit(1);
     }, config.lifecycle.shutdownGracePeriodMs);
-    timer.unref();
+    forced.unref();
+    try {
+      await context.close();
+      runtime.logger.info("shutdown complete");
+    } catch (error) {
+      runtime.logger.error("shutdown failed", { error });
+      process.exit(1);
+    }
   };
-  process.once("SIGTERM", forceExit);
-  process.once("SIGINT", forceExit);
-  context.enableShutdownHooks(["SIGTERM", "SIGINT"]);
+  process.once("SIGTERM", () => void shutdown("SIGTERM"));
+  process.once("SIGINT", () => void shutdown("SIGINT"));
 
-  await context.init();
   if (config.worker.smokeOnStart) {
     const id = await publishSmokeMessage(runtime);
     runtime.logger.info("smoke message published", { messageId: id });
