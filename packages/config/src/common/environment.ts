@@ -41,9 +41,3 @@ export function issuesFromZod(error: z.ZodError): ConfigurationIssue[] {
     message: issue.message,
   }));
 }
-
-/**
- * Names that must never be exposed to clients. Public variables whose name
- * matches are rejected even when they carry a public prefix.
- */
-export const SECRET_NAME_PATTERN = /SECRET|PASSWORD|PASSWD|TOKEN|PRIVATE|CREDENTIAL|DATABASE_URL|(^|_)KEY($|_)|DSN/;

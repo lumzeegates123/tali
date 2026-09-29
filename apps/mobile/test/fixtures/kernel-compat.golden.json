@@ -1,0 +1,122 @@
+{
+  "bigintPrimitive": "bigint",
+  "cases": {
+    "parse.minorUnits": {
+      "value": "125050"
+    },
+    "parse.decimal": {
+      "value": "125050"
+    },
+    "parse.decimalNegative": {
+      "value": "-5"
+    },
+    "parse.decimalZeroDigits": {
+      "value": "1250"
+    },
+    "parse.decimalThreeDigits": {
+      "value": "1005"
+    },
+    "parse.rejectsExcessPrecision": {
+      "error": "INVALID_MONEY_AMOUNT"
+    },
+    "parse.rejectsExponent": {
+      "error": "INVALID_MONEY_AMOUNT"
+    },
+    "parse.rejectsNegativeZero": {
+      "error": "INVALID_MONEY_AMOUNT"
+    },
+    "parse.rejectsNumber": {
+      "error": "INVALID_MONEY_AMOUNT"
+    },
+    "arithmetic.add": {
+      "value": "2000"
+    },
+    "arithmetic.subtract": {
+      "value": "-1500"
+    },
+    "arithmetic.negateAbs": {
+      "value": "-42|42"
+    },
+    "arithmetic.sum": {
+      "value": "6"
+    },
+    "arithmetic.sumEmpty": {
+      "value": "0"
+    },
+    "immutability.frozen": {
+      "value": "true|1"
+    },
+    "compare.order": {
+      "value": "-1,0,1"
+    },
+    "compare.equals": {
+      "value": "true|false"
+    },
+    "large.aboveMaxSafeInteger": {
+      "value": "18014398509481986"
+    },
+    "large.multiply": {
+      "value": "9007199317791387783186951"
+    },
+    "large.bigintRangeRoundTrip": {
+      "value": "9223372036854775807|-9223372036854775808|9223372036854775807|9223372036854775807"
+    },
+    "large.decimalFormat": {
+      "value": "90071992547409.93"
+    },
+    "format.decimal": {
+      "value": "1250.50|-0.05|1250|1.005"
+    },
+    "rounding.divideAndRound": {
+      "value": "HALF_EVEN:2,-2,2,-2,3,-3,2|HALF_UP:3,-3,2,-2,3,-3,2|HALF_DOWN:2,-2,1,-1,3,-3,2|UP:3,-3,2,-2,3,-3,3|DOWN:2,-2,1,-1,2,-2,2|CEILING:3,-2,2,-1,3,-2,3|FLOOR:2,-3,1,-2,2,-3,2"
+    },
+    "rounding.multiplyByFraction": {
+      "value": "HALF_EVEN:502|HALF_UP:503|HALF_DOWN:502|UP:503|DOWN:502|CEILING:503|FLOOR:502"
+    },
+    "rounding.rejectsDivisionByZero": {
+      "error": "DIVISION_BY_ZERO"
+    },
+    "allocation.byWeights": {
+      "value": "34,33,33"
+    },
+    "allocation.evenly": {
+      "value": "3334,3334,3333"
+    },
+    "allocation.negative": {
+      "value": "-33,-67"
+    },
+    "allocation.largeEvenly": {
+      "value": "1286742750677285,1286742750677285,1286742750677285,1286742750677285,1286742750677285,1286742750677284,1286742750677284"
+    },
+    "allocation.preservesTotal": {
+      "value": "9007199254740993"
+    },
+    "currency.rejectsMixedAdd": {
+      "error": "CURRENCY_MISMATCH"
+    },
+    "currency.rejectsMixedCompare": {
+      "error": "CURRENCY_MISMATCH"
+    },
+    "currency.rejectsMixedSum": {
+      "error": "CURRENCY_MISMATCH"
+    },
+    "wire.refusesImplicitJson": {
+      "error": "MONEY_NOT_SERIALIZABLE"
+    },
+    "wire.roundTrip": {
+      "value": "{\"amountMinor\":\"9007199254740993\",\"currency\":\"NGN\"}|string|true"
+    },
+    "wire.rejectsNumericAmount": {
+      "value": "false"
+    },
+    "time.lagosAfterUtcMidnight": {
+      "value": "2026-01-02"
+    },
+    "time.chicagoBeforeUtcMidnight": {
+      "value": "2025-12-31"
+    },
+    "time.rejectsUnknownZone": {
+      "error": "INVALID_TIME_ZONE"
+    }
+  }
+}

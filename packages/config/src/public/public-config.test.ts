@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { ConfigurationError, SECRET_NAME_PATTERN } from "../common/environment.js";
-import { SERVER_ONLY_ENV_KEYS } from "../common/server-keys.js";
+import { ConfigurationError } from "../common/environment.js";
+import { SECRET_NAME_PATTERN, SERVER_ONLY_ENV_KEYS } from "../common/server-keys.js";
 import { loadMobilePublicConfig, loadWebPublicConfig, PUBLIC_ENV_SUFFIXES } from "./public-config.js";
 
 describe("public config", () => {
@@ -24,28 +24,20 @@ describe("public config", () => {
     expect(JSON.stringify(config)).not.toContain("secret");
   });
 
-  it("rejects public variables that re-expose server secrets", () => {
-    for (const key of [
-      "NEXT_PUBLIC_DATABASE_URL",
-      "NEXT_PUBLIC_API_SECRET",
-      "NEXT_PUBLIC_COGNITO_CLIENT_SECRET",
-      "NEXT_PUBLIC_SQS_QUEUE_URL",
-    ]) {
-      expect(() =>
-        loadWebPublicConfig({
-          NEXT_PUBLIC_TALI_ENV: "local",
-          NEXT_PUBLIC_API_BASE_URL: "http://localhost:3000",
-          [key]: "value",
-        }),
-      ).toThrow(ConfigurationError);
-    }
-    expect(() =>
-      loadMobilePublicConfig({
-        EXPO_PUBLIC_TALI_ENV: "local",
-        EXPO_PUBLIC_API_BASE_URL: "http://localhost:3000",
-        EXPO_PUBLIC_PRIVATE_KEY: "value",
-      }),
-    ).toThrow(ConfigurationError);
+  it("rejects missing or malformed values, naming the public key but never the value", () => {
+    expect(() => loadWebPublicConfig({})).toThrow(ConfigurationError);
+    const error = (() => {
+      try {
+        loadWebPublicConfig({ NEXT_PUBLIC_TALI_ENV: "prod", NEXT_PUBLIC_API_BASE_URL: "ftp://x-secret-host" });
+      } catch (caught) {
+        return caught;
+      }
+      return undefined;
+    })();
+    expect(error).toBeInstanceOf(ConfigurationError);
+    expect(String(error)).toMatch(/NEXT_PUBLIC_TALI_ENV/);
+    expect(String(error)).toMatch(/NEXT_PUBLIC_API_BASE_URL/);
+    expect(String(error)).not.toContain("x-secret-host");
   });
 
   it("requires https outside local and test", () => {

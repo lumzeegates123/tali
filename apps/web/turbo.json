@@ -1,0 +1,17 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    "build": {
+      "env": ["NEXT_PUBLIC_*"],
+      "inputs": ["src/**", "public/**", "next.config.ts", "tsconfig.json", "package.json"],
+      "outputs": [".next/**", "!.next/cache/**"]
+    },
+    "typecheck": {
+      "inputs": ["src/**", "test/**", "e2e/**", "*.ts", "tsconfig.json", "package.json"]
+    },
+    "test": {
+      "inputs": ["src/**", "test/**", "vitest.config.ts", "tsconfig.json", "package.json"]
+    }
+  }
+}

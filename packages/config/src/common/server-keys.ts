@@ -1,4 +1,8 @@
 /**
+ * Server-side names only. Client runtime code (src/public) never imports this
+ * module, so these names cannot reach a web or mobile bundle through config;
+ * the build-time guard (src/public-build) and the client-bundle check use it.
+ *
  * Every environment variable read by @tali/config/server. The public loaders
  * reject any public variable that re-exposes one of these names, and the
  * server schema is tested to cover exactly this list.
@@ -37,3 +41,17 @@ export const SERVER_ONLY_ENV_KEYS: readonly string[] = [
   "LOCAL_OBJECT_STORAGE_DIR",
   "SQS_QUEUE_URL",
 ];
+
+/** Database URLs read only by the Prisma CLI and the integration-test tooling. */
+export const TOOLING_ONLY_ENV_KEYS: readonly string[] = [
+  "MIGRATION_DATABASE_URL",
+  "SHADOW_DATABASE_URL",
+  "TEST_DATABASE_URL",
+  "TEST_MIGRATION_DATABASE_URL",
+];
+
+/**
+ * Names that must never be exposed to clients. Public variables whose name
+ * matches are rejected even when they carry a public prefix.
+ */
+export const SECRET_NAME_PATTERN = /SECRET|PASSWORD|PASSWD|TOKEN|PRIVATE|CREDENTIAL|DATABASE_URL|(^|_)KEY($|_)|DSN/;

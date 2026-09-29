@@ -1,0 +1,21 @@
+{
+  "name": "@tali/client-bundle-check",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node src/cli.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@tali/config": "workspace:*"
+  },
+  "devDependencies": {
+    "@tali/tsconfig": "workspace:*",
+    "@types/node": "24.19.0",
+    "typescript": "6.0.3",
+    "vite": "8.3.1",
+    "vitest": "5.0.2"
+  }
+}

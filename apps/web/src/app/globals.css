@@ -1,0 +1,56 @@
+:root {
+  color-scheme: light;
+  font-family:
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    Roboto,
+    sans-serif;
+  line-height: 1.5;
+}
+
+body {
+  margin: 0;
+  background: #f7f7f5;
+  color: #1c1c1a;
+}
+
+.shell-header {
+  padding: 1rem 1.5rem;
+  background: #1c1c1a;
+  color: #f7f7f5;
+}
+
+.shell-header h1 {
+  margin: 0;
+  font-size: 1.5rem;
+}
+
+.shell-header p {
+  margin: 0;
+  opacity: 0.8;
+}
+
+.shell-main {
+  display: grid;
+  gap: 1rem;
+  max-width: 48rem;
+  padding: 1.5rem;
+}
+
+.shell-main section {
+  padding: 1rem 1.25rem;
+  border: 1px solid #d8d8d2;
+  border-radius: 0.5rem;
+  background: #ffffff;
+}
+
+dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.25rem 1rem;
+}
+
+dd {
+  margin: 0;
+}

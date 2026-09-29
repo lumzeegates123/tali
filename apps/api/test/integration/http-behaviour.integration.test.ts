@@ -114,6 +114,45 @@ describe("unexpected errors", () => {
   });
 });
 
+describe("CORS for the web client", () => {
+  const WEB_ORIGIN = "http://127.0.0.1:3911";
+  let api: ApiHarness;
+  beforeAll(async () => {
+    api = await startApi({ env: { API_CORS_ORIGINS: WEB_ORIGIN } });
+  });
+  afterAll(async () => {
+    await api.close();
+  });
+
+  it("allows a configured origin to send and read the correlation ID", async () => {
+    const preflight = await request(api.app.getHttpServer())
+      .options("/health/ready")
+      .set("origin", WEB_ORIGIN)
+      .set("access-control-request-method", "GET")
+      .set("access-control-request-headers", "x-correlation-id")
+      .expect(204);
+    expect(preflight.headers["access-control-allow-origin"]).toBe(WEB_ORIGIN);
+    expect(preflight.headers["access-control-allow-headers"]).toMatch(/x-correlation-id/i);
+
+    const response = await request(api.app.getHttpServer())
+      .get("/health/ready")
+      .set("origin", WEB_ORIGIN)
+      .set("x-correlation-id", "web-cors-1")
+      .expect(200);
+    expect(response.headers["access-control-allow-origin"]).toBe(WEB_ORIGIN);
+    expect(response.headers["access-control-expose-headers"]).toMatch(/x-correlation-id/i);
+    expect(response.headers["x-correlation-id"]).toBe("web-cors-1");
+  });
+
+  it("does not grant an unlisted origin", async () => {
+    const response = await request(api.app.getHttpServer())
+      .get("/health/live")
+      .set("origin", "http://evil.example")
+      .expect(200);
+    expect(response.headers["access-control-allow-origin"]).toBeUndefined();
+  });
+});
+
 describe("test-only routes in deployed environments", () => {
   it("the identity probe route does not exist when TALI_ENV is deployed", async () => {
     const config = loadServerConfig({

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "display": "Tali Expo app (React Native, Metro bundler resolution); mirrors expo/tsconfig.base on the strict Tali base",
+  "extends": "./base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM"],
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "customConditions": ["react-native"],
+    "jsx": "react-jsx",
+    "allowJs": false,
+    "esModuleInterop": true
+  }
+}

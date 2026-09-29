@@ -24,12 +24,14 @@
   },
   "devDependencies": {
     "@nestjs/testing": "12.1.0",
+    "@tali/domain": "workspace:*",
     "@tali/tsconfig": "workspace:*",
     "@types/express": "5.0.6",
     "@types/node": "24.19.0",
     "@types/supertest": "7.2.1",
     "supertest": "7.3.0",
     "typescript": "6.0.3",
+    "uuid": "14.0.2",
     "vite": "8.3.1",
     "vitest": "5.0.2"
   }

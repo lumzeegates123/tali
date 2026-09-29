@@ -6,12 +6,16 @@
     "base.json",
     "node-lib.json",
     "client-safe-lib.json",
-    "nest-app.json"
+    "nest-app.json",
+    "nextjs.json",
+    "expo.json"
   ],
   "exports": {
     "./base.json": "./base.json",
     "./node-lib.json": "./node-lib.json",
     "./client-safe-lib.json": "./client-safe-lib.json",
-    "./nest-app.json": "./nest-app.json"
+    "./nest-app.json": "./nest-app.json",
+    "./nextjs.json": "./nextjs.json",
+    "./expo.json": "./expo.json"
   }
 }
