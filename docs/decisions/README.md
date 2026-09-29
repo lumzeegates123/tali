@@ -35,8 +35,17 @@ If unsure, write one. ADRs are short.
 4. On approval, set status to `Accepted` with the date. Implementation may begin.
 5. ADRs are immutable once accepted. To change a decision, write a new ADR that supersedes it, and update the old
    one's status to `Superseded by ADR-NNN`.
+6. **Partial supersession.** When a new ADR replaces only a specific part of an accepted ADR (for example one
+   section's implementation wording), the earlier ADR is **not** marked `Superseded`:
+   - the earlier ADR keeps its `Accepted` status, and its text is not edited;
+   - the new ADR states in its header exactly which part it supersedes (`Supersedes: only ... of ADR-NNN section X`);
+   - the index below records the partial supersession in the rows of both ADRs;
+   - everything in the earlier ADR that the new ADR does not name remains in force.
 
-Statuses: `Proposed`, `Accepted`, `Rejected`, `Deprecated`, `Superseded by ADR-NNN`.
+   Readers of the earlier ADR must check the index for partial supersessions before relying on a section.
+
+Statuses: `Proposed`, `Accepted`, `Rejected`, `Deprecated`, `Superseded by ADR-NNN`. A partial supersession is not a
+status; it is recorded in the index as described in step 6.
 
 ## Template
 
@@ -117,8 +126,9 @@ implementation decisions are made.
 | [ADR-001](ADR-001-aws-infrastructure.md) | AWS-native infrastructure | Accepted (2026-09-27) |
 | [ADR-002](ADR-002-application-foundation.md) | Application foundation | Accepted (2026-09-27) |
 | ADR-003 | AWS foundation topology | Reserved (number referenced by ADR-002; not yet drafted) |
-| [ADR-004](ADR-004-mutation-protocol.md) | Mutation protocol: idempotency, audit, transaction boundary, outbox and retries | Accepted (2026-09-29) |
+| [ADR-004](ADR-004-mutation-protocol.md) | Mutation protocol: idempotency, audit, transaction boundary, outbox and retries | Accepted (2026-09-29). Partially superseded: only the Zod-specific implementation wording of section 8.3 is replaced by ADR-006; everything else remains in force. |
 | [ADR-005](ADR-005-identity-tenancy-authorization.md) | Identity, tenancy and authorization | Accepted (2026-09-29) |
+| [ADR-006](ADR-006-audit-payload-schema-boundary.md) | Audit payload schema boundary | Accepted (2026-09-29). Supersedes only the Zod-specific implementation wording of ADR-004 section 8.3 (partial supersession). |
 
 "Reserved" is not an ADR status. It marks a number that an accepted ADR already refers to, so the number is not
 reused for another decision.
