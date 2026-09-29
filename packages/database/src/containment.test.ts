@@ -73,7 +73,9 @@ describe("type containment (criterion G)", () => {
     expect(internal.some(([, text]) => /generated\/prisma/u.test(text))).toBe(true);
   });
 
-  it("the public root exports only createDatabase at runtime", async () => {
+  // Importing the root loads the Prisma runtime, the pg adapter and @tali/application through Vite (about 2 s
+  // idle); under the full parallel `pnpm verify` load that exceeds Vitest's 5 s default.
+  it("the public root exports only createDatabase at runtime", { timeout: 20_000 }, async () => {
     const root = await import("./index.js");
     expect(Object.keys(root).sort()).toEqual(["createDatabase"]);
   });

@@ -1,10 +1,11 @@
 # Tali Build 1: identity, tenancy, roles and devices (plan)
 
-Status: **APPROVED IN PRINCIPLE (2026-09-29). Slice 0 complete.**
+Status: **APPROVED IN PRINCIPLE (2026-09-29). Slices 0 and 1 complete.**
 `docs/decisions/ADR-004-mutation-protocol.md` and `docs/decisions/ADR-005-identity-tenancy-authorization.md` are
 **ACCEPTED (2026-09-29)**. Slice 1 found a conflict between ADR-004 section 8.3 (Zod audit schemas) and ADR-002
 section 6 (application depends only on domain). `docs/decisions/ADR-006-audit-payload-schema-boundary.md` resolves it
-and is **ACCEPTED (2026-09-29)**, so **Slice 1 is unblocked (not started)**; its guidance is in section 13. The Cognito slice (Slice 6) remains blocked on ADR-003 (AWS foundation topology, reserved). Where this
+and is **ACCEPTED (2026-09-29)**. **Slice 1 is complete (2026-09-29)**; its guidance is in section 13 and its
+report in `docs/audits/build-1-slice-1.md`. The Cognito slice (Slice 6) remains blocked on ADR-003 (AWS foundation topology, reserved). Where this
 plan and an ADR differ, the ADR is authoritative (`AGENTS.md` section 4).
 
 Scope: implementation step 2 of `docs/product/mvp-scope.md` (identity / tenancy). There is no inventory, sales,
@@ -15,7 +16,7 @@ payments, accounting, purchasing, AI or offline sync in this build.
 | Slice | Content | Status |
 |---|---|---|
 | 0 | Draft ADR-004 (mutation protocol) and ADR-005 (identity/tenancy/authorization), the README index (reserve ADR-003) and the mvp-scope roles amendment. Human acceptance gate. | Complete (ADR-004 and ADR-005 accepted 2026-09-29) |
-| 1 | Domain invariants, permission catalogue and role mapping, `AuthenticatedUserContext`, `authTime`, use cases with in-memory fakes and tests (guidance in section 13) | Unblocked (ADR-006 accepted 2026-09-29); not started |
+| 1 | Domain invariants, permission catalogue and role mapping, `AuthenticatedUserContext`, `authTime`, use cases with in-memory fakes and tests (guidance in section 13) | Complete (2026-09-29; `docs/audits/build-1-slice-1.md`) |
 | 2 | Prisma schema and SQL migration (composite FKs, CHECKs, partial unique indexes, grants, currencies reference data), repositories, `verify-schema.mjs` expectations, integration and concurrency tests | Not started |
 | 3 | Auth guard and `BusinessContext` resolver, P0 endpoints, `LocalIdentityProvider` in `packages/integrations` (JWT library dependency to review), API security end-to-end tests | Not started |
 | 4 | Web and mobile onboarding flows for the P0 use cases | Not started |
@@ -375,8 +376,8 @@ Payloads are bounded: only the changed fields such as role and status. They neve
 
 ## 13. Slice 1 implementation guidance (2026-09-29)
 
-Slice 1 was stopped before any code was written, because of the conflict in section 13.1. It is now unblocked
-(ADR-006 accepted 2026-09-29) and not started. This section records the Slice 1 guidance approved by the human
+Slice 1 was stopped before any code was written, because of the conflict in section 13.1. It was unblocked by
+ADR-006 (accepted 2026-09-29) and completed on 2026-09-29 (`docs/audits/build-1-slice-1.md`). This section records the Slice 1 guidance approved by the human
 maintainer on 2026-09-29. It does not change the design of later slices.
 
 ### 13.1 Audit payload schemas (ADR-006, accepted)
@@ -499,4 +500,4 @@ it is the **UTF-8 byte length**. Unicode code-point lengths are not used. The wo
   - processing of the correlation header;
   - device-header handling (Slice 5 onward);
   - default-location resolution at the transport level.
-- This service is part of Slice 1, which is unblocked and not started.
+- This service is part of Slice 1 and is implemented (`createBusinessContextResolver`).

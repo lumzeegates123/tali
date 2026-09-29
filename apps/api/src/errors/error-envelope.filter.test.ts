@@ -4,9 +4,13 @@ import {
   AuthenticationError,
   ConflictError,
   DependencyUnavailableError,
+  IdempotencyKeyRequiredError,
+  IdempotencyKeyReusedError,
   LocationRequiredError,
   NotFoundError,
   PermissionDeniedError,
+  UserDisabledError,
+  UserNotRegisteredError,
   ValidationError,
 } from "@tali/application";
 import { ErrorEnvelopeSchema } from "@tali/shared";
@@ -46,6 +50,10 @@ describe("ErrorEnvelopeFilter", () => {
     [new ConflictError("already exists"), 409, "CONFLICT"],
     [new LocationRequiredError(), 422, "LOCATION_REQUIRED"],
     [new DependencyUnavailableError("db down"), 503, "DEPENDENCY_UNAVAILABLE"],
+    [new UserNotRegisteredError(), 403, "USER_NOT_REGISTERED"],
+    [new UserDisabledError(), 403, "USER_DISABLED"],
+    [new IdempotencyKeyRequiredError(), 400, "IDEMPOTENCY_KEY_REQUIRED"],
+    [new IdempotencyKeyReusedError(), 409, "IDEMPOTENCY_KEY_REUSED"],
   ] as const)("maps %s to %i %s", (error: ApplicationError, status, code) => {
     const result = run(error);
     expect(result.status).toBe(status);

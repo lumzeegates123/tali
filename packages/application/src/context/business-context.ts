@@ -1,12 +1,9 @@
-import type { CurrencyCode, Id, TimeZoneId } from "@tali/domain";
+import type { BusinessId, CurrencyCode, Id, LocationId, MembershipId, TimeZoneId, UserId } from "@tali/domain";
 import type { Permission, PermissionSet } from "../authorization/permissions.js";
 import { requirePermission } from "../authorization/permissions.js";
 import { LocationRequiredError, ValidationError } from "../errors/application-error.js";
 
-export type BusinessId = Id<"Business">;
-export type LocationId = Id<"Location">;
-export type UserId = Id<"User">;
-export type MembershipId = Id<"Membership">;
+export type { BusinessId, LocationId, MembershipId, UserId };
 export type DeviceId = Id<"Device">;
 
 declare const correlationIdBrand: unique symbol;

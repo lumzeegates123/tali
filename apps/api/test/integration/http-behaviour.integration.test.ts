@@ -77,7 +77,7 @@ describe("HTTP behaviour", () => {
     it("accepts a token verified by the IdentityProvider port and exposes only the identity", async () => {
       const token = api.identity.issueToken("user-subject-1");
       const response = await http().get("/__test/identity").set("authorization", `Bearer ${token}`).expect(200);
-      expect(response.body).toEqual({ provider: "fake", subject: "user-subject-1" });
+      expect(response.body).toEqual({ provider: "LOCAL", subject: "user-subject-1" });
     });
 
     it("rejects a revoked token", async () => {
