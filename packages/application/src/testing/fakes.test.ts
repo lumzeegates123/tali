@@ -82,4 +82,37 @@ describe("InMemoryUnitOfWork", () => {
     ).rejects.toThrow("fail");
     expect([unitOfWork.commits, unitOfWork.rollbacks]).toEqual([1, 1]);
   });
+
+  it("restores enlisted participants when a run fails", async () => {
+    let state = ["initial"];
+    const unitOfWork = new InMemoryUnitOfWork().enlist({
+      captureState: () => {
+        const saved = [...state];
+        return () => {
+          state = saved;
+        };
+      },
+    });
+    await unitOfWork.run(async () => {
+      state.push("committed");
+    });
+    await expect(
+      unitOfWork.run(async () => {
+        state.push("rolled back");
+        throw new Error("fail");
+      }),
+    ).rejects.toThrow("fail");
+    expect(state).toEqual(["initial", "committed"]);
+  });
+
+  it("rejects a scope used after its run finished", async () => {
+    const unitOfWork = new InMemoryUnitOfWork();
+    const scope = await unitOfWork.run(async (active) => {
+      unitOfWork.assertActive(active);
+      return active;
+    });
+    expect(() => {
+      unitOfWork.assertActive(scope);
+    }).toThrow(/outside its unit of work/);
+  });
 });

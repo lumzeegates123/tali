@@ -18,8 +18,10 @@ export function describeIdentityProviderContract(
       const { provider, issueValidToken } = await setup();
       const identity = await provider.verifyAccessToken(await issueValidToken("subject-1"));
       expect(identity.subject).toBe("subject-1");
-      expect(identity.provider.length).toBeGreaterThan(0);
+      expect(["COGNITO", "LOCAL"]).toContain(identity.provider);
       expect(identity.expiresAt.getTime()).toBeGreaterThan(identity.issuedAt.getTime());
+      expect(Number.isNaN(identity.authTime.getTime())).toBe(false);
+      expect(identity.authTime.getTime()).toBeLessThanOrEqual(identity.issuedAt.getTime());
     });
 
     it("rejects an expired token", async () => {

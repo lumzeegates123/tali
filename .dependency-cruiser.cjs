@@ -34,9 +34,13 @@ module.exports = {
     {
       name: "no-undeclared-npm-dependency",
       severity: "error",
-      comment: "Packages may import only npm packages declared in their own package.json.",
+      comment:
+        "Packages may import only npm packages declared in their own package.json. dependency-cruiser also reports npm-no-pkg for a package named in peerDependenciesMeta, so an edge that is declared in a real dependency field is not undeclared.",
       from: {},
-      to: { dependencyTypes: ["npm-no-pkg", "npm-unknown"] },
+      to: {
+        dependencyTypes: ["npm-no-pkg", "npm-unknown"],
+        dependencyTypesNot: ["npm", "npm-dev", "npm-optional", "npm-peer"],
+      },
     },
     {
       name: "production-not-to-dev-dependency",
@@ -135,6 +139,17 @@ module.exports = {
       comment: "No frameworks, ORMs, SDKs, queue clients, HTTP libraries or Node.js built-ins in application source.",
       from: { path: "^packages/application/src/", pathNot: [TEST_FILE, PACKAGE_TEST_CONTRACTS] },
       to: { dependencyTypes: ["core", "npm", "npm-optional", "npm-peer"], pathNot: "^packages/domain/" },
+    },
+    {
+      name: "application-no-external-runtime-dependencies",
+      severity: "error",
+      comment:
+        "ADR-006: application source, including the port contract suites, imports no external npm package, whatever its package.json declares. Its only runtime dependencies are approved workspace packages (currently @tali/domain; the manifest is checked by tooling/dependency-cruiser/application-policy.mjs). Contract suites may import the vitest test runner; application-framework-free keeps it out of other production source.",
+      from: { path: "^packages/application/src/", pathNot: TEST_FILE },
+      to: {
+        dependencyTypes: ["npm", "npm-dev", "npm-optional", "npm-peer", "npm-bundled", "npm-no-pkg", "npm-unknown"],
+        pathNot: ["^packages/domain/", "node_modules/vitest/"],
+      },
     },
     {
       name: "application-testing-is-not-production",
@@ -272,8 +287,10 @@ module.exports = {
     // Prisma's generated client has internal import cycles; it is vendor output, reached only from packages/database.
     doNotFollow: { path: ["node_modules", "^packages/database/src/generated/"] },
     exclude: {
+      // Build output only: npm packages under node_modules often ship their entry points in dist/, and excluding
+      // them would drop the edge so that no rule could see the import.
       path: [
-        "(^|/)(dist|coverage|\\.turbo|\\.next|\\.expo|playwright-report|test-results)/",
+        "^(?:(?!node_modules/).)*(^|/)(dist|coverage|\\.turbo|\\.next|\\.expo|playwright-report|test-results)/",
         "^apps/mobile/(android|ios)/",
         "^apps/web/next-env\\.d\\.ts$",
       ],
