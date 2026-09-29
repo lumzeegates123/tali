@@ -86,17 +86,18 @@ additionally requires the foundation infrastructure ADR to be accepted.
 
 - Record architecture decisions (adopt this process)
 - Foundation infrastructure (VPC/network topology, AWS Region, account structure, web hosting confirmation, RDS,
-  Cognito, SQS, KMS, observability and CI/CD details deferred by ADR-001 section 12)
+  Cognito, SQS, KMS, observability and CI/CD details deferred by ADR-001 section 12). Number reserved: ADR-003.
 - Monorepo tooling and repository layout
 - Backend runtime version
 - Data access layer (ORM/query layer) on PostgreSQL
 - Money and decimal representation
-- Authorization model (roles, permissions, offline permissions) and its mapping to the authentication provider
+- Authorization model (roles, permissions, offline permissions) and its mapping to the authentication provider.
+  Decided in ADR-005 (accepted); offline permissions remain with the sync ADR.
 - Ledger design and default chart of accounts (requires accounting review)
 - Configurable tax treatment model (requires accounting review; no hardcoded jurisdiction rules)
 - Inventory valuation method
-- Audit log design
-- Idempotency and outbox design
+- Audit log design. Decided in ADR-004 (accepted).
+- Idempotency and outbox design. Decided in ADR-004 (accepted).
 - Offline command queue, local storage, sync lifecycle and conflict (NEEDS_ATTENTION) protocol for the mobile app
 - Offline human receipt number format (business/device-scoped; UUID remains the transaction identity)
 - Device registration, revocation and local data retention
@@ -115,3 +116,9 @@ implementation decisions are made.
 |-----|-------|--------|
 | [ADR-001](ADR-001-aws-infrastructure.md) | AWS-native infrastructure | Accepted (2026-09-27) |
 | [ADR-002](ADR-002-application-foundation.md) | Application foundation | Accepted (2026-09-27) |
+| ADR-003 | AWS foundation topology | Reserved (number referenced by ADR-002; not yet drafted) |
+| [ADR-004](ADR-004-mutation-protocol.md) | Mutation protocol: idempotency, audit, transaction boundary, outbox and retries | Accepted (2026-09-29) |
+| [ADR-005](ADR-005-identity-tenancy-authorization.md) | Identity, tenancy and authorization | Accepted (2026-09-29) |
+
+"Reserved" is not an ADR status. It marks a number that an accepted ADR already refers to, so the number is not
+reused for another decision.

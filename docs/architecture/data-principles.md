@@ -196,7 +196,8 @@ Rules:
 Every sensitive mutation writes an append-only audit record in the same transaction. All financial and inventory
 mutations, permission changes and sensitive settings changes are sensitive. Audit records contain at least:
 
-- `business_id`, audit ID, timestamp (UTC)
+- `business_id` (for platform audit records, the subject user instead; see "Audit scope" below), audit ID,
+  timestamp (UTC)
 - actor type and ID (user, staff, system job, integration, AI proposal with approving user) and device ID where relevant
 - location ID where relevant
 - action (e.g. `sale.posted`, `payment.reversed`, `inventory.adjusted`, `role.granted`)
@@ -208,6 +209,15 @@ mutations, permission changes and sensitive settings changes are sensitive. Audi
 
 Audit records are insert-only for the application; they are never updated or deleted by application code.
 
+Audit scope (`docs/decisions/ADR-004-mutation-protocol.md` section 8):
+
+- **Business audit records** cover every event about a business's data. They are tenant-owned and always carry a
+  non-null `business_id`, like every other tenant-owned record.
+- **Platform audit records** cover events that concern a user's platform identity when no business exists or is
+  involved, such as `user.registered` and `identity.linked`. They are global platform records, not tenant-owned
+  records. They are stored separately and carry the subject user instead of a `business_id`.
+- An event about a business is never written as a platform audit record to avoid the `business_id` requirement.
+
 Audit payload safety: before/after data uses **bounded, purpose-specific, redacted schemas** per audit action.
 Complete entities are never automatically serialized into audit records. Secrets, tokens, credentials, raw media or
 document content, full account/card numbers and unnecessary sensitive personal attributes are never copied into
@@ -217,6 +227,12 @@ audit payloads; media and evidence are referenced by ID.
 
 - All mutation entry points accept an idempotency key or rely on a natural unique key, stored with a unique
   constraint scoped by `business_id` (or by provider for external events). Offline commands use their UUID.
+- Keyed idempotency has two scopes (`docs/decisions/ADR-004-mutation-protocol.md` section 4):
+  - **Business scope:** for mutations within a business. The key is unique per business and actor. These records are
+    tenant-owned and carry a non-null `business_id`.
+  - **User scope:** only for user-level mutations that run before a business exists, for example creating a
+    business. The key is unique per user. These records are global platform records, not tenant-owned records.
+  - Once a business exists, its mutations always use the business scope.
 
 ## 14. Time
 

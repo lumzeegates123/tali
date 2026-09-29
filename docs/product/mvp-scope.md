@@ -1,7 +1,8 @@
 # MVP Scope
 
 Status: **APPROVED** product decisions (approved 2026-09-27; amended 2026-09-27 after the governance audit;
-amended 2026-09-27 to record the AWS infrastructure direction).
+amended 2026-09-27 to record the AWS infrastructure direction; amended 2026-09-29 to record the initial private-pilot
+role vocabulary).
 Sections below are APPROVED unless marked otherwise. The "Open decisions" section is **not** approved and must
 not be treated as decided. Changes to this scope must be recorded here (with date and reason), or in an ADR when
 they affect architecture. Precedence between documents is defined in `AGENTS.md` section 4.
@@ -47,6 +48,18 @@ In the private-pilot MVP:
 - **no branch-management UI**;
 - **no multi-location consolidated reporting**;
 - **no transfer workflow** (`TRANSFER` is a post-MVP inventory movement type).
+
+### Staff roles
+
+Approved 2026-09-29 (maintainer decision recorded during Build 1 planning).
+
+- Initial private-pilot roles: **`OWNER`**, **`MANAGER`**, **`CASHIER`**, **`STOCK_KEEPER`**, **`ACCOUNTANT`**.
+- **No custom-role designer** in Build 1.
+- Invitation links may grant **`MANAGER`**, **`CASHIER`**, **`STOCK_KEEPER`** or **`ACCOUNTANT`**. An invitation may
+  **not** grant `OWNER`.
+- `OWNER` is granted only later, through an existing owner's authorized membership-management action.
+- The permissions each role receives are an architecture decision, recorded in
+  `docs/decisions/ADR-005-identity-tenancy-authorization.md`. Which roles may operate offline remains open decision 3.
 
 ### Offline and intermittent connectivity
 
