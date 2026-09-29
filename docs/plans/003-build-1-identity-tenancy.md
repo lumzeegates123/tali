@@ -2,8 +2,10 @@
 
 Status: **APPROVED IN PRINCIPLE (2026-09-29). Slice 0 complete.**
 `docs/decisions/ADR-004-mutation-protocol.md` and `docs/decisions/ADR-005-identity-tenancy-authorization.md` are
-**ACCEPTED (2026-09-29)**, so Slice 1 is unblocked. The Cognito slice (Slice 6) remains blocked on ADR-003 (AWS
-foundation topology, reserved). Where this plan and an ADR differ, the ADR is authoritative (`AGENTS.md` section 4).
+**ACCEPTED (2026-09-29)**. Slice 1 found a conflict between ADR-004 section 8.3 (Zod audit schemas) and ADR-002
+section 6 (application depends only on domain). `docs/decisions/ADR-006-audit-payload-schema-boundary.md` resolves it
+and is **ACCEPTED (2026-09-29)**, so **Slice 1 is unblocked (not started)**; its guidance is in section 13. The Cognito slice (Slice 6) remains blocked on ADR-003 (AWS foundation topology, reserved). Where this
+plan and an ADR differ, the ADR is authoritative (`AGENTS.md` section 4).
 
 Scope: implementation step 2 of `docs/product/mvp-scope.md` (identity / tenancy). There is no inventory, sales,
 payments, accounting, purchasing, AI or offline sync in this build.
@@ -13,7 +15,7 @@ payments, accounting, purchasing, AI or offline sync in this build.
 | Slice | Content | Status |
 |---|---|---|
 | 0 | Draft ADR-004 (mutation protocol) and ADR-005 (identity/tenancy/authorization), the README index (reserve ADR-003) and the mvp-scope roles amendment. Human acceptance gate. | Complete (ADR-004 and ADR-005 accepted 2026-09-29) |
-| 1 | Domain invariants, permission catalogue and role mapping, `AuthenticatedUserContext`, `authTime`, use cases with in-memory fakes and tests | Unblocked; not started |
+| 1 | Domain invariants, permission catalogue and role mapping, `AuthenticatedUserContext`, `authTime`, use cases with in-memory fakes and tests (guidance in section 13) | Unblocked (ADR-006 accepted 2026-09-29); not started |
 | 2 | Prisma schema and SQL migration (composite FKs, CHECKs, partial unique indexes, grants, currencies reference data), repositories, `verify-schema.mjs` expectations, integration and concurrency tests | Not started |
 | 3 | Auth guard and `BusinessContext` resolver, P0 endpoints, `LocalIdentityProvider` in `packages/integrations` (JWT library dependency to review), API security end-to-end tests | Not started |
 | 4 | Web and mobile onboarding flows for the P0 use cases | Not started |
@@ -178,7 +180,8 @@ Each slice is a separate PR. Slice 0 contains documents only and ends at a human
 ## 5. Request handling and API
 
 - **Business selection:** the route `/v1/businesses/:businessId/...`, as in [.cursor/rules/50-api.mdc](../../.cursor/rules/50-api.mdc) and plan 001 section 8. There is no hidden server-side "current business". Clients remember the last business they selected as a UX preference only.
-- **Context resolver, one per request** (API guard, then resolver), in this order:
+- **Context resolver, one per request** (API guard, then resolver), in this order. Steps 2 to 6 are a framework-free
+  application service built in Slice 1; the transport parts stay in Slice 3 (section 13.5):
   1. Authentication: verify the token through the `IdentityProvider` port.
   2. Look up the external identity, then the user. A DISABLED user gets `403`.
   3. Parse and validate `businessId`.
@@ -369,3 +372,131 @@ Audit events, all written in the same transaction as the change:
 - platform events `user.registered` and `identity.linked`, in `platform_audit_records` (ADR-004 section 8).
 
 Payloads are bounded: only the changed fields such as role and status. They never contain token hashes, credentials or tokens.
+
+## 13. Slice 1 implementation guidance (2026-09-29)
+
+Slice 1 was stopped before any code was written, because of the conflict in section 13.1. It is now unblocked
+(ADR-006 accepted 2026-09-29) and not started. This section records the Slice 1 guidance approved by the human
+maintainer on 2026-09-29. It does not change the design of later slices.
+
+### 13.1 Audit payload schemas (ADR-006, accepted)
+
+- ADR-004 section 8.3 requires a Zod schema for each audit action. ADR-002 section 6 allows `packages/application`
+  to depend on `packages/domain` only, and the `application-framework-free` dependency-cruiser rule enforces that.
+- [ADR-006](../decisions/ADR-006-audit-payload-schema-boundary.md) (ACCEPTED 2026-09-29) keeps
+  `packages/application` free of runtime dependencies. It supersedes **only** the Zod-specific wording of ADR-004
+  section 8.3. ADR-004 remains ACCEPTED, and its other audit requirements remain in force.
+- Slice 1 implements `defineAuditAction` with the small application-owned payload definition mechanism specified
+  in ADR-006 section 3. Zod is not added to `packages/application`.
+
+### 13.2 Fingerprint canonicalization and byte framing (approved 2026-09-29)
+
+ADR-004 section 5 is unchanged, including its UTF-8 explicit-length semantics: where the encoding carries a length,
+it is the **UTF-8 byte length**. Unicode code-point lengths are not used. The work is split as follows.
+
+- **`packages/application` owns the semantic canonicalization** (`canonicalCommandEncoding`, version 1). It covers:
+  - type tags;
+  - deterministic object-key ordering (by Unicode code point of the key);
+  - defaults applied before encoding (ADR-004 section 5 rule 3);
+  - the distinction between absent and `null`;
+  - exact integer representation (`bigint` and safe integers as canonical base-10 strings, tagged by type; `-0` and
+    non-integers rejected);
+  - instant representation (ISO 8601 UTC, milliseconds, `Z`) and business dates (`YYYY-MM-DD`);
+  - array ordering (preserved);
+  - declared set semantics (an element list marked as a set);
+  - Unicode NFC applied for fingerprint purposes only, as accepted in ADR-004;
+  - rejection of values the rules do not allow, including strings that are not well-formed Unicode (lone
+    surrogates), since they have no UTF-8 encoding.
+
+  Its output is a **structured canonical fingerprint representation**: a typed tree of tagged nodes (null, boolean,
+  enum literal, typed integer, string, instant, business date, array, set, object with ordered entries), headed by
+  `operation`, `commandSchemaVersion` and the fingerprint version. It is never a raw, unframed string.
+- **`packages/application` does not encode UTF-8 bytes and does not implement SHA-256.** It introduces no
+  `node:crypto`, Web Crypto, `TextEncoder`, hand-written UTF-8 encoder or hand-written cryptographic code.
+- **Port: `FingerprintHasher`** (application port, Tali terminology). It accepts the structured canonical fingerprint
+  representation and returns the 32-byte command fingerprint with its fingerprint version.
+- **The real adapter:**
+  - deterministically encodes the approved representation as UTF-8 bytes, framing each value with its type tag and,
+    where ADR-004 requires a length, an explicit **UTF-8 byte length**;
+  - orders the elements of a declared set by their canonical byte encoding (ADR-004 section 5 rule 9), since that
+    order is defined over bytes;
+  - computes SHA-256 with the approved platform cryptography (Node.js `node:crypto`), with no third-party crypto
+    package;
+  - is contract-tested against standard SHA-256 test vectors (for example the FIPS 180-2 examples) and against
+    canonical framing test vectors: given representations with their expected framed bytes and digests, including
+    non-ASCII strings whose UTF-8 byte length differs from their code-point count.
+- **Framing specification.** The exact byte layout of fingerprint version 1 (tags, length encoding, ordering of set
+  elements) is written down once, next to the `FingerprintHasher` port, together with the framing vectors. Changing
+  it creates a new fingerprint version (ADR-004 section 5).
+- **Contract suite.** It lives in `packages/application/src/testing/contracts`, holding expected bytes and digests as
+  hex constants, so it needs no crypto code. The real adapter runs it where the adapter lives.
+- **Application tests** use a deterministic fake `FingerprintHasher`. The fake is not a SHA-256 implementation and
+  does not encode UTF-8. It returns a distinct, deterministic 32-byte value for each distinct representation (for
+  example from a lookup table keyed on structural equality), and it records its inputs.
+
+### 13.3 FingerprintHasher adapter location (approved 2026-09-29)
+
+- The real `FingerprintHasher` belongs in **`packages/integrations`**, in a narrow platform-crypto adapter area (for
+  example `packages/integrations/src/platform/crypto/`).
+- It does **not** belong in `packages/database`. Cryptographic hashing and UTF-8 encoding are a runtime/platform
+  adapter concern, not persistence, and `packages/database` stays focused on PostgreSQL/Prisma infrastructure.
+- It is not implemented in Slice 1. Slice 1 uses the fake. The adapter is built when the API composes the first keyed
+  mutation (with `packages/integrations`, Slice 3).
+
+### 13.4 Business time-zone contract (approved 2026-09-29)
+
+- A Business requires a valid, **canonical IANA time-zone identifier**. The generic kernel parser
+  (`parseTimeZoneId`) is not sufficient on its own, and Slice 1 does not redesign it or other time primitives.
+- **"Canonical time zone"** means the canonical primary IANA/tzdb zone identifier according to a **Tali-controlled,
+  versioned time-zone reference dataset**. The runtime's Node/ICU canonical result is **not** the authoritative
+  stored form merely because the runtime accepts it, and Business persistence never depends on runtime-specific
+  `Intl` naming.
+- **Behavior:**
+
+  | Input | Result |
+  |---|---|
+  | Canonical IANA zone, e.g. `Africa/Lagos` | Accepted as is: `Africa/Lagos` |
+  | Recognized zone in the wrong case, e.g. `africa/lagos` | May be accepted and normalized to the canonical spelling: `Africa/Lagos` |
+  | Recognized IANA alias | May be accepted and mapped to its canonical primary zone, where the dataset defines that mapping |
+  | `UTC` | Accepted as an input alias and persisted as `Etc/UTC` |
+  | Raw UTC offset, e.g. `+01:00` | Rejected |
+  | Malformed or non-zone value | Rejected |
+
+- **Implementation boundary:**
+  - The pure domain package does not become a platform-dependent time-zone lookup system.
+  - Slice 1 uses the smallest design that fits the existing boundaries: checked-in, versioned reference data
+    derived from a pinned IANA tzdb release, recording that release. It holds the canonical zone names and the
+    alias-to-canonical mappings, with no runtime or platform dependency. Where the data lives (a pure domain data
+    module, or an application port with checked-in data behind it) follows the package rules, and is recorded in
+    the Slice 1 audit.
+  - Updating the dataset is a reviewed change that records the new tzdb release. Changing which identifier is
+    stored for existing businesses is out of scope; stored values are never rewritten silently.
+  - The Business domain receives an **already validated canonical `BusinessTimeZoneId`**, never raw client text.
+    A `BusinessTimeZoneId` remains usable wherever the kernel `TimeZoneId` is expected (for example
+    `BusinessContext.timeZone` and `BusinessDate.fromInstant`).
+  - A test checks that every canonical zone in the dataset is also accepted by the pinned runtime's `Intl`, so
+    business-date calculations work for every storable zone. It is a consistency check, not the source of truth.
+  - No third-party time-zone dependency is added. One would first need a documented reason why checked-in data and
+    the built-in runtime cannot meet the stable canonical-storage contract.
+- Why runtime naming is not authoritative, as observed on Node.js 24.21.0 (the pinned runtime):
+  - `Intl.DateTimeFormat` accepts raw UTC offsets (`+01:00`) and non-canonical casing (`africa/lagos` resolves to
+    `Africa/Lagos`);
+  - `Intl.supportedValuesOf("timeZone")` returns 418 names from the runtime's ICU data. They include legacy names
+    such as `Asia/Calcutta` and `America/Buenos_Aires`, not the current IANA names `Asia/Kolkata` and
+    `America/Argentina/Buenos_Aires`, and they exclude `UTC`.
+
+### 13.5 BusinessContext resolution split (approved 2026-09-29)
+
+- Slice 1 builds the **framework-free BusinessContext resolution application service**:
+  - verified identity to Tali user (external identity lookup);
+  - DISABLED user enforcement (`403 USER_DISABLED`), and `403 USER_NOT_REGISTERED` for an unknown identity;
+  - `businessId` validation (malformed returns `404`);
+  - an ACTIVE membership in an ACTIVE business, otherwise `404` so the business's existence is hidden;
+  - loading the business's currency and time zone;
+  - expanding the role into a `PermissionSet`.
+- Slice 3 keeps:
+  - the NestJS guard and transport integration;
+  - processing of the correlation header;
+  - device-header handling (Slice 5 onward);
+  - default-location resolution at the transport level.
+- This service is part of Slice 1, which is unblocked and not started.
