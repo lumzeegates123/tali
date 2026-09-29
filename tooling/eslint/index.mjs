@@ -148,6 +148,37 @@ const HANDLER_BANS = [
   ),
 ];
 
+/** Web and mobile (ADR-002 section 6): shared contracts, public config, ui and the client-safe kernel only. */
+/** @type {PatternRule[]} */
+const CLIENT_BANS = [
+  workspaceBan(
+    ["@tali/application", "@tali/database", "@tali/integrations", "@tali/ai", "@tali/api", "@tali/worker"],
+    "Web and mobile import only @tali/shared, @tali/config/public, @tali/ui and @tali/domain/kernel (ADR-002 section 6).",
+  ),
+  {
+    regex: "^@tali/config/server(/.*)?$",
+    message: "Server configuration never reaches a client. Use @tali/config/public.",
+  },
+  {
+    regex: "^@tali/domain(/(?!kernel$).*)?$",
+    message: "Clients use only the client-safe kernel: import from @tali/domain/kernel.",
+  },
+  {
+    regex: specifiers(["@prisma/", "prisma", "pg", "postgres"]),
+    message: "Clients never access a database; they call the Tali API.",
+  },
+];
+
+/** Client runtime code (bundled): no build-time config checks, which carry server variable names. */
+/** @type {PatternRule[]} */
+const CLIENT_RUNTIME_BANS = [
+  {
+    regex: "^@tali/config/public-build$",
+    message:
+      "@tali/config/public-build is for next.config.ts and app.config.ts only; it carries server variable names.",
+  },
+];
+
 /** NestJS modules are decorated classes with static factories by design. */
 const NEST_CLASS_RULES = {
   "@typescript-eslint/no-extraneous-class": ["error", { allowWithDecorator: true }],
@@ -205,7 +236,20 @@ const DETERMINISM_PROPERTIES = [
 export function createConfig({ tsconfigRootDir }) {
   return defineConfig(
     {
-      ignores: ["**/node_modules/**", "**/dist/**", "**/coverage/**", "**/.turbo/**", "**/generated/**"],
+      ignores: [
+        "**/node_modules/**",
+        "**/dist/**",
+        "**/coverage/**",
+        "**/.turbo/**",
+        "**/generated/**",
+        "**/.next/**",
+        "**/next-env.d.ts",
+        "**/.expo/**",
+        "apps/mobile/android/**",
+        "apps/mobile/ios/**",
+        "**/playwright-report/**",
+        "**/test-results/**",
+      ],
     },
     js.configs.recommended,
     {
@@ -350,6 +394,18 @@ export function createConfig({ tsconfigRootDir }) {
           [...APP_PERSISTENCE_BANS, ...WORKER_WORKSPACE_BANS, ...HANDLER_BANS],
           APP_VENDOR_BANS,
         ),
+      },
+    },
+    {
+      files: ["apps/web/**/*.{ts,tsx,mjs,js}", "apps/mobile/**/*.{ts,tsx,mjs,js}"],
+      rules: {
+        "no-restricted-imports": restrictedImports(CLIENT_BANS),
+      },
+    },
+    {
+      files: ["apps/web/src/**/*.{ts,tsx}", "apps/mobile/src/**/*.{ts,tsx}", "apps/mobile/app/**/*.{ts,tsx}"],
+      rules: {
+        "no-restricted-imports": restrictedImports([...CLIENT_BANS, ...CLIENT_RUNTIME_BANS]),
       },
     },
   );

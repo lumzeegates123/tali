@@ -1,8 +1,10 @@
 # Wave C compatibility checks (mobile and web runtimes)
 
-Status: **REQUIRED, NOT YET RUN.** Created in Wave A. These checks cannot run until the Expo and Next.js shells
-exist (Wave C). Nothing here has passed yet, and no result may be claimed until the checks are executed on the
-named runtimes.
+Status: **RUN 2026-09-28 (Wave C): PASSED.** Created in Wave A; executed in Wave C on Node.js 24.21.0, Chromium
+(Next.js 16.3.6 production build) and a Hermes release build (Expo SDK 57, React Native 0.86.3) on an Android 11
+(API 30) x86_64 emulator. Results per check are recorded below; evidence and deviations are in
+`docs/audits/bigint-hermes-compatibility.md`, `docs/audits/uuidv7-cross-runtime-spike.md` and
+`docs/audits/foundation-wave-c.md`.
 
 Authority: ADR-002 section 10 (mobile compatibility acceptance checks) and section 14 (UUID strategy). This file
 records how the checks will be executed; it does not change either decision.
@@ -29,6 +31,21 @@ and on Node.js 24.
 **If any check fails**, report it with evidence. Per ADR-002 section 10 the failure must be resolved (for example a
 different engine setting or library) before Build 1; it is never worked around silently.
 
+**Results (2026-09-28): PASS.**
+
+1. PASS. The device reports `typeof 1n === "bigint"`; the Android export compiles bigint literals to Hermes
+   bytecode.
+2. PASS WITH DEVIATIONS. The kernel suites run under jest-expo (Metro's Babel transform) in the
+   `kernel-expo-babel` Jest project. jest-expo executes on Node.js, not Hermes, so engine behaviour rests on check
+   3. One assertion was relaxed: a write to a frozen Money may be silently ignored (sloppy-mode modules under Jest)
+   instead of throwing, and the value must still be unchanged.
+3. PASS. 39 cases run on the device in the release build; the logged report matches the Node.js golden file byte
+   for byte (`apps/mobile/scripts/compare-device-report.mjs`).
+4. PASS. PostgreSQL BIGINT minimum and maximum round-trip through `BigInt(string)` and `toString()`.
+5. PASS. `Money.toJSON()` throws `MONEY_NOT_SERIALIZABLE`; the wire form keeps the amount as a string.
+6. PASS. `Africa/Lagos` and `America/Chicago` business dates are correct on Hermes; an unknown zone is rejected. No
+   Intl polyfill is needed.
+
 ## 2. UUIDv7 implementation spike
 
 **Wave A decision:** no UUIDv7 library was selected. The Wave A kernel only parses and validates identifiers
@@ -51,3 +68,16 @@ and an Expo/Hermes release build:
 
 The outcome (library or in-house, with evidence per runtime) is recorded as an implementation note against
 ADR-002 section 14 before any production `IdGenerator` adapter is used.
+
+**Results (2026-09-28): PASS with one implementation, `uuid@14.0.2` `v7()`, on all three runtimes.** The
+implementation note is `docs/audits/uuidv7-cross-runtime-spike.md`.
+
+1. PASS. The package reads only the global `crypto.getRandomValues` and contains no `Math.random`. On Hermes, which
+   has no Web Crypto, `expo-crypto`'s native generator is installed under that name only when none exists. Counted
+   during generation: one `getRandomValues` call per ID and zero `Math.random` calls on every runtime.
+2. PASS. Generation throws without a secure source (Node.js and mobile Jest tests; the browser page reports a
+   refusal).
+3. PASS on Node.js with `describeIdGeneratorContract`. In the browser and on the device, which may not import
+   `@tali/application`, an equivalent check list ran over 10,000 IDs: version and variant, canonical form,
+   uniqueness, strictly increasing order.
+4. PASS. MIT licence, no dependencies, no install scripts, about 28 KB, pinned exactly.

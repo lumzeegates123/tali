@@ -45,9 +45,14 @@ describe("Money construction", () => {
   it("is immutable", () => {
     const money = Money.ofMinor(1n, NGN);
     expect(Object.isFrozen(money)).toBe(true);
-    expect(() => {
+    // Strict-mode modules (Node.js ESM) throw on the write; React Native's Babel module transform emits sloppy-mode
+    // modules (the Expo/Hermes build), where the write is silently ignored. The value never changes in either.
+    try {
       (money as { amountMinor: bigint }).amountMinor = 2n;
-    }).toThrow(TypeError);
+    } catch (error) {
+      expect(error).toBeInstanceOf(TypeError);
+    }
+    expect(money.amountMinor).toBe(1n);
   });
 
   it("keeps full precision beyond Number.MAX_SAFE_INTEGER", () => {

@@ -12,6 +12,10 @@
     "./public": {
       "types": "./dist/public/index.d.ts",
       "default": "./dist/public/index.js"
+    },
+    "./public-build": {
+      "types": "./dist/public-build/index.d.ts",
+      "default": "./dist/public-build/index.js"
     }
   },
   "scripts": {

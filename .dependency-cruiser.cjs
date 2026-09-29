@@ -170,9 +170,19 @@ module.exports = {
     {
       name: "public-config-not-to-server-config",
       severity: "error",
-      comment: "Public (client) configuration may never reach server configuration.",
-      from: { path: "^packages/config/src/public/" },
-      to: { path: "^packages/config/src/server/" },
+      comment:
+        "Client runtime configuration (public/ and the common module it imports) never reaches server configuration, server variable names or the build-time checks.",
+      from: {
+        path: ["^packages/config/src/public/", "^packages/config/src/common/environment\\.ts$"],
+        pathNot: "\\.test\\.ts$",
+      },
+      to: {
+        path: [
+          "^packages/config/src/server/",
+          "^packages/config/src/common/server-keys\\.ts$",
+          "^packages/config/src/public-build/",
+        ],
+      },
     },
 
     // ---- Adapter packages (created in Wave B) -----------------------------
@@ -224,9 +234,17 @@ module.exports = {
           "^packages/(application|database|integrations|ai)/",
           "^packages/config/src/server/",
           "^packages/domain/src/(?!kernel/)",
-          "node_modules/(@aws-sdk|aws-sdk|@prisma|prisma|@nestjs)/",
+          "node_modules/(@aws-sdk|aws-sdk|@prisma|prisma|@nestjs|pg|postgres)/",
         ],
       },
+    },
+    {
+      name: "client-runtime-not-to-public-build",
+      severity: "error",
+      comment:
+        "Bundled client code never imports the build-time config checks (they carry server variable names); only next.config.ts and app.config.ts do.",
+      from: { path: ["^apps/web/src/", "^apps/mobile/(src|app)/"] },
+      to: { path: "^packages/config/src/public-build/" },
     },
     {
       name: "worker-handlers-not-to-database",
@@ -253,7 +271,13 @@ module.exports = {
   options: {
     // Prisma's generated client has internal import cycles; it is vendor output, reached only from packages/database.
     doNotFollow: { path: ["node_modules", "^packages/database/src/generated/"] },
-    exclude: { path: ["(^|/)(dist|coverage|\\.turbo)/"] },
+    exclude: {
+      path: [
+        "(^|/)(dist|coverage|\\.turbo|\\.next|\\.expo|playwright-report|test-results)/",
+        "^apps/mobile/(android|ios)/",
+        "^apps/web/next-env\\.d\\.ts$",
+      ],
+    },
     tsPreCompilationDeps: true,
     // Maps exported workspace subpaths back to source; see the file for why.
     webpackConfig: { fileName: "tooling/dependency-cruiser/workspace-source-aliases.cjs" },

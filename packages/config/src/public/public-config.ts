@@ -1,13 +1,13 @@
 import { z } from "zod";
 import type { ConfigurationIssue, EnvSource, TaliEnv } from "../common/environment.js";
-import {
-  ConfigurationError,
-  isDeployedEnvironment,
-  issuesFromZod,
-  SECRET_NAME_PATTERN,
-  TaliEnvSchema,
-} from "../common/environment.js";
-import { SERVER_ONLY_ENV_KEYS } from "../common/server-keys.js";
+import { ConfigurationError, isDeployedEnvironment, issuesFromZod, TaliEnvSchema } from "../common/environment.js";
+
+/*
+ * Client runtime code: this module is bundled into web and mobile. It must not
+ * import common/server-keys (server variable names) or anything server-side;
+ * rejecting public variables that re-expose secrets happens at build time in
+ * @tali/config/public-build, where the whole environment is visible.
+ */
 
 export const WEB_PUBLIC_PREFIX = "NEXT_PUBLIC_";
 export const MOBILE_PUBLIC_PREFIX = "EXPO_PUBLIC_";
@@ -44,26 +44,7 @@ export interface PublicConfig {
   readonly cognito?: { readonly region: string; readonly userPoolId: string; readonly clientId: string };
 }
 
-/**
- * Rejects public variables that would expose server-only or secret values,
- * such as NEXT_PUBLIC_DATABASE_URL or EXPO_PUBLIC_API_SECRET.
- */
-export function findExposedSecrets(env: EnvSource, prefix: string): ConfigurationIssue[] {
-  return Object.keys(env)
-    .filter((key) => key.startsWith(prefix))
-    .filter((key) => {
-      const suffix = key.slice(prefix.length);
-      return SECRET_NAME_PATTERN.test(suffix) || SERVER_ONLY_ENV_KEYS.includes(suffix);
-    })
-    .map((key) => ({ key, message: "server-only or secret values must never be exposed as public configuration" }));
-}
-
 function loadPublicConfig(scope: string, prefix: string, env: EnvSource): PublicConfig {
-  const exposed = findExposedSecrets(env, prefix);
-  if (exposed.length > 0) {
-    throw new ConfigurationError(scope, exposed);
-  }
-
   const picked = Object.fromEntries(PUBLIC_ENV_SUFFIXES.map((suffix: PublicSuffix) => [suffix, env[prefix + suffix]]));
   const parsed = PublicEnvSchema.safeParse(picked);
   if (!parsed.success) {
@@ -110,13 +91,14 @@ function loadPublicConfig(scope: string, prefix: string, env: EnvSource): Public
 /**
  * Web public configuration from NEXT_PUBLIC_* variables. Next.js inlines only
  * statically referenced variables, so the web app passes an object literal of
- * explicit `process.env.NEXT_PUBLIC_*` reads.
+ * explicit `process.env.NEXT_PUBLIC_*` reads. Only the keys in
+ * PUBLIC_ENV_SUFFIXES are ever read.
  */
 export function loadWebPublicConfig(env: EnvSource): PublicConfig {
   return loadPublicConfig("web public", WEB_PUBLIC_PREFIX, env);
 }
 
-/** Mobile public configuration from EXPO_PUBLIC_* variables. */
+/** Mobile public configuration from EXPO_PUBLIC_* variables (inlined by Expo the same way). */
 export function loadMobilePublicConfig(env: EnvSource): PublicConfig {
   return loadPublicConfig("mobile public", MOBILE_PUBLIC_PREFIX, env);
 }

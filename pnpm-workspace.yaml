@@ -13,3 +13,16 @@ strictPeerDependencies: true
 allowBuilds:
   "@prisma/engines": true
   prisma: true
+
+# Wave C (docs/audits/foundation-wave-c.md, "pnpm and Metro"): expo-router depends on react-native-drawer-layout,
+# which declares react-native-reanimated and react-native-gesture-handler as required peers. Auto-installing them
+# pulled reanimated 4.7, worklets 0.13 and gesture-handler 3.x, which conflict with Expo SDK 57 (expo-modules-core
+# accepts worklets <= 0.10). Tali uses no drawer, so both peers are marked optional for that one package instead of
+# linking unused native modules.
+packageExtensions:
+  react-native-drawer-layout:
+    peerDependenciesMeta:
+      react-native-gesture-handler:
+        optional: true
+      react-native-reanimated:
+        optional: true

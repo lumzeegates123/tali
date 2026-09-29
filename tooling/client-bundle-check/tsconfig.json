@@ -1,0 +1,8 @@
+{
+  "extends": "@tali/tsconfig/node-lib.json",
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true
+  },
+  "include": ["src"]
+}
