@@ -38,6 +38,8 @@ const NO_DELETE_TABLES = [
   "public.businesses",
   "public.business_locations",
   "public.business_memberships",
+  "public.business_invitations",
+  "public.devices",
 ];
 
 /**
@@ -62,8 +64,8 @@ const TEST_ONLY_SCHEMAS = ["test_fixtures"];
 
 /**
  * Exact table privileges expected for the application role (Build 1 Slice 2
- * migration). No table grants DELETE or TRUNCATE; audit and idempotency tables
- * are insert-only; currencies are read-only.
+ * and Slice 5 migrations). No table grants DELETE or TRUNCATE; audit and
+ * idempotency tables are insert-only; currencies are read-only.
  */
 const EXPECTED_APP_PRIVILEGES = {
   "public.currencies": ["SELECT"],
@@ -76,6 +78,8 @@ const EXPECTED_APP_PRIVILEGES = {
   "public.platform_audit_records": ["INSERT", "SELECT"],
   "public.user_idempotency_records": ["INSERT", "SELECT"],
   "public.business_idempotency_records": ["INSERT", "SELECT"],
+  "public.business_invitations": ["INSERT", "SELECT", "UPDATE"],
+  "public.devices": ["INSERT", "SELECT", "UPDATE"],
 };
 
 const ENVELOPE_SOURCE_CHANNELS =
@@ -284,6 +288,77 @@ const EXPECTED_CHECKS = [
     name: "business_idempotency_records_actor_id_format",
     definition: `CHECK ((((char_length(actor_id) >= 1) AND (char_length(actor_id) <= 128)) AND ((actor_type <> 'user'::text) OR (actor_id ~ ${UUID_TEXT}))))`,
   },
+  {
+    table: "business_invitations",
+    name: "business_invitations_token_hash_length",
+    definition: "CHECK ((octet_length(token_hash) = 32))",
+  },
+  {
+    table: "business_invitations",
+    name: "business_invitations_role_valid",
+    definition:
+      "CHECK ((role = ANY (ARRAY['MANAGER'::text, 'CASHIER'::text, 'STOCK_KEEPER'::text, 'ACCOUNTANT'::text])))",
+  },
+  {
+    table: "business_invitations",
+    name: "business_invitations_status_valid",
+    definition: "CHECK ((status = ANY (ARRAY['PENDING'::text, 'ACCEPTED'::text, 'REVOKED'::text])))",
+  },
+  {
+    table: "business_invitations",
+    name: "business_invitations_expires_after_created",
+    definition: "CHECK ((expires_at > created_at))",
+  },
+  {
+    table: "business_invitations",
+    name: "business_invitations_accepted_shape",
+    definition:
+      "CHECK ((((status = 'ACCEPTED'::text) = (accepted_by_membership_id IS NOT NULL)) AND ((accepted_by_membership_id IS NULL) = (accepted_at IS NULL))))",
+  },
+  {
+    table: "business_invitations",
+    name: "business_invitations_revoked_shape",
+    definition:
+      "CHECK ((((status = 'REVOKED'::text) = (revoked_by_membership_id IS NOT NULL)) AND ((revoked_by_membership_id IS NULL) = (revoked_at IS NULL))))",
+  },
+  {
+    table: "business_invitations",
+    name: "business_invitations_accepted_in_window",
+    definition: "CHECK (((accepted_at IS NULL) OR ((accepted_at >= created_at) AND (accepted_at < expires_at))))",
+  },
+  {
+    table: "business_invitations",
+    name: "business_invitations_revoked_after_created",
+    definition: "CHECK (((revoked_at IS NULL) OR (revoked_at >= created_at)))",
+  },
+  {
+    table: "devices",
+    name: "devices_credential_hash_length",
+    definition: "CHECK ((octet_length(credential_hash) = 32))",
+  },
+  { table: "devices", name: "devices_platform_valid", definition: "CHECK ((platform = 'ANDROID'::text))" },
+  {
+    table: "devices",
+    name: "devices_label_length",
+    definition: "CHECK (((char_length(label) >= 1) AND (char_length(label) <= 60)))",
+  },
+  { table: "devices", name: "devices_label_trimmed", definition: "CHECK ((label = btrim(label)))" },
+  {
+    table: "devices",
+    name: "devices_status_valid",
+    definition: "CHECK ((status = ANY (ARRAY['ACTIVE'::text, 'REVOKED'::text])))",
+  },
+  {
+    table: "devices",
+    name: "devices_revoked_shape",
+    definition:
+      "CHECK ((((status = 'REVOKED'::text) = (revoked_by_membership_id IS NOT NULL)) AND ((revoked_by_membership_id IS NULL) = (revoked_at IS NULL))))",
+  },
+  {
+    table: "devices",
+    name: "devices_revoked_after_registered",
+    definition: "CHECK (((revoked_at IS NULL) OR (revoked_at >= registered_at)))",
+  },
 ];
 
 /** @type {{ schema: string; name: string; predicate: string }[]} */
@@ -315,6 +390,32 @@ const EXPECTED_TENANT_FOREIGN_KEYS = [
     definition:
       "FOREIGN KEY (business_id, location_id) REFERENCES business_locations(business_id, id) ON UPDATE RESTRICT ON DELETE RESTRICT",
   },
+  {
+    table: "business_audit_records",
+    name: "business_audit_records_business_id_device_id_fkey",
+    definition:
+      "FOREIGN KEY (business_id, device_id) REFERENCES devices(business_id, id) ON UPDATE RESTRICT ON DELETE RESTRICT",
+  },
+  ...[
+    ["business_invitations", "created_by_membership_id"],
+    ["business_invitations", "accepted_by_membership_id"],
+    ["business_invitations", "revoked_by_membership_id"],
+    ["devices", "registered_by_membership_id"],
+    ["devices", "revoked_by_membership_id"],
+  ].map(([table, column]) => ({
+    table,
+    name: `${table}_business_id_${column}_fkey`,
+    definition: `FOREIGN KEY (business_id, ${column}) REFERENCES business_memberships(business_id, id) ON UPDATE RESTRICT ON DELETE RESTRICT`,
+  })),
+];
+
+/**
+ * Globally unique one-time-secret digests: acceptance finds an invitation by
+ * its token digest alone, so the digest must identify at most one row.
+ * @type {{ schema: string; name: string; columns: string }[]}
+ */
+const EXPECTED_UNIQUE_INDEXES = [
+  { schema: "public", name: "business_invitations_token_hash_key", columns: "token_hash" },
 ];
 
 /** Reference rows every migrated database must contain (ADR-005 section 5: the pilot currency). */
@@ -461,6 +562,20 @@ try {
     }
   }
 
+  for (const index of EXPECTED_UNIQUE_INDEXES) {
+    const { rows } = await client.query(
+      `SELECT ix.indisunique AS unique, ix.indpred IS NULL AS total,
+              (SELECT string_agg(a.attname, ',' ORDER BY k.ord) FROM unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ord)
+               JOIN pg_attribute a ON a.attrelid = ix.indrelid AND a.attnum = k.attnum) AS columns
+       FROM pg_index ix JOIN pg_class c ON c.oid = ix.indexrelid JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname = $1 AND c.relname = $2`,
+      [index.schema, index.name],
+    );
+    if (rows.length !== 1 || !rows[0].unique || !rows[0].total || rows[0].columns !== index.columns) {
+      fail(`unique index ${index.schema}.${index.name} missing or changed`);
+    }
+  }
+
   const grants = await client.query(
     `SELECT table_schema || '.' || table_name AS table, array_agg(privilege_type::text ORDER BY privilege_type) AS privileges
      FROM information_schema.role_table_grants WHERE grantee = $1 GROUP BY 1`,
@@ -525,5 +640,5 @@ if (failures.length > 0) {
   process.exit(1);
 }
 console.log(
-  `Schema verification passed (${migrationNames.length} migration(s), ${Object.keys(APPROVED_DESTRUCTIVE_MIGRATIONS).length} approved destructive migration(s), ${Object.keys(EXPECTED_APP_PRIVILEGES).length} table grant sets, ${EXPECTED_CHECKS.length} CHECK, ${EXPECTED_PARTIAL_UNIQUE_INDEXES.length} partial unique index, ${EXPECTED_TENANT_FOREIGN_KEYS.length} tenant foreign keys, ${EXPECTED_CURRENCIES.length} reference currency, removed schemas absent: ${REMOVED_SCHEMAS.join(", ")}, test-only schemas absent: ${TEST_ONLY_SCHEMAS.join(", ")}).`,
+  `Schema verification passed (${migrationNames.length} migration(s), ${Object.keys(APPROVED_DESTRUCTIVE_MIGRATIONS).length} approved destructive migration(s), ${Object.keys(EXPECTED_APP_PRIVILEGES).length} table grant sets, ${EXPECTED_CHECKS.length} CHECK, ${EXPECTED_PARTIAL_UNIQUE_INDEXES.length} partial unique index, ${EXPECTED_UNIQUE_INDEXES.length} unique index, ${EXPECTED_TENANT_FOREIGN_KEYS.length} tenant foreign keys, ${EXPECTED_CURRENCIES.length} reference currency, removed schemas absent: ${REMOVED_SCHEMAS.join(", ")}, test-only schemas absent: ${TEST_ONLY_SCHEMAS.join(", ")}).`,
 );

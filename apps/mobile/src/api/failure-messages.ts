@@ -25,6 +25,8 @@ const API_ERROR_MESSAGES: Readonly<Record<string, FailureMessage>> = {
   CONCURRENT_MODIFICATION: { text: "Tali was busy with another change. Try again.", retryable: true },
   DEPENDENCY_UNAVAILABLE: { text: "Tali is temporarily unavailable. Try again shortly.", retryable: true },
   RATE_LIMITED: { text: "Too many attempts. Wait a minute, then try again.", retryable: true },
+  // The local registration is cleared when this arrives, so trying again proceeds without the device.
+  DEVICE_NOT_TRUSTED: { text: "This device needs to be registered again.", retryable: true },
 };
 
 /**

@@ -179,12 +179,21 @@ describe("audit actions and registry", () => {
     expect(registry.has(defineAuditAction({ ...action, fields: { flag: auditField.boolean() } }))).toBe(false);
   });
 
-  it("registers exactly the Slice 1 actions", () => {
+  it("registers exactly the Build 1 actions (plan 003 section 12)", () => {
     expect(taliAuditRegistry.actions.map((a) => [a.name, a.stream]).sort()).toEqual([
       ["business.created", "business"],
+      ["business.renamed", "business"],
+      ["device.registered", "business"],
+      ["device.revoked", "business"],
       ["identity.linked", "platform"],
+      ["invitation.accepted", "business"],
+      ["invitation.created", "business"],
+      ["invitation.revoked", "business"],
       ["location.created", "business"],
       ["membership.created", "business"],
+      ["membership.reactivated", "business"],
+      ["membership.role_changed", "business"],
+      ["membership.suspended", "business"],
       ["user.registered", "platform"],
     ]);
   });

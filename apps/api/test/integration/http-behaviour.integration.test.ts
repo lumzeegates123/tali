@@ -146,6 +146,17 @@ describe("CORS for the web client", () => {
     expect(response.headers["x-correlation-id"]).toBe("web-cors-1");
   });
 
+  it("allows the web client to preflight a business rename (PATCH)", async () => {
+    const preflight = await request(api.app.getHttpServer())
+      .options("/v1/businesses/0190a000-0000-7000-8000-000000000001")
+      .set("origin", WEB_ORIGIN)
+      .set("access-control-request-method", "PATCH")
+      .set("access-control-request-headers", "authorization,content-type")
+      .expect(204);
+    expect(preflight.headers["access-control-allow-origin"]).toBe(WEB_ORIGIN);
+    expect(preflight.headers["access-control-allow-methods"]).toMatch(/PATCH/);
+  });
+
   it("does not grant an unlisted origin", async () => {
     const response = await request(api.app.getHttpServer())
       .get("/health/live")

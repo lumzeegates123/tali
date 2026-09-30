@@ -5,6 +5,7 @@ import { useSession, useSessionStore } from "../auth/session-context";
 import type { BusinessOverview, ResourceResult } from "../auth/session-store";
 import { detectDeviceTimeZone, PILOT_CURRENCY_CODES } from "./create-business-defaults";
 import { roleLabel } from "./role-label";
+import { DevicePanel } from "./team-screens";
 import { Button, FailureNotice, Field, Heading, Loading, styles } from "./ui";
 
 type FormField = "name" | "timeZone" | "currencyCode";
@@ -226,6 +227,7 @@ export function BusinessOverviewScreen({ businessId }: { readonly businessId: st
           />
         </>
       )}
+      <DevicePanel />
       <Button
         label="Switch business"
         onPress={() => {

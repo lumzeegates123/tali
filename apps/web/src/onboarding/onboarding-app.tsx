@@ -1,13 +1,15 @@
 "use client";
 
 import type { PublicConfig } from "@tali/config/public";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { TaliApiClient } from "../lib/api-client/tali-api-client";
 import { isLocalSignInAvailable } from "../lib/auth/local-sign-in";
 import { SessionProvider, useSession, useSessionStore } from "../lib/auth/session-context";
 import type { SessionSnapshot } from "../lib/auth/session-store";
 import { SessionStore } from "../lib/auth/session-store";
 import { newUuidV7 } from "../lib/ids/uuidv7";
+import { takeInvitationToken } from "../lib/invitations/invitation-link";
+import { AcceptInvitationPanel } from "./accept-invitation-panel";
 import { BusinessOverviewScreen } from "./business-overview";
 import { BusinessPicker } from "./business-picker";
 import { FailureAlert } from "./failure-alert";
@@ -22,11 +24,33 @@ function createSessionStore(config: PublicConfig): SessionStore {
 
 /**
  * Build 1 onboarding: local sign-in, registration, business picker or
- * creation, and the business overview. All state is in memory (a reload
- * starts signed out); the API authorizes everything.
+ * creation, the business overview, and accepting an invitation link. All
+ * state is in memory (a reload starts signed out); the API authorizes
+ * everything.
  */
-export function OnboardingApp({ config }: { readonly config: PublicConfig }) {
+export function OnboardingApp({
+  config,
+  invitationLink = false,
+}: {
+  readonly config: PublicConfig;
+  /** Rendered by the invitation page: the URL fragment may carry an invitation token. */
+  readonly invitationLink?: boolean;
+}) {
   const [store] = useState(() => createSessionStore(config));
+  const [linkIncomplete, setLinkIncomplete] = useState(false);
+  const linkRead = useRef(false);
+  useEffect(() => {
+    if (!invitationLink || linkRead.current) return;
+    linkRead.current = true;
+    const token = takeInvitationToken(window.location, window.history);
+    if (token === undefined) setLinkIncomplete(true);
+    else store.holdInvitation(token);
+  }, [invitationLink, store]);
+  const incompleteNotice = linkIncomplete ? (
+    <p role="status" className="notice" data-testid="invitation-link-incomplete">
+      This invitation link is incomplete. Ask for the full link, or a new invitation.
+    </p>
+  ) : null;
   if (!isLocalSignInAvailable(config)) {
     return (
       <section aria-labelledby="sign-in-heading" className="onboarding">
@@ -37,6 +61,7 @@ export function OnboardingApp({ config }: { readonly config: PublicConfig }) {
   }
   return (
     <SessionProvider store={store}>
+      {incompleteNotice}
       <OnboardingScreens />
     </SessionProvider>
   );
@@ -52,6 +77,12 @@ function OnboardingScreens() {
   return (
     <MoveFocusContext.Provider value={moved}>
       {session.phase === "signedOut" ? null : <SessionBar session={session} />}
+      {session.hasPendingInvitation && (session.phase === "signedOut" || session.phase === "needsRegistration") ? (
+        <p role="status" className="notice" data-testid="invitation-waiting">
+          You have been invited to a business. Sign in and set up your profile to accept the invitation.
+        </p>
+      ) : null}
+      {session.phase === "choosingBusiness" || session.phase === "businessSelected" ? <AcceptInvitationPanel /> : null}
       <Screen session={session} />
     </MoveFocusContext.Provider>
   );
@@ -105,6 +136,11 @@ function Screen({ session }: { readonly session: SessionSnapshot }) {
           {session.notice === "businessUnavailable" ? (
             <p role="status" className="notice">
               That business is no longer available to you.
+            </p>
+          ) : null}
+          {session.notice === "invitationAccepted" ? (
+            <p role="status" className="notice">
+              Invitation accepted. The business is now in your list.
             </p>
           ) : null}
           <BusinessPicker />

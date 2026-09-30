@@ -1,7 +1,8 @@
 /**
  * @tali/integrations/platform: server platform adapters for application ports
- * (fingerprint hashing, identifier generation).
+ * (fingerprint hashing, identifier generation, one-time secrets).
  */
+export { nodeOneTimeSecretGenerator, sha256SecretHasher } from "./crypto/node-one-time-secrets.js";
 export {
   FINGERPRINT_FRAMING_VERSION,
   FingerprintFramingError,

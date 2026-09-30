@@ -2,16 +2,25 @@ import type { PublicConfig } from "@tali/config/public";
 import { randomUUID } from "expo-crypto";
 import type { ReactNode } from "react";
 import { createContext, useContext, useState, useSyncExternalStore } from "react";
+import { Platform } from "react-native";
 import { TaliApiClient } from "../api/tali-api-client";
+import { createSecureDeviceCredentialStore } from "../devices/device-credential-store";
 import { newUuidV7 } from "../ids/uuidv7";
 import type { SessionSnapshot } from "./session-store";
 import { SessionStore } from "./session-store";
 
 const SessionContext = createContext<SessionStore | undefined>(undefined);
 
-export function createSessionStore(config: PublicConfig): SessionStore {
+/** Device registration is offered on Android only in Build 1 (the API accepts platform ANDROID only). */
+export function createSessionStore(config: PublicConfig, platform: string = Platform.OS): SessionStore {
   const api = new TaliApiClient({ baseUrl: config.apiBaseUrl, createCorrelationId: randomUUID });
-  return new SessionStore({ api, newIdempotencyKey: newUuidV7 });
+  const android = platform === "android";
+  return new SessionStore({
+    api,
+    newIdempotencyKey: newUuidV7,
+    deviceRegistrationSupported: android,
+    ...(android ? { deviceStore: createSecureDeviceCredentialStore() } : {}),
+  });
 }
 
 /** Provides one in-memory session to the onboarding screens. */

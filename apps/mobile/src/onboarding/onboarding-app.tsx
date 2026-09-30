@@ -5,12 +5,15 @@ import { useSession, useSessionStore } from "../auth/session-context";
 import type { SessionSnapshot } from "../auth/session-store";
 import { BusinessOverviewScreen, BusinessPickerScreen } from "./business-screens";
 import { LocalSignInScreen, RegistrationScreen } from "./sign-in-screens";
+import { AcceptInvitationPanel } from "./team-screens";
 import { Button, FailureNotice, Heading, Loading, styles } from "./ui";
 
 /**
  * Build 1 Android onboarding: local sign-in, registration, business picker
- * or creation, and the business overview. The session is in memory only (an
- * app restart starts signed out); the API authorizes everything.
+ * or creation, joining a business by invitation, the business overview and
+ * this device's registration. The session is in memory only (an app restart
+ * starts signed out); only device registrations are kept, in the keystore.
+ * The API authorizes everything.
  */
 export function OnboardingApp({ config }: { readonly config: PublicConfig }) {
   if (!isLocalSignInAvailable(config)) {
@@ -81,7 +84,13 @@ function Screen({ session }: { readonly session: SessionSnapshot }) {
               That business is no longer available to you.
             </Text>
           ) : null}
+          {session.notice === "invitationAccepted" ? (
+            <Text style={styles.notice} accessibilityLiveRegion="polite">
+              Invitation accepted. The business is now in your list.
+            </Text>
+          ) : null}
           <BusinessPickerScreen />
+          <AcceptInvitationPanel />
         </View>
       );
     case "businessSelected":

@@ -32,6 +32,15 @@ describe("web client safety", () => {
     expect(offenders).toEqual([]);
   });
 
+  it("reads the URL fragment (invitation tokens) only in the module that strips it", () => {
+    const offenders = sourceFiles(join(APP_ROOT, "src")).filter(
+      (file) =>
+        /\.hash\b/u.test(readFileSync(file, "utf8")) &&
+        !file.endsWith(join("lib", "invitations", "invitation-link.ts")),
+    );
+    expect(offenders).toEqual([]);
+  });
+
   it("imports no JWT library, AWS or Cognito SDK, Node.js built-in or backend package in source", () => {
     const forbiddenImport =
       /from\s+["'](jose|aws-amplify|@aws-amplify\/[^"']+|amazon-cognito-identity-js|@aws-sdk\/[^"']+|aws-sdk|node:[^"']+|@tali\/(application|database|integrations)|@tali\/config\/server)["']/u;

@@ -228,7 +228,14 @@ const PROTECTED_MODEL_DELEGATES = [
  * hard-deleted (ADR-005 section 20); the application role has no DELETE grant.
  * @type {string[]}
  */
-const NO_DELETE_MODEL_DELEGATES = ["user", "business", "businessLocation", "businessMembership"];
+const NO_DELETE_MODEL_DELEGATES = [
+  "user",
+  "business",
+  "businessLocation",
+  "businessMembership",
+  "businessInvitation",
+  "device",
+];
 const BANNED_PROTECTED_MUTATIONS = [
   ...(PROTECTED_MODEL_DELEGATES.length === 0
     ? []

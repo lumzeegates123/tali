@@ -1,15 +1,34 @@
 import type {
+  AcceptInvitationResult,
   AccessibleBusiness,
   CreateBusinessResult,
+  CreateInvitationOutcome,
   GetBusiness,
   GetCurrentUser,
   ListLocations,
   MemberListing,
   Page,
+  RegisterDeviceOutcome,
 } from "@tali/application";
 import {
+  type AcceptInvitationResponse,
+  AcceptInvitationResponseSchema,
   type BusinessResponse,
   BusinessResponseSchema,
+  type CreateInvitationResponse,
+  CreateInvitationResponseSchema,
+  type DeviceResponse,
+  type DevicesResponse,
+  DevicesResponseSchema,
+  type InvitationResponse,
+  type MemberChangeResponse,
+  MemberChangeResponseSchema,
+  type RegisterDeviceResponse,
+  RegisterDeviceResponseSchema,
+  type RevokeDeviceResponse,
+  RevokeDeviceResponseSchema,
+  type RevokeInvitationResponse,
+  RevokeInvitationResponseSchema,
   type CreateBusinessResponse,
   CreateBusinessResponseSchema,
   type CurrentUserResponse,
@@ -32,6 +51,9 @@ import {
 type User = Awaited<ReturnType<GetCurrentUser["execute"]>>;
 type Business = Awaited<ReturnType<GetBusiness["execute"]>>;
 type Location = Awaited<ReturnType<ListLocations["execute"]>>["items"][number];
+type BusinessInvitation = CreateInvitationOutcome["invitation"];
+type BusinessMembership = AcceptInvitationResult["membership"];
+type Device = RegisterDeviceOutcome["device"];
 
 function business(value: Business): BusinessResponse {
   return { id: value.id, name: value.name, currencyCode: value.currencyCode, timeZone: value.timeZone };
@@ -69,6 +91,59 @@ export function toMyBusinessesResponse(page: Page<AccessibleBusiness>): MyBusine
 
 export function toLocationsResponse(page: Page<Location>): LocationsResponse {
   return LocationsResponseSchema.parse({ items: page.items.map(location), nextCursor: page.nextCursor });
+}
+
+function invitation(value: BusinessInvitation): InvitationResponse {
+  return { id: value.id, role: value.role, status: value.status, expiresAt: value.expiresAt.toISOString() };
+}
+
+function membershipSummary(value: BusinessMembership) {
+  return { id: value.id, role: value.role, status: value.status };
+}
+
+function device(value: Device): DeviceResponse {
+  return { id: value.id, platform: value.platform, label: value.label, status: value.status };
+}
+
+/** The token is added only to the original response; a replay says `tokenAvailable: false` (ADR-004 section 12). */
+export function toCreateInvitationResponse(outcome: CreateInvitationOutcome): CreateInvitationResponse {
+  return CreateInvitationResponseSchema.parse(
+    outcome.replayed
+      ? { invitation: invitation(outcome.invitation), tokenAvailable: false }
+      : { invitation: invitation(outcome.invitation), tokenAvailable: true, token: outcome.token },
+  );
+}
+
+export function toRevokeInvitationResponse(value: BusinessInvitation): RevokeInvitationResponse {
+  return RevokeInvitationResponseSchema.parse({ invitation: invitation(value) });
+}
+
+export function toAcceptInvitationResponse(result: AcceptInvitationResult): AcceptInvitationResponse {
+  return AcceptInvitationResponseSchema.parse({
+    business: business(result.business),
+    membership: membershipSummary(result.membership),
+  });
+}
+
+export function toMemberChangeResponse(value: BusinessMembership): MemberChangeResponse {
+  return MemberChangeResponseSchema.parse({ membership: membershipSummary(value) });
+}
+
+/** The credential is added only to the original response; a replay says `credentialAvailable: false`. */
+export function toRegisterDeviceResponse(outcome: RegisterDeviceOutcome): RegisterDeviceResponse {
+  return RegisterDeviceResponseSchema.parse(
+    outcome.replayed
+      ? { device: device(outcome.device), credentialAvailable: false }
+      : { device: device(outcome.device), credentialAvailable: true, credential: outcome.credential },
+  );
+}
+
+export function toDevicesResponse(page: Page<Device>): DevicesResponse {
+  return DevicesResponseSchema.parse({ items: page.items.map(device), nextCursor: page.nextCursor });
+}
+
+export function toRevokeDeviceResponse(value: Device): RevokeDeviceResponse {
+  return RevokeDeviceResponseSchema.parse({ device: device(value) });
 }
 
 export function toMembersResponse(page: Page<MemberListing>): MembersResponse {

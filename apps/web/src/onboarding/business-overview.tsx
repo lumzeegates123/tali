@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { BusinessOverview, ResourceResult } from "../lib/auth/session-store";
 import { useSession, useSessionStore } from "../lib/auth/session-context";
 import { FailureAlert } from "./failure-alert";
+import { InvitationsPanel } from "./invitations-panel";
 import { MembersList } from "./members-list";
 import { roleLabel } from "./role-label";
 import { LoadingState, ScreenHeading } from "./screen-heading";
@@ -81,6 +82,9 @@ export function BusinessOverviewScreen({ businessId }: { readonly businessId: st
         </div>
       </section>
       {state.phase === "done" && state.result.ok ? <MembersList businessId={businessId} /> : null}
+      {state.phase === "done" && state.result.ok && summary?.membership.role === "OWNER" ? (
+        <InvitationsPanel businessId={businessId} />
+      ) : null}
     </>
   );
 }

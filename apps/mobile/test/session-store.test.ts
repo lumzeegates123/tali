@@ -333,6 +333,7 @@ describe("session store: sign-out and memory-only state", () => {
       pending: undefined,
       error: undefined,
       notice: "signedOut",
+      device: "unsupported",
     });
     const before = api.requests.length;
     await store.loadBusinessOverview(BUSINESS_A.id);

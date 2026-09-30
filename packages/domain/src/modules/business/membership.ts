@@ -79,6 +79,30 @@ export function createFoundingOwnerMembership(props: {
   });
 }
 
+/** The ACTIVE membership created by accepting an invitation; never OWNER (ADR-005 section 14). */
+export function createInvitedMembership(props: {
+  readonly id: MembershipId;
+  readonly businessId: BusinessId;
+  readonly userId: UserId;
+  readonly role: Exclude<MembershipRole, "OWNER">;
+  readonly now: Date;
+}): BusinessMembership {
+  if (!isMembershipRole(props.role) || (props.role as MembershipRole) === "OWNER") {
+    throw new DomainError("INVALID_VALUE", "an invitation cannot grant this role", "role");
+  }
+  const now = validInstant(props.now, "now");
+  return Object.freeze({
+    id: props.id,
+    businessId: props.businessId,
+    userId: props.userId,
+    role: props.role,
+    status: "ACTIVE",
+    version: 1,
+    createdAt: now,
+    updatedAt: new Date(now.getTime()),
+  });
+}
+
 /** Validates a membership read from storage or built by controlled test setup. */
 export function restoreMembership(props: {
   readonly id: MembershipId;

@@ -13,6 +13,19 @@ export type {
 } from "./object-storage-provider.js";
 export { isObjectKey } from "./object-storage-provider.js";
 export type {
+  OneTimeSecret,
+  OneTimeSecretGenerator,
+  OneTimeSecretKind,
+  SecretDigest,
+  SecretHasher,
+} from "./one-time-secret.js";
+export {
+  ONE_TIME_SECRET_ENCODED_LENGTH,
+  ONE_TIME_SECRET_PREFIXES,
+  ONE_TIME_SECRET_RANDOM_BYTES,
+  parseOneTimeSecret,
+} from "./one-time-secret.js";
+export type {
   DeliveryReceipt,
   JsonValue,
   QueueMessage,

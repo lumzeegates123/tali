@@ -5,8 +5,10 @@
 export { FailureInjection } from "./failure-injection.js";
 export { FakeFingerprintHasher } from "./fake-fingerprint-hasher.js";
 export { FakeIdentityProvider } from "./fake-identity-provider.js";
+export { FakeOneTimeSecretGenerator, FakeSecretHasher } from "./fake-one-time-secrets.js";
 export { FixedClock } from "./fixed-clock.js";
 export { InMemoryAuditWriter } from "./in-memory-audit-writer.js";
+export { InMemoryBusinessIdempotencyStore } from "./in-memory-business-idempotency-store.js";
 export { InMemoryObjectStorage } from "./in-memory-object-storage.js";
 export { InMemoryQueue } from "./in-memory-queue.js";
 export { InMemoryTenancyStore } from "./in-memory-tenancy-store.js";

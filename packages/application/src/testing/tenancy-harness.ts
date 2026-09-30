@@ -17,22 +17,43 @@ import type { AuthenticatedUserContext } from "../context/authenticated-user-con
 import { parseCorrelationId } from "../context/business-context.js";
 import { KeyedIdempotency } from "../idempotency/keyed-idempotency.js";
 import type {
+  AcceptInvitation,
   BusinessContextResolver,
+  ChangeMemberRole,
   CreateBusiness,
   CreateBusinessInput,
   CreateBusinessResult,
+  CreateInvitation,
   GetBusiness,
   ListMembers,
   ListMyBusinesses,
+  ReactivateMember,
+  RevokeInvitation,
+  SuspendMember,
+  UpdateBusinessName,
 } from "../modules/business/index.js";
 import type { VerifiedIdentity } from "../ports/identity-provider.js";
 import {
+  createAcceptInvitation,
   createBusinessContextResolver,
+  createChangeMemberRole,
   createCreateBusiness,
+  createCreateInvitation,
   createGetBusiness,
   createListMembers,
   createListMyBusinesses,
+  createReactivateMember,
+  createRevokeInvitation,
+  createSuspendMember,
+  createUpdateBusinessName,
 } from "../modules/business/index.js";
+import type { DeviceVerifier, ListDevices, RegisterDevice, RevokeDevice } from "../modules/device/index.js";
+import {
+  createDeviceVerifier,
+  createListDevices,
+  createRegisterDevice,
+  createRevokeDevice,
+} from "../modules/device/index.js";
 import type { GetCurrentUser, RegisterCurrentUser, UserContextResolver } from "../modules/identity/index.js";
 import {
   createGetCurrentUser,
@@ -47,8 +68,10 @@ import {
 } from "../modules/location/index.js";
 import { FakeFingerprintHasher } from "./fake-fingerprint-hasher.js";
 import { FakeIdentityProvider } from "./fake-identity-provider.js";
+import { FakeOneTimeSecretGenerator, FakeSecretHasher } from "./fake-one-time-secrets.js";
 import { FixedClock } from "./fixed-clock.js";
 import { InMemoryAuditWriter } from "./in-memory-audit-writer.js";
+import { InMemoryBusinessIdempotencyStore } from "./in-memory-business-idempotency-store.js";
 import { InMemoryTenancyStore } from "./in-memory-tenancy-store.js";
 import { InMemoryUnitOfWork } from "./in-memory-unit-of-work.js";
 import { InMemoryUserIdempotencyStore } from "./in-memory-user-idempotency-store.js";
@@ -62,7 +85,10 @@ export interface TenancyHarness {
   readonly store: InMemoryTenancyStore;
   readonly auditWriter: InMemoryAuditWriter;
   readonly idempotencyStore: InMemoryUserIdempotencyStore;
+  readonly businessIdempotencyStore: InMemoryBusinessIdempotencyStore;
   readonly hasher: FakeFingerprintHasher;
+  readonly secrets: FakeOneTimeSecretGenerator;
+  readonly secretHasher: FakeSecretHasher;
   readonly identityProvider: FakeIdentityProvider;
   readonly userContexts: UserContextResolver;
   readonly businessContexts: BusinessContextResolver;
@@ -74,6 +100,17 @@ export interface TenancyHarness {
   readonly listLocations: ListLocations;
   readonly listMembers: ListMembers;
   readonly defaultLocations: DefaultLocationResolver;
+  readonly updateBusinessName: UpdateBusinessName;
+  readonly changeMemberRole: ChangeMemberRole;
+  readonly suspendMember: SuspendMember;
+  readonly reactivateMember: ReactivateMember;
+  readonly createInvitation: CreateInvitation;
+  readonly revokeInvitation: RevokeInvitation;
+  readonly acceptInvitation: AcceptInvitation;
+  readonly registerDevice: RegisterDevice;
+  readonly listDevices: ListDevices;
+  readonly revokeDevice: RevokeDevice;
+  readonly deviceVerifier: DeviceVerifier;
   /** Verified identity for a provider subject, as the transport guard would produce. */
   identityFor(subject: string): Promise<VerifiedIdentity>;
   /** Registers a user through RegisterCurrentUser and returns its resolved context. */
@@ -115,7 +152,10 @@ export function createTenancyHarness(options: {
   for (const currency of options.currencies) store.addCurrency(currency);
   const auditWriter = new InMemoryAuditWriter({ unitOfWork });
   const idempotencyStore = new InMemoryUserIdempotencyStore({ unitOfWork });
+  const businessIdempotencyStore = new InMemoryBusinessIdempotencyStore({ unitOfWork });
   const hasher = new FakeFingerprintHasher();
+  const secrets = new FakeOneTimeSecretGenerator();
+  const secretHasher = new FakeSecretHasher();
   const identityProvider = new FakeIdentityProvider(clock);
   const audit = new AuditRecorder({ registry: taliAuditRegistry, writer: auditWriter, clock, ids });
   const users = store.userRepository;
@@ -137,6 +177,9 @@ export function createTenancyHarness(options: {
     ids,
     clock,
   });
+  const businessIdempotency = new KeyedIdempotency({ businessStore: businessIdempotencyStore, clock, ids });
+  const invitations = store.invitationRepository;
+  const devices = store.deviceRepository;
   const firstCurrency = options.currencies[0];
 
   const identityFor = (subject: string) => identityProvider.verifyAccessToken(identityProvider.issueToken(subject));
@@ -209,7 +252,10 @@ export function createTenancyHarness(options: {
     store,
     auditWriter,
     idempotencyStore,
+    businessIdempotencyStore,
     hasher,
+    secrets,
+    secretHasher,
     identityProvider,
     userContexts,
     businessContexts: createBusinessContextResolver({ unitOfWork, userContexts, businesses, memberships }),
@@ -221,5 +267,48 @@ export function createTenancyHarness(options: {
     listLocations: createListLocations({ unitOfWork, locations }),
     listMembers: createListMembers({ unitOfWork, memberships }),
     defaultLocations: createDefaultLocationResolver({ unitOfWork, locations }),
+    updateBusinessName: createUpdateBusinessName({ unitOfWork, businesses, memberships, audit, clock }),
+    changeMemberRole: createChangeMemberRole({ unitOfWork, businesses, memberships, audit, clock }),
+    suspendMember: createSuspendMember({ unitOfWork, businesses, memberships, audit, clock }),
+    reactivateMember: createReactivateMember({ unitOfWork, businesses, memberships, audit, clock }),
+    createInvitation: createCreateInvitation({
+      unitOfWork,
+      memberships,
+      invitations,
+      idempotency: businessIdempotency,
+      hasher,
+      secrets,
+      secretHasher,
+      audit,
+      ids,
+      clock,
+    }),
+    revokeInvitation: createRevokeInvitation({ unitOfWork, memberships, invitations, audit, clock }),
+    acceptInvitation: createAcceptInvitation({
+      unitOfWork,
+      users,
+      businesses,
+      memberships,
+      invitations,
+      secretHasher,
+      audit,
+      ids,
+      clock,
+    }),
+    registerDevice: createRegisterDevice({
+      unitOfWork,
+      memberships,
+      devices,
+      idempotency: businessIdempotency,
+      hasher,
+      secrets,
+      secretHasher,
+      audit,
+      ids,
+      clock,
+    }),
+    listDevices: createListDevices({ unitOfWork, devices }),
+    revokeDevice: createRevokeDevice({ unitOfWork, memberships, devices, audit, clock }),
+    deviceVerifier: createDeviceVerifier({ unitOfWork, devices, secretHasher }),
   };
 }

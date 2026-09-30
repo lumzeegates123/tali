@@ -6,17 +6,57 @@ import type {
   MembersResponse,
   MyBusinessesResponse,
 } from "@tali/shared";
-import { CreateBusinessRequestSchema } from "@tali/shared";
-import type { AccessToken, ApiFailure, ApiResult, PageRequest, TaliApiClient } from "../api/tali-api-client";
+import { AcceptInvitationRequestSchema, CreateBusinessRequestSchema } from "@tali/shared";
+import type {
+  AccessToken,
+  ApiFailure,
+  ApiResult,
+  DeviceHeaders,
+  PageRequest,
+  TaliApiClient,
+} from "../api/tali-api-client";
+import {
+  type DeviceCredentialStore,
+  type DeviceRegistration,
+  noDeviceCredentialStore,
+} from "../devices/device-credential-store";
 
 /**
  * Build 1 client session (plan 003 section 7): the access token, the current
  * user, the loaded businesses and the selected business live in this object's
- * memory only. Nothing is written to device storage, a database or files, so
- * an app restart intentionally loses the session. The Tali API stays authoritative:
- * the store never decides permissions, tenancy or idempotency outcomes; it
- * only reacts to the API's responses.
+ * memory only, so an app restart intentionally loses the session. The one
+ * exception is a device registration (Slice 5): its device ID and credential
+ * are kept per business in the device credential store (the platform
+ * keystore) and survive sign-out and restarts. The Tali API stays
+ * authoritative: the store never decides permissions, tenancy or idempotency
+ * outcomes; it only reacts to the API's responses.
  */
+
+/**
+ * Device registration for the selected business, as the UI may show it.
+ * `untrusted`: the API refused the stored registration; it has been removed
+ * from this device and is never re-registered automatically.
+ */
+export type DeviceState =
+  "unsupported" | "none" | "checking" | "unregistered" | "registered" | "untrusted" | "unavailable";
+
+export type RegisterDeviceOutcome =
+  | { readonly status: "registered" }
+  /** A retry replayed a registration created earlier; its one-time credential cannot be received again. */
+  | { readonly status: "credentialUnavailable" }
+  | { readonly status: "storageFailed" }
+  | { readonly status: "invalid" }
+  | { readonly status: "ignored" }
+  | { readonly status: "failed"; readonly failure: ApiFailure };
+
+export type AcceptInvitationOutcome =
+  | { readonly status: "accepted"; readonly businessName: string }
+  | { readonly status: "invalid" }
+  | { readonly status: "ignored" }
+  | { readonly status: "failed"; readonly failure: ApiFailure };
+
+/** Device labels follow the API rule: 1 to 60 characters after trimming. */
+export const DEVICE_LABEL_MAX = 60;
 
 export type SessionPhase =
   | "signedOut"
@@ -32,7 +72,7 @@ export type SessionAction = "signIn" | "checkUser" | "register" | "loadBusinesse
 export type BusinessSummary = MyBusinessesResponse["items"][number];
 
 /** Why the session ended or the selection was cleared; wording is generic by design. */
-export type SessionNotice = "signedOut" | "sessionEnded" | "businessUnavailable";
+export type SessionNotice = "signedOut" | "sessionEnded" | "businessUnavailable" | "invitationAccepted";
 
 export interface SessionError {
   readonly action: SessionAction;
@@ -46,9 +86,11 @@ export interface SessionSnapshot {
   readonly businesses: readonly BusinessSummary[];
   readonly businessesNextCursor: string | null;
   readonly selectedBusinessId: string | undefined;
-  readonly pending: SessionAction | "loadMoreBusinesses" | undefined;
+  readonly pending: SessionAction | "loadMoreBusinesses" | "registerDevice" | "acceptInvitation" | undefined;
   readonly error: SessionError | undefined;
   readonly notice: SessionNotice | undefined;
+  /** Never contains the device ID or credential. */
+  readonly device: DeviceState;
 }
 
 export type CreateBusinessOutcome =
@@ -71,6 +113,9 @@ export interface SessionStoreOptions {
   readonly api: TaliApiClient;
   /** The approved client UUID implementation (RFC 9562 UUIDv7), used for Idempotency-Key values. */
   readonly newIdempotencyKey: () => string;
+  /** Android only in Build 1; elsewhere device registration is not offered and nothing is stored. */
+  readonly deviceRegistrationSupported?: boolean;
+  readonly deviceStore?: DeviceCredentialStore;
 }
 
 const BUSINESS_PAGE_SIZE = 50;
@@ -86,11 +131,41 @@ const SIGNED_OUT: SessionSnapshot = Object.freeze({
   pending: undefined,
   error: undefined,
   notice: undefined,
+  device: "none",
 });
 
 interface CreateAttempt {
   readonly command: CreateBusinessRequest;
   readonly key: string;
+}
+
+interface RegisterAttempt {
+  readonly businessId: string;
+  readonly label: string;
+  readonly key: string;
+}
+
+/** The registration of the selected business, in memory while it is selected. */
+interface LoadedDevice {
+  readonly businessId: string;
+  readonly registration: DeviceRegistration;
+}
+
+/**
+ * Accepts a pasted invitation link (`.../invitations/accept#token=...`) or
+ * the token alone. Returns undefined for anything else.
+ */
+export function parseInvitationInput(input: string): string | undefined {
+  const trimmed = input.trim();
+  const marker = trimmed.indexOf("#token=");
+  let token = marker === -1 ? trimmed : (trimmed.slice(marker + "#token=".length).split("&")[0] ?? "");
+  try {
+    token = decodeURIComponent(token);
+  } catch {
+    return undefined;
+  }
+  if (token === "" || /\s|[/?#]/u.test(token)) return undefined;
+  return AcceptInvitationRequestSchema.safeParse({ token }).success ? token : undefined;
 }
 
 function isApiError(failure: ApiFailure, code: string): boolean {
@@ -111,10 +186,20 @@ export class SessionStore {
   #epoch = 0;
   #createAttempt: CreateAttempt | undefined;
   #createInFlight = false;
+  readonly #deviceSupported: boolean;
+  readonly #deviceStore: DeviceCredentialStore;
+  #device: LoadedDevice | undefined;
+  #deviceLoad: Promise<void> | undefined;
+  #registerAttempt: RegisterAttempt | undefined;
 
   constructor(options: SessionStoreOptions) {
     this.#api = options.api;
     this.#newIdempotencyKey = options.newIdempotencyKey;
+    this.#deviceSupported = options.deviceRegistrationSupported === true;
+    this.#deviceStore = this.#deviceSupported
+      ? (options.deviceStore ?? noDeviceCredentialStore)
+      : noDeviceCredentialStore;
+    this.#snapshot = this.#withDevice(SIGNED_OUT);
   }
 
   readonly subscribe = (listener: () => void): (() => void) => {
@@ -194,6 +279,7 @@ export class SessionStore {
     if (this.#token === undefined) return;
     if (!this.#snapshot.businesses.some((item) => item.business.id === businessId)) return;
     this.#patch({ phase: "businessSelected", selectedBusinessId: businessId, error: undefined, notice: undefined });
+    if (this.#deviceSupported) this.#deviceLoad = this.#loadDevice(this.#epoch, businessId);
   }
 
   /** Returns to the business picker; the selection is cleared, never remembered. */
@@ -250,6 +336,7 @@ export class SessionStore {
       return { status: "failed", failure: result.failure };
     }
     this.#createAttempt = undefined;
+    // A new business has no registration of this device yet.
     const created: BusinessSummary = {
       business: result.value.business,
       membership: { id: result.value.membership.id, role: result.value.membership.role },
@@ -265,20 +352,23 @@ export class SessionStore {
       businessesNextCursor: refreshed.ok ? refreshed.value.nextCursor : this.#snapshot.businessesNextCursor,
       selectedBusinessId: created.business.id,
     });
+    if (this.#deviceSupported) this.#deviceLoad = this.#loadDevice(epoch, created.business.id);
     return { status: "created", businessId: created.business.id };
   }
 
   /** `GET /v1/businesses/:id` and its active default location from `GET .../locations`. */
   async loadBusinessOverview(businessId: string): Promise<ResourceResult<BusinessOverview>> {
-    return this.#businessRead(businessId, async (token) => {
-      const business = await this.#api.getBusiness(token, businessId);
+    return this.#businessRead(businessId, async (token, device) => {
+      const business = await this.#api.getBusiness(token, businessId, device);
       if (!business.ok) return business;
       let after: string | undefined;
       for (let page = 0; page < MAX_LOCATION_PAGES; page += 1) {
-        const locations = await this.#api.listLocations(token, businessId, {
-          limit: LOCATION_PAGE_SIZE,
-          ...(after === undefined ? {} : { after }),
-        });
+        const locations = await this.#api.listLocations(
+          token,
+          businessId,
+          { limit: LOCATION_PAGE_SIZE, ...(after === undefined ? {} : { after }) },
+          device,
+        );
         if (!locations.ok) return locations;
         const defaultLocation = locations.value.items.find((item) => item.isDefault && item.status === "ACTIVE");
         if (defaultLocation !== undefined) {
@@ -298,13 +388,126 @@ export class SessionStore {
 
   /** `GET /v1/businesses/:id/members`; PERMISSION_DENIED is returned to the caller, never treated as empty. */
   async loadMembers(businessId: string, page: PageRequest = {}): Promise<ResourceResult<MembersResponse>> {
-    return this.#businessRead(businessId, (token) => this.#api.listMembers(token, businessId, page));
+    return this.#businessRead(businessId, (token, device) => this.#api.listMembers(token, businessId, page, device));
   }
 
-  /** Clears the token, user, businesses, selection and any pending idempotency key. */
+  /**
+   * `POST .../devices` for the selected business, Android only, when this
+   * device holds no registration for it. One Idempotency-Key per logical
+   * submission (business and label). The credential from the first response
+   * is written to the device credential store before it is used; it is never
+   * kept anywhere else.
+   */
+  async registerDevice(label: string): Promise<RegisterDeviceOutcome> {
+    const token = this.#token;
+    const businessId = this.#snapshot.selectedBusinessId;
+    const { device, pending } = this.#snapshot;
+    if (!this.#deviceSupported || token === undefined || businessId === undefined || pending !== undefined) {
+      return { status: "ignored" };
+    }
+    if (device !== "unregistered" && device !== "untrusted") return { status: "ignored" };
+    const trimmed = label.trim();
+    if (trimmed.length < 1 || trimmed.length > DEVICE_LABEL_MAX) return { status: "invalid" };
+    const previous = this.#registerAttempt;
+    const attempt =
+      previous !== undefined && previous.businessId === businessId && previous.label === trimmed
+        ? previous
+        : { businessId, label: trimmed, key: this.#newIdempotencyKey() };
+    this.#registerAttempt = attempt;
+    const epoch = this.#epoch;
+    this.#patch({ pending: "registerDevice" });
+    const result = await this.#api.registerDevice(token, businessId, attempt.label, attempt.key);
+    if (epoch !== this.#epoch) return { status: "ignored" };
+    if (!result.ok) {
+      if (isApiError(result.failure, "IDEMPOTENCY_KEY_REUSED")) this.#registerAttempt = undefined;
+      if (this.#applySessionEffects(result.failure)) return { status: "failed", failure: result.failure };
+      this.#patch({ pending: undefined });
+      return { status: "failed", failure: result.failure };
+    }
+    this.#registerAttempt = undefined;
+    if (!result.value.credentialAvailable) {
+      this.#patch({ pending: undefined });
+      return { status: "credentialUnavailable" };
+    }
+    const registration = { deviceId: result.value.device.id, credential: result.value.credential };
+    try {
+      await this.#deviceStore.save(businessId, registration);
+    } catch {
+      if (epoch === this.#epoch) this.#patch({ pending: undefined });
+      return { status: "storageFailed" };
+    }
+    if (epoch !== this.#epoch || this.#snapshot.selectedBusinessId !== businessId) return { status: "ignored" };
+    this.#device = { businessId, registration };
+    this.#patch({ pending: undefined, device: "registered" });
+    return { status: "registered" };
+  }
+
+  /**
+   * `POST /v1/invitations/accept` with a pasted link or token, once the user
+   * is registered. On success the business list is reloaded so the new
+   * business appears in the picker. The token is not kept after the call.
+   */
+  async acceptInvitation(input: string): Promise<AcceptInvitationOutcome> {
+    const token = this.#token;
+    const { phase, pending } = this.#snapshot;
+    if (token === undefined || pending !== undefined) return { status: "ignored" };
+    if (phase !== "choosingBusiness" && phase !== "businessSelected") return { status: "ignored" };
+    const invitationToken = parseInvitationInput(input);
+    if (invitationToken === undefined) return { status: "invalid" };
+    const epoch = this.#epoch;
+    this.#patch({ pending: "acceptInvitation", error: undefined, notice: undefined });
+    const result = await this.#api.acceptInvitation(token, invitationToken);
+    if (epoch !== this.#epoch) return { status: "ignored" };
+    if (!result.ok) {
+      if (this.#applySessionEffects(result.failure)) return { status: "failed", failure: result.failure };
+      this.#patch({ pending: undefined });
+      return { status: "failed", failure: result.failure };
+    }
+    this.#patch({ pending: undefined });
+    await this.#loadBusinesses(epoch, "invitationAccepted");
+    return { status: "accepted", businessName: result.value.business.name };
+  }
+
+  /**
+   * Clears the token, user, businesses, selection and any pending idempotency
+   * key. Device registrations stay in the device credential store: they
+   * belong to the device and business, and are used again only after a
+   * member of that business signs in.
+   */
   signOut(): void {
     this.#reset();
     this.#set({ ...SIGNED_OUT, notice: "signedOut" });
+  }
+
+  async #loadDevice(epoch: number, businessId: string): Promise<void> {
+    this.#device = undefined;
+    this.#patch({ device: "checking" });
+    let registration: DeviceRegistration | undefined;
+    try {
+      registration = await this.#deviceStore.read(businessId);
+    } catch {
+      if (epoch === this.#epoch && this.#snapshot.selectedBusinessId === businessId) {
+        this.#patch({ device: "unavailable" });
+      }
+      return;
+    }
+    if (epoch !== this.#epoch || this.#snapshot.selectedBusinessId !== businessId) return;
+    this.#device = registration === undefined ? undefined : { businessId, registration };
+    this.#patch({ device: registration === undefined ? "unregistered" : "registered" });
+  }
+
+  /** Removes a registration the API refused. The user must register again deliberately. */
+  async #forgetDevice(businessId: string, refused: DeviceRegistration): Promise<void> {
+    if (this.#device?.businessId === businessId && this.#device.registration.deviceId === refused.deviceId) {
+      this.#device = undefined;
+      if (this.#snapshot.selectedBusinessId === businessId) this.#patch({ device: "untrusted" });
+    }
+    try {
+      const stored = await this.#deviceStore.read(businessId);
+      if (stored?.deviceId === refused.deviceId) await this.#deviceStore.clear(businessId);
+    } catch {
+      // The in-memory copy is already gone; a stored copy is refused again on next use.
+    }
   }
 
   async #checkUser(epoch: number): Promise<void> {
@@ -348,16 +551,28 @@ export class SessionStore {
     });
   }
 
+  /**
+   * A read scoped to one business. Device headers are attached only when this
+   * device holds a registration for that same business; any other business
+   * gets none.
+   */
   async #businessRead<T>(
     businessId: string,
-    read: (token: AccessToken) => Promise<ApiResult<T> | "missing-default-location">,
+    read: (token: AccessToken, device: DeviceHeaders | undefined) => Promise<ApiResult<T> | "missing-default-location">,
   ): Promise<ResourceResult<T>> {
     const token = this.#token;
     if (token === undefined) return { ok: false, failure: { kind: "unavailable", reason: "network" } };
     const epoch = this.#epoch;
-    const result = await read(token);
+    if (this.#deviceLoad !== undefined) await this.#deviceLoad;
+    if (epoch !== this.#epoch) return { ok: false, failure: { kind: "unavailable", reason: "network" } };
+    const device = this.#device?.businessId === businessId ? this.#device.registration : undefined;
+    const result = await read(token, device);
     if (result === "missing-default-location") return { ok: false, failure: { kind: result } };
     if (result.ok) return { ok: true, value: result.value };
+    if (device !== undefined && isApiError(result.failure, "DEVICE_NOT_TRUSTED")) {
+      await this.#forgetDevice(businessId, device);
+      return { ok: false, failure: result.failure };
+    }
     if (epoch === this.#epoch && !this.#applySessionEffects(result.failure)) {
       if (isApiError(result.failure, "NOT_FOUND") && this.#snapshot.selectedBusinessId === businessId) {
         // Tenant hiding: the reason is never known here and never guessed.
@@ -396,6 +611,8 @@ export class SessionStore {
     this.#token = undefined;
     this.#createAttempt = undefined;
     this.#createInFlight = false;
+    this.#registerAttempt = undefined;
+    this.#deviceLoad = undefined;
     this.#epoch += 1;
     return this.#epoch;
   }
@@ -404,8 +621,19 @@ export class SessionStore {
     this.#set({ ...this.#snapshot, ...changes });
   }
 
+  /** Without a selected business there is no device state; the in-memory registration is dropped. */
+  #withDevice(next: SessionSnapshot): SessionSnapshot {
+    if (!this.#deviceSupported) return { ...next, device: "unsupported" };
+    if (next.selectedBusinessId === undefined) {
+      this.#device = undefined;
+      this.#deviceLoad = undefined;
+      return { ...next, device: "none" };
+    }
+    return next;
+  }
+
   #set(next: SessionSnapshot): void {
-    this.#snapshot = Object.freeze(next);
+    this.#snapshot = Object.freeze(this.#withDevice(next));
     for (const listener of this.#listeners) listener();
   }
 }

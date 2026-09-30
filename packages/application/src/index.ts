@@ -39,6 +39,7 @@ export {
   ConcurrentModificationError,
   ConflictError,
   DependencyUnavailableError,
+  DeviceNotTrustedError,
   IdempotencyInProgressError,
   IdempotencyKeyRequiredError,
   IdempotencyKeyReusedError,
@@ -61,6 +62,8 @@ export {
   validateAuditPayload,
 } from "./audit/audit-payload.js";
 export type { BusinessAuditEvent, PlatformAuditEvent } from "./audit/audit-recorder.js";
+export type { BusinessAuditEnvelope } from "./audit/business-audit-envelope.js";
+export { businessAuditEnvelope } from "./audit/business-audit-envelope.js";
 export { AUDIT_REASON_MAX_LENGTH, AuditRecorder } from "./audit/audit-recorder.js";
 export type {
   AuditRecordId,
@@ -97,7 +100,14 @@ export type {
   UserIdempotencyRecord,
   UserIdempotencyStore,
 } from "./idempotency/user-idempotency-store.js";
+export type {
+  BusinessIdempotencyRecord,
+  BusinessIdempotencyStore,
+  IdempotencyActor,
+} from "./idempotency/business-idempotency-store.js";
+export { idempotencyActorOf } from "./idempotency/business-idempotency-store.js";
 export * from "./modules/business/index.js";
+export * from "./modules/device/index.js";
 export * from "./modules/identity/index.js";
 export * from "./modules/location/index.js";
 export * from "./ports/index.js";

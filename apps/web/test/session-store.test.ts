@@ -321,6 +321,7 @@ describe("session store: sign-out and memory-only state", () => {
       pending: undefined,
       error: undefined,
       notice: "signedOut",
+      hasPendingInvitation: false,
     });
     const before = api.requests.length;
     await store.loadBusinessOverview(BUSINESS_A.id);
