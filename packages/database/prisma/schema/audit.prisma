@@ -1,0 +1,59 @@
+// Audit records (ADR-004 section 8). Two tables, one AuditWriter port.
+// Insert-only for the application role (SELECT and INSERT granted, never
+// UPDATE or DELETE). Business records are tenant-owned; their membership and
+// location references are composite (business_id, x_id) foreign keys, so a
+// record can never point into another business. Platform records carry the
+// subject user and no business. Payloads are stored as `json` (exact text), so
+// the size CHECKs in the migration SQL measure the bytes that were written.
+
+model BusinessAuditRecord {
+  businessId           String   @map("business_id") @db.Uuid
+  id                   String   @id @db.Uuid
+  occurredAt           DateTime @map("occurred_at") @db.Timestamptz(3)
+  action               String
+  entityType           String   @map("entity_type")
+  entityId             String   @map("entity_id") @db.Uuid
+  actorType            String   @map("actor_type")
+  actorUserId          String?  @map("actor_user_id") @db.Uuid
+  actorMembershipId    String?  @map("actor_membership_id") @db.Uuid
+  actorName            String?  @map("actor_name")
+  deviceId             String?  @map("device_id") @db.Uuid
+  locationId           String?  @map("location_id") @db.Uuid
+  sourceChannel        String   @map("source_channel")
+  correlationId        String   @map("correlation_id")
+  idempotencyKey       String?  @map("idempotency_key") @db.Uuid
+  reason               String?
+  payload              Json     @db.Json
+  payloadSchemaVersion Int      @map("payload_schema_version")
+
+  business        Business            @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  actorUser       User?               @relation(fields: [actorUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  actorMembership BusinessMembership? @relation(fields: [businessId, actorMembershipId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  location        BusinessLocation?   @relation(fields: [businessId, locationId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([businessId, id])
+  @@map("business_audit_records")
+}
+
+model PlatformAuditRecord {
+  id                   String   @id @db.Uuid
+  occurredAt           DateTime @map("occurred_at") @db.Timestamptz(3)
+  action               String
+  entityType           String   @map("entity_type")
+  entityId             String   @map("entity_id") @db.Uuid
+  subjectUserId        String   @map("subject_user_id") @db.Uuid
+  actorType            String   @map("actor_type")
+  actorUserId          String?  @map("actor_user_id") @db.Uuid
+  actorName            String?  @map("actor_name")
+  sourceChannel        String   @map("source_channel")
+  correlationId        String   @map("correlation_id")
+  idempotencyKey       String?  @map("idempotency_key") @db.Uuid
+  reason               String?
+  payload              Json     @db.Json
+  payloadSchemaVersion Int      @map("payload_schema_version")
+
+  subjectUser User  @relation("PlatformAuditSubject", fields: [subjectUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  actorUser   User? @relation("PlatformAuditActor", fields: [actorUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@map("platform_audit_records")
+}

@@ -20,5 +20,6 @@ export type {
   MemberListing,
   MembershipRepository,
 } from "./ports.js";
+export { assertMembershipTransition } from "./ports.js";
 export type { GetBusiness, ListMembers, ListMyBusinesses } from "./queries.js";
 export { createGetBusiness, createListMembers, createListMyBusinesses } from "./queries.js";

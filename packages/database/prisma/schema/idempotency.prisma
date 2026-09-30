@@ -1,0 +1,53 @@
+// Keyed idempotency records (ADR-004 section 4). SELECT and INSERT only for the
+// application role: a record is inserted inside the mutation's transaction and
+// is immutable once committed (there is no in-progress row). The unique key is
+// the authority for concurrent duplicates. `result` is stored as `json` (exact
+// text), so the 16 KiB CHECK in the migration SQL measures the bytes written.
+
+// User scope: user-level mutations that run before a business exists
+// (Build 1: CreateBusiness). The actor is always the user.
+model UserIdempotencyRecord {
+  userId             String   @map("user_id") @db.Uuid
+  id                 String   @id @db.Uuid
+  actorType          String   @map("actor_type")
+  actorId            String   @map("actor_id")
+  operation          String
+  idempotencyKey     String   @map("idempotency_key") @db.Uuid
+  fingerprint        Bytes
+  fingerprintVersion Int      @map("fingerprint_version")
+  result             Json     @db.Json
+  resourceType       String   @map("resource_type")
+  resourceId         String   @map("resource_id") @db.Uuid
+  createdAt          DateTime @map("created_at") @db.Timestamptz(3)
+  expiresAt          DateTime @map("expires_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([userId, idempotencyKey])
+  @@map("user_idempotency_records")
+}
+
+// Business scope: mutations within a business. Tenant-owned; the actor is part
+// of the uniqueness scope, so one actor never replays another actor's result.
+// No store adapter exists yet: its first users are the Slice 5 keyed mutations.
+model BusinessIdempotencyRecord {
+  businessId         String   @map("business_id") @db.Uuid
+  id                 String   @id @db.Uuid
+  actorType          String   @map("actor_type")
+  actorId            String   @map("actor_id")
+  operation          String
+  idempotencyKey     String   @map("idempotency_key") @db.Uuid
+  fingerprint        Bytes
+  fingerprintVersion Int      @map("fingerprint_version")
+  result             Json     @db.Json
+  resourceType       String   @map("resource_type")
+  resourceId         String   @map("resource_id") @db.Uuid
+  createdAt          DateTime @map("created_at") @db.Timestamptz(3)
+  expiresAt          DateTime @map("expires_at") @db.Timestamptz(3)
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([businessId, id])
+  @@unique([businessId, actorType, actorId, idempotencyKey])
+  @@map("business_idempotency_records")
+}

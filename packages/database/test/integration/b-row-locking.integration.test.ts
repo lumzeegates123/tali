@@ -1,4 +1,6 @@
+import { ConcurrentModificationError } from "@tali/application";
 import { describe, expect, it } from "vitest";
+import { sqlStateOf } from "../../src/errors/postgres-errors.js";
 import { lockProbe, lockProbeNoWait, setProbeCounter } from "../support/fixture-repositories.js";
 import { delay, gate, useFixtureHarness, uuid } from "../support/harness.js";
 
@@ -9,7 +11,7 @@ describe("B. SELECT ... FOR UPDATE", () => {
   const seed = () =>
     owner.query(`INSERT INTO test_fixtures.transaction_probe (id, label, counter) VALUES ($1, 'locked', 0)`, [uuid(1)]);
 
-  it("holds the row lock for the whole transaction: a NOWAIT lock attempt fails with 55P03", async () => {
+  it("holds the row lock for the whole transaction: a NOWAIT lock attempt fails with 55P03 (CONCURRENT_MODIFICATION)", async () => {
     await seed();
     const locked = gate();
     const release = gate();
@@ -20,8 +22,11 @@ describe("B. SELECT ... FOR UPDATE", () => {
     });
     await locked.opened;
 
-    const contender = unitOfWork.run((scope) => lockProbeNoWait(scope, uuid(1)));
-    await expect(contender).rejects.toThrow(/55P03|could not obtain lock|lock_not_available/i);
+    const contender = await unitOfWork
+      .run((scope) => lockProbeNoWait(scope, uuid(1)))
+      .catch((caught: unknown) => caught);
+    expect(contender).toBeInstanceOf(ConcurrentModificationError);
+    expect(sqlStateOf((contender as Error).cause)).toBe("55P03");
 
     release.open();
     await holder;

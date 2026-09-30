@@ -2,14 +2,14 @@ import { afterAll, beforeEach } from "vitest";
 import { createPrismaClient } from "../../src/client/prisma-client.js";
 import { testDatabaseUrls } from "../../src/testing/index.js";
 import { PrismaUnitOfWork } from "../../src/unit-of-work/prisma-unit-of-work.js";
-import { truncateFixtures } from "./fixtures.js";
+import { resetTenancyTables, truncateFixtures } from "./fixtures.js";
 import { ownerPool } from "./pg.js";
 
 /**
  * Per-file harness: a Prisma client connected as the APPLICATION role (the
  * code under test never runs as the owner), a unit of work over it, and an
- * owner pool for setup and assertions. Fixture tables are truncated before
- * each test.
+ * owner pool for setup and assertions. Fixture tables and the Build 1 tables
+ * are emptied before each test.
  */
 export function useFixtureHarness(options: { readonly transactionTimeoutMs?: number } = {}) {
   const client = createPrismaClient({
@@ -25,6 +25,7 @@ export function useFixtureHarness(options: { readonly transactionTimeoutMs?: num
 
   beforeEach(async () => {
     await truncateFixtures();
+    await resetTenancyTables();
   });
 
   afterAll(async () => {

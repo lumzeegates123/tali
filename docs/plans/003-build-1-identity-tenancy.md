@@ -1,11 +1,12 @@
 # Tali Build 1: identity, tenancy, roles and devices (plan)
 
-Status: **APPROVED IN PRINCIPLE (2026-09-29). Slices 0 and 1 complete.**
+Status: **APPROVED IN PRINCIPLE (2026-09-29). Slices 0, 1 and 2 complete.**
 `docs/decisions/ADR-004-mutation-protocol.md` and `docs/decisions/ADR-005-identity-tenancy-authorization.md` are
 **ACCEPTED (2026-09-29)**. Slice 1 found a conflict between ADR-004 section 8.3 (Zod audit schemas) and ADR-002
 section 6 (application depends only on domain). `docs/decisions/ADR-006-audit-payload-schema-boundary.md` resolves it
 and is **ACCEPTED (2026-09-29)**. **Slice 1 is complete (2026-09-29)**; its guidance is in section 13 and its
-report in `docs/audits/build-1-slice-1.md`. The Cognito slice (Slice 6) remains blocked on ADR-003 (AWS foundation topology, reserved). Where this
+report in `docs/audits/build-1-slice-1.md`. **Slice 2 is complete (2026-09-29)**; its report is in
+`docs/audits/build-1-slice-2.md`. The Cognito slice (Slice 6) remains blocked on ADR-003 (AWS foundation topology, reserved). Where this
 plan and an ADR differ, the ADR is authoritative (`AGENTS.md` section 4).
 
 Scope: implementation step 2 of `docs/product/mvp-scope.md` (identity / tenancy). There is no inventory, sales,
@@ -17,7 +18,7 @@ payments, accounting, purchasing, AI or offline sync in this build.
 |---|---|---|
 | 0 | Draft ADR-004 (mutation protocol) and ADR-005 (identity/tenancy/authorization), the README index (reserve ADR-003) and the mvp-scope roles amendment. Human acceptance gate. | Complete (ADR-004 and ADR-005 accepted 2026-09-29) |
 | 1 | Domain invariants, permission catalogue and role mapping, `AuthenticatedUserContext`, `authTime`, use cases with in-memory fakes and tests (guidance in section 13) | Complete (2026-09-29; `docs/audits/build-1-slice-1.md`) |
-| 2 | Prisma schema and SQL migration (composite FKs, CHECKs, partial unique indexes, grants, currencies reference data), repositories, `verify-schema.mjs` expectations, integration and concurrency tests | Not started |
+| 2 | Prisma schema and SQL migration (composite FKs, CHECKs, partial unique indexes, grants, currencies reference data), repositories, `verify-schema.mjs` expectations, integration and concurrency tests | Complete (2026-09-29; `docs/audits/build-1-slice-2.md`) |
 | 3 | Auth guard and `BusinessContext` resolver, P0 endpoints, `LocalIdentityProvider` in `packages/integrations` (JWT library dependency to review), API security end-to-end tests | Not started |
 | 4 | Web and mobile onboarding flows for the P0 use cases | Not started |
 | 5 | P1 invitations, member management and device registration and revocation, with security tests | Not started |

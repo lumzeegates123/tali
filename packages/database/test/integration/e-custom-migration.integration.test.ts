@@ -1,16 +1,36 @@
 import { describe, expect, it } from "vitest";
 import { testDatabaseUrls } from "../../src/testing/index.js";
 import { insertConstraintProbe } from "../support/fixture-repositories.js";
+import { TEST_CURRENCIES } from "../support/fixtures.js";
 import { useFixtureHarness, uuid } from "../support/harness.js";
 import { sqlState } from "../support/pg.js";
 import { prisma } from "../support/prisma-cli.js";
 
-const COMMITTED_MIGRATIONS = ["20260927231057_foundation_spike", "20260928025500_remove_foundation_spike"];
+const COMMITTED_MIGRATIONS = [
+  "20260927231057_foundation_spike",
+  "20260928025500_remove_foundation_spike",
+  "20260929212026_build1_identity_tenancy",
+  "20260929213019_build1_timestamp_consistency",
+];
+
+const BUILD_1_TABLES = [
+  "public.business_audit_records",
+  "public.business_idempotency_records",
+  "public.business_locations",
+  "public.business_memberships",
+  "public.businesses",
+  "public.currencies",
+  "public.external_identities",
+  "public.platform_audit_records",
+  "public.user_idempotency_records",
+  "public.users",
+];
 
 /**
  * Criterion E and the migration chain. The global setup has already run
- * `migrate deploy` against this database: the spike migration, then the
- * approved cleanup migration that removes the temporary foundation_spike schema.
+ * `migrate deploy` against this database from empty: the spike migration, the
+ * approved cleanup migration that removes the temporary foundation_spike
+ * schema, and the two Build 1 identity and tenancy migrations.
  */
 describe("E. migration chain", () => {
   const { owner } = useFixtureHarness();
@@ -61,12 +81,20 @@ describe("E. migration chain", () => {
     expect(objects.rows).toEqual([]);
   });
 
-  it("the migration chain creates no application tables yet (only Prisma's migration table)", async () => {
+  it("the migration chain creates exactly the Build 1 tables (and Prisma's migration table)", async () => {
     const { rows } = await owner.query<{ name: string }>(
       `SELECT schemaname || '.' || tablename AS name FROM pg_tables
-       WHERE schemaname NOT IN ('pg_catalog', 'information_schema', 'test_fixtures') ORDER BY 1`,
+       WHERE schemaname NOT IN ('pg_catalog', 'information_schema', 'test_fixtures') ORDER BY (schemaname || '.' || tablename) COLLATE "C"`,
     );
-    expect(rows.map((row) => row.name)).toEqual(["public._prisma_migrations"]);
+    expect(rows.map((row) => row.name)).toEqual(["public._prisma_migrations", ...BUILD_1_TABLES].sort());
+  });
+
+  it("the migrations seed NGN as the only reference currency (test currencies are fixtures)", async () => {
+    const { rows } = await owner.query<{ code: string; minor_unit_digits: number }>(
+      `SELECT code, minor_unit_digits FROM currencies WHERE code <> ALL($1::text[]) ORDER BY code`,
+      [TEST_CURRENCIES.map((currency) => currency.code)],
+    );
+    expect(rows).toEqual([{ code: "NGN", minor_unit_digits: 2 }]);
   });
 });
 

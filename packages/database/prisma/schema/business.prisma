@@ -1,0 +1,46 @@
+// Business module (ADR-005 sections 5, 7, 9 and 19). `businesses.id` is the
+// tenant key. Memberships are tenant-owned: business_id NOT NULL, UNIQUE
+// (business_id, id) for composite references, and one row per user and
+// business. Status, role, length and version CHECKs live in the migration SQL.
+
+model Business {
+  id              String   @id @db.Uuid
+  name            String
+  currencyCode    String   @map("currency_code") @db.VarChar(3)
+  timeZone        String   @map("time_zone")
+  status          String
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime @map("updated_at") @db.Timestamptz(3)
+
+  currency  Currency @relation(fields: [currencyCode], references: [code], onDelete: Restrict, onUpdate: Restrict)
+  createdBy User     @relation(fields: [createdByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  locations          BusinessLocation[]
+  memberships        BusinessMembership[]
+  auditRecords       BusinessAuditRecord[]
+  idempotencyRecords BusinessIdempotencyRecord[]
+
+  @@map("businesses")
+}
+
+model BusinessMembership {
+  businessId String   @map("business_id") @db.Uuid
+  id         String   @id @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  role       String
+  status     String
+  version    Int
+  createdAt  DateTime @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime @map("updated_at") @db.Timestamptz(3)
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  actedAuditRecords BusinessAuditRecord[]
+
+  @@unique([businessId, id])
+  @@unique([businessId, userId])
+  @@index([userId])
+  @@map("business_memberships")
+}

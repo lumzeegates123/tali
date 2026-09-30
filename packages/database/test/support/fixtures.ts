@@ -152,3 +152,58 @@ export async function truncateFixtures(env: Env = process.env): Promise<void> {
     await client.query(`TRUNCATE ${FIXTURE_TABLES.map((table) => `${FIXTURE_SCHEMA}.${table}`).join(", ")}`);
   });
 }
+
+/**
+ * The Build 1 tables that tests write through the repositories. Reset between
+ * tests in the disposable test database only, as the owner role, behind the
+ * same safety checks; the application role can never do this. `currencies`
+ * is reference data and is never truncated.
+ */
+export const TENANCY_TABLES = [
+  "business_idempotency_records",
+  "user_idempotency_records",
+  "business_audit_records",
+  "platform_audit_records",
+  "business_memberships",
+  "business_locations",
+  "businesses",
+  "external_identities",
+  "users",
+] as const;
+
+/**
+ * Legitimate ISO 4217 currencies added as test-only reference rows (ADR-005
+ * section 5), with different minor-unit exponents, so tests prove no
+ * currency is special-cased. Never part of a migration.
+ */
+export const TEST_CURRENCIES = [
+  { code: "KES", minorUnitDigits: 2 },
+  { code: "JPY", minorUnitDigits: 0 },
+  { code: "BHD", minorUnitDigits: 3 },
+] as const;
+
+export async function resetTenancyTables(env: Env = process.env): Promise<void> {
+  await withFixtureSession(env, async (client) => {
+    await client.query(`TRUNCATE ${TENANCY_TABLES.map((table) => `public.${table}`).join(", ")}`);
+  });
+}
+
+export async function addTestCurrencies(env: Env = process.env): Promise<void> {
+  await withFixtureSession(env, async (client) => {
+    for (const currency of TEST_CURRENCIES) {
+      await client.query(
+        `INSERT INTO public.currencies (code, minor_unit_digits) VALUES ($1, $2) ON CONFLICT (code) DO NOTHING`,
+        [currency.code, currency.minorUnitDigits],
+      );
+    }
+  });
+}
+
+/** Removes the test-only currencies; runs after the tenancy tables are reset, so nothing references them. */
+export async function removeTestCurrencies(env: Env = process.env): Promise<void> {
+  await withFixtureSession(env, async (client) => {
+    await client.query(`DELETE FROM public.currencies WHERE code = ANY($1::text[])`, [
+      TEST_CURRENCIES.map((currency) => currency.code),
+    ]);
+  });
+}

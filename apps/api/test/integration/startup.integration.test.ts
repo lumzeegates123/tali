@@ -6,6 +6,8 @@ import { TEST_ENV } from "../support/api-harness.js";
 
 const main = fileURLToPath(new URL("../../dist/main.js", import.meta.url));
 const SECRET = "p4ss-that-must-not-leak";
+/** Upper bound for a healthy startup under full parallel load (idle startup is about 3 s). */
+const STARTUP_DEADLINE_MS = 20_000;
 
 interface Exit {
   readonly code: number | null;
@@ -14,7 +16,7 @@ interface Exit {
 }
 
 /** Runs the compiled API process with exactly the given environment. */
-function runApi(env: Record<string, string>, stopAfterMs?: number): Promise<Exit> {
+function runApi(env: Record<string, string>): Promise<Exit> {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, ["--enable-source-maps", main], {
       env: { PATH: process.env["PATH"] ?? "", SystemRoot: process.env["SystemRoot"] ?? "", ...env },
@@ -23,14 +25,7 @@ function runApi(env: Record<string, string>, stopAfterMs?: number): Promise<Exit
     let stderr = "";
     child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString()));
     child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
-    const timer =
-      stopAfterMs === undefined
-        ? undefined
-        : setTimeout(() => {
-            child.kill();
-          }, stopAfterMs);
     child.on("exit", (code) => {
-      clearTimeout(timer);
       resolve({ code, stdout, stderr });
     });
   });
@@ -63,11 +58,48 @@ describe("API process startup", () => {
     expect(result.stderr).toMatch(/not implemented yet/);
   });
 
+  // Readiness-based: wait (bounded) for the listening log line and a live HTTP
+  // response instead of assuming startup finishes within a fixed time.
   it("starts and listens with valid configuration", async () => {
-    const result = await runApi({ ...TEST_ENV, API_PORT: "3917" }, 4_000);
-    expect(result.stdout).toMatch(/"msg":"api listening"/);
-    expect(result.stderr).toBe("");
-  }, 15_000);
+    const port = "3917";
+    const child = spawn(process.execPath, ["--enable-source-maps", main], {
+      env: {
+        PATH: process.env["PATH"] ?? "",
+        SystemRoot: process.env["SystemRoot"] ?? "",
+        ...TEST_ENV,
+        API_PORT: port,
+      },
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString()));
+    child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
+    const exited = new Promise<void>((resolve) => {
+      child.on("exit", () => {
+        resolve();
+      });
+    });
+    const running = () => child.exitCode === null && child.signalCode === null;
+
+    try {
+      await waitFor(
+        () => {
+          if (!running()) throw new Error(`API exited during startup (code ${String(child.exitCode)}): ${stderr}`);
+          return stdout.includes('"msg":"api listening"');
+        },
+        "api listening",
+        STARTUP_DEADLINE_MS,
+      );
+      const live = await fetch(`http://127.0.0.1:${port}/health/live`);
+      expect(live.status).toBe(200);
+      expect(running()).toBe(true);
+      expect(stdout).toMatch(/"msg":"api listening"/);
+      expect(stderr).toBe("");
+    } finally {
+      if (running()) child.kill();
+      await exited;
+    }
+  }, 30_000);
 });
 
 async function waitFor(condition: () => boolean | Promise<boolean>, what: string, timeoutMs = 10_000): Promise<void> {

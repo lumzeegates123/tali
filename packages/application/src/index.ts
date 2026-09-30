@@ -36,8 +36,10 @@ export type { ApplicationErrorCode, ValidationIssue } from "./errors/application
 export {
   ApplicationError,
   AuthenticationError,
+  ConcurrentModificationError,
   ConflictError,
   DependencyUnavailableError,
+  IdempotencyInProgressError,
   IdempotencyKeyRequiredError,
   IdempotencyKeyReusedError,
   LocationRequiredError,

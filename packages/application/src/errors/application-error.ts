@@ -14,7 +14,9 @@ export type ApplicationErrorCode =
   | "USER_NOT_REGISTERED"
   | "USER_DISABLED"
   | "IDEMPOTENCY_KEY_REQUIRED"
-  | "IDEMPOTENCY_KEY_REUSED";
+  | "IDEMPOTENCY_KEY_REUSED"
+  | "IDEMPOTENCY_IN_PROGRESS"
+  | "CONCURRENT_MODIFICATION";
 
 /** Whether a client may retry the same request unchanged (ADR-004 section 11; ADR-005 section 13.1). */
 const RETRYABLE: Readonly<Record<ApplicationErrorCode, boolean>> = {
@@ -29,6 +31,8 @@ const RETRYABLE: Readonly<Record<ApplicationErrorCode, boolean>> = {
   USER_DISABLED: false,
   IDEMPOTENCY_KEY_REQUIRED: false,
   IDEMPOTENCY_KEY_REUSED: false,
+  IDEMPOTENCY_IN_PROGRESS: true,
+  CONCURRENT_MODIFICATION: true,
 };
 
 export interface ValidationIssue {
@@ -121,5 +125,26 @@ export class IdempotencyKeyRequiredError extends ApplicationError {
 export class IdempotencyKeyReusedError extends ApplicationError {
   constructor(message = "This idempotency key was already used for a different request") {
     super("IDEMPOTENCY_KEY_REUSED", message);
+  }
+}
+
+/**
+ * Another request with the same idempotency key was still in progress when
+ * the lock wait timed out. Retryable with the same key (ADR-004 sections 4.3 and 11).
+ */
+export class IdempotencyInProgressError extends ApplicationError {
+  constructor(message = "A request with this idempotency key is still in progress", options?: { cause?: unknown }) {
+    super("IDEMPOTENCY_IN_PROGRESS", message, options);
+  }
+}
+
+/**
+ * A concurrent change prevented the transaction from completing: serialization
+ * retries were exhausted, a lock wait timed out, or an optimistic version
+ * check failed. Nothing was committed; retryable (ADR-004 section 11).
+ */
+export class ConcurrentModificationError extends ApplicationError {
+  constructor(message = "The resource was modified concurrently; retry the request", options?: { cause?: unknown }) {
+    super("CONCURRENT_MODIFICATION", message, options);
   }
 }

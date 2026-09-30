@@ -10,7 +10,9 @@ import type {
   User,
   UserId,
 } from "@tali/domain";
-import { isBusinessActive, isMembershipActive, sameExternalIdentityKey } from "@tali/domain";
+import { countActiveOwners, isBusinessActive, isMembershipActive, sameExternalIdentityKey } from "@tali/domain";
+import { ConcurrentModificationError } from "../errors/application-error.js";
+import { assertMembershipTransition } from "../modules/business/ports.js";
 import type {
   AccessibleBusiness,
   BusinessRepository,
@@ -212,6 +214,26 @@ export class InMemoryTenancyStore implements RollbackParticipant {
         throw new Error("a user has at most one membership per business");
       }
       this.#memberships.set(membership.id, membership);
+    },
+    // In-memory transactions do not interleave inside the store, so the lock
+    // only reports whether the business exists. Lock behaviour is proven
+    // against PostgreSQL in packages/database.
+    lockBusinessForMembershipChange: async (scope, businessId) => {
+      this.#enter(scope, "memberships.lockBusinessForMembershipChange");
+      return this.#businesses.has(businessId);
+    },
+    countActiveOwners: async (scope, businessId) => {
+      this.#enter(scope, "memberships.countActiveOwners");
+      return countActiveOwners([...this.#memberships.values()].filter((m) => m.businessId === businessId));
+    },
+    update: async (scope, previous, next) => {
+      this.#enter(scope, "memberships.update");
+      assertMembershipTransition(previous, next);
+      const stored = this.#memberships.get(previous.id);
+      if (stored?.businessId !== previous.businessId || stored.version !== previous.version) {
+        throw new ConcurrentModificationError();
+      }
+      this.#memberships.set(next.id, next);
     },
     listMembers: async (scope, businessId, request) => {
       this.#enter(scope, "memberships.listMembers");
