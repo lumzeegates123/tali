@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isLockNotAvailable, isTransactionConflict, sqlStateOf } from "./postgres-errors.js";
+import { isDatabaseUnavailable, isLockNotAvailable, isTransactionConflict, sqlStateOf } from "./postgres-errors.js";
 
 /** Error shapes observed from Prisma 7.10 with @prisma/adapter-pg (see the module comment). */
 const knownRequestError = (originalCode: string) =>
@@ -61,5 +61,35 @@ describe("classification", () => {
   it("lock_not_available is recognised only for 55P03", () => {
     expect(isLockNotAvailable(knownRequestError("55P03"))).toBe(true);
     expect(isLockNotAvailable(writeConflict("40001"))).toBe(false);
+  });
+});
+
+describe("isDatabaseUnavailable", () => {
+  /** Observed from Prisma 7.10 with @prisma/adapter-pg against a closed port. */
+  const unreachable = Object.assign(new Error("Can't reach database server at 127.0.0.1:59999"), {
+    name: "PrismaClientKnownRequestError",
+    code: "P1001",
+    meta: { driverAdapterError: { name: "DriverAdapterError", cause: { kind: "DatabaseNotReachable" } } },
+  });
+
+  it("recognises unreachable, closed, exhausted and shutting-down databases", () => {
+    expect(isDatabaseUnavailable(unreachable)).toBe(true);
+    expect(isDatabaseUnavailable({ name: "DriverAdapterError", cause: { kind: "ConnectionClosed" } })).toBe(true);
+    expect(isDatabaseUnavailable(Object.assign(new Error("pool"), { code: "P2024" }))).toBe(true);
+    expect(
+      isDatabaseUnavailable(new Error("outer", { cause: Object.assign(new Error("s"), { code: "ECONNREFUSED" }) })),
+    ).toBe(true);
+    expect(isDatabaseUnavailable(pgDatabaseError("08006"))).toBe(true);
+    expect(isDatabaseUnavailable(pgDatabaseError("57P01"))).toBe(true);
+    expect(isDatabaseUnavailable(pgDatabaseError("53300"))).toBe(true);
+  });
+
+  it("does not classify constraint violations, conflicts, lock timeouts or Prisma query errors", () => {
+    expect(isDatabaseUnavailable(knownRequestError("23505"))).toBe(false);
+    expect(isDatabaseUnavailable(writeConflict("40001"))).toBe(false);
+    expect(isDatabaseUnavailable(pgDatabaseError("55P03"))).toBe(false);
+    expect(isDatabaseUnavailable(Object.assign(new Error("p"), { code: "P2002" }))).toBe(false);
+    expect(isDatabaseUnavailable(new Error("plain"))).toBe(false);
+    expect(isDatabaseUnavailable(undefined)).toBe(false);
   });
 });

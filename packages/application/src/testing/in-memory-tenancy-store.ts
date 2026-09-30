@@ -192,6 +192,12 @@ export class InMemoryTenancyStore implements RollbackParticipant {
       const owned = [...this.#locations.values()].filter((location) => location.businessId === businessId);
       return page(owned, (location) => location.id, request);
     },
+    findActiveDefault: async (scope, businessId) => {
+      this.#enter(scope, "locations.findActiveDefault");
+      return [...this.#locations.values()].find(
+        (location) => location.businessId === businessId && location.isDefault && location.status === "ACTIVE",
+      );
+    },
   };
 
   readonly membershipRepository: MembershipRepository = {

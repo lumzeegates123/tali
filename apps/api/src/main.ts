@@ -8,7 +8,7 @@ import { createApiRuntime } from "./composition/api-runtime.js";
  */
 async function main(): Promise<void> {
   const config = loadServerConfig(process.env);
-  const runtime = createApiRuntime(config);
+  const runtime = await createApiRuntime(config);
   const app = await createApiApplication(runtime);
 
   let shuttingDown = false;

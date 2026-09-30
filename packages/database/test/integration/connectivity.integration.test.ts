@@ -1,4 +1,5 @@
 import { DependencyUnavailableError } from "@tali/application";
+import { parseCurrencyCode } from "@tali/domain";
 import { afterAll, describe, expect, it } from "vitest";
 import { createDatabase } from "../../src/index.js";
 import { createTestDatabase, testDatabaseUrls } from "../../src/testing/index.js";
@@ -30,6 +31,21 @@ describe("database connectivity", () => {
     const unreachable = createDatabase({ connectionString: url.toString(), connectionTimeoutMs: 1_000 });
     try {
       await expect(unreachable.ping()).rejects.toBeInstanceOf(DependencyUnavailableError);
+    } finally {
+      await unreachable.disconnect();
+    }
+  });
+
+  it("reports an unreachable database inside a unit of work as DependencyUnavailableError", async () => {
+    const url = new URL(testDatabaseUrls().app);
+    url.port = "1";
+    const unreachable = createDatabase({ connectionString: url.toString(), connectionTimeoutMs: 1_000 });
+    try {
+      const failure = await unreachable.unitOfWork
+        .run((scope) => unreachable.repositories.currencies.findByCode(scope, parseCurrencyCode("KES")))
+        .catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(DependencyUnavailableError);
+      expect((failure as Error).message).toBe("The database is unavailable");
     } finally {
       await unreachable.disconnect();
     }

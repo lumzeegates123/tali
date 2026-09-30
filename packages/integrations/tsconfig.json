@@ -1,0 +1,4 @@
+{
+  "extends": "@tali/tsconfig/node-lib.json",
+  "include": ["src", "vitest.config.ts"]
+}

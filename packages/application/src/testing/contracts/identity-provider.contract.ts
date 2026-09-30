@@ -24,6 +24,21 @@ export function describeIdentityProviderContract(
       expect(identity.authTime.getTime()).toBeLessThanOrEqual(identity.issuedAt.getTime());
     });
 
+    it("returns only the verified identity fields, never roles, memberships or raw claims", async () => {
+      const { provider, issueValidToken } = await setup();
+      const identity = await provider.verifyAccessToken(await issueValidToken("subject-1"));
+      expect(Object.keys(identity).sort()).toEqual(["authTime", "expiresAt", "issuedAt", "provider", "subject"]);
+    });
+
+    it("rejects a token whose signature or payload was altered", async () => {
+      const { provider, issueValidToken } = await setup();
+      const token = await issueValidToken("subject-1");
+      // A character well inside the last segment carries full bits (a trailing base64url character may not).
+      const index = token.lastIndexOf(".") + 10;
+      const tampered = `${token.slice(0, index)}${token.charAt(index) === "A" ? "B" : "A"}${token.slice(index + 1)}`;
+      await expect(provider.verifyAccessToken(tampered)).rejects.toBeInstanceOf(AuthenticationError);
+    });
+
     it("rejects an expired token", async () => {
       const { provider, issueExpiredToken } = await setup();
       await expect(provider.verifyAccessToken(await issueExpiredToken("subject-1"))).rejects.toBeInstanceOf(

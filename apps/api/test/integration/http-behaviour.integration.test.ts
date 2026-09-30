@@ -57,7 +57,7 @@ describe("HTTP behaviour", () => {
     it("an ApplicationError maps to its status and code (401 UNAUTHENTICATED)", async () => {
       const response = await http().get("/__test/identity").expect(401);
       expect(ErrorEnvelopeSchema.parse(response.body)).toEqual({
-        error: { code: "UNAUTHENTICATED", message: "A bearer access token is required" },
+        error: { code: "UNAUTHENTICATED", message: "A valid bearer access token is required" },
       });
     });
 
@@ -111,6 +111,8 @@ describe("unexpected errors", () => {
     expect(JSON.stringify(response.body)).not.toMatch(/hunter2|internal-host|boom/);
     const logged = api.logs.find((entry) => entry["msg"] === "request failed");
     expect(logged?.["status"]).toBe(500);
+    expect(logged?.["error"]).toMatchObject({ name: "Error" });
+    expect(JSON.stringify(api.logs)).not.toMatch(/hunter2|internal-host|boom/);
   });
 });
 

@@ -1,7 +1,7 @@
 import { type ArgumentsHost, Catch, type ExceptionFilter, HttpException, HttpStatus, Inject } from "@nestjs/common";
 import { ApplicationError, type ApplicationErrorCode, ValidationError } from "@tali/application";
 import type { ErrorEnvelope } from "@tali/shared";
-import type { Response } from "express";
+import type { NextFunction, Request, Response } from "express";
 import { LOGGER } from "../composition/tokens.js";
 import type { Logger } from "../observability/logger.js";
 
@@ -34,12 +34,36 @@ const HTTP_CODE: Readonly<Record<number, string>> = {
   429: "RATE_LIMITED",
 };
 
-interface Mapped {
+export interface MappedError {
   readonly status: number;
   readonly envelope: ErrorEnvelope;
 }
 
-function map(exception: unknown): Mapped {
+/**
+ * Errors raised by the JSON body parser before routing (they carry a `type`
+ * such as "entity.parse.failed" and a 4xx status). Their messages can quote
+ * the raw body, so none of it is passed on.
+ */
+function bodyParserError(exception: unknown): ApplicationError | HttpException | undefined {
+  if (typeof exception !== "object" || exception === null) return undefined;
+  const { type, status } = exception as { type?: unknown; status?: unknown };
+  if (typeof type !== "string" || typeof status !== "number" || status < 400 || status >= 500) return undefined;
+  switch (type) {
+    case "entity.parse.failed":
+      return new ValidationError("Request body is not valid JSON", [{ path: ["body"], message: "malformed JSON" }]);
+    case "entity.too.large":
+      return new HttpException("Request body is too large", HttpStatus.PAYLOAD_TOO_LARGE);
+    case "encoding.unsupported":
+    case "charset.unsupported":
+      return new HttpException("Unsupported request body encoding", HttpStatus.UNSUPPORTED_MEDIA_TYPE);
+    default:
+      return new HttpException("Malformed request", HttpStatus.BAD_REQUEST);
+  }
+}
+
+/** The only mapping from errors to HTTP responses; the filter and the body-parser handler both use it. */
+export function mapError(raw: unknown): MappedError {
+  const exception = bodyParserError(raw) ?? raw;
   if (exception instanceof ApplicationError) {
     const details = exception instanceof ValidationError && exception.issues.length > 0 ? exception.issues : undefined;
     return {
@@ -59,6 +83,32 @@ function map(exception: unknown): Mapped {
   };
 }
 
+/** Logs and writes the envelope for an error (status and code only below 500; the full error server-side at 500). */
+export function writeErrorResponse(logger: Logger, exception: unknown, response: Response): void {
+  const { status, envelope } = mapError(exception);
+  if (status >= 500) {
+    logger.error("request failed", { status, code: envelope.error.code, error: exception });
+  } else {
+    logger.info("request rejected", { status, code: envelope.error.code });
+  }
+  if (response.headersSent) return;
+  response.status(status).json(envelope);
+}
+
+/**
+ * Express error middleware for failures raised before Nest routing (the JSON
+ * body parser). It uses the same mapping as the filter.
+ */
+export function preRoutingErrorHandler(logger: Logger) {
+  return (error: unknown, _request: Request, response: Response, next: NextFunction): void => {
+    if (response.headersSent) {
+      next(error);
+      return;
+    }
+    writeErrorResponse(logger, error, response);
+  };
+}
+
 /**
  * The single place errors become HTTP responses (50-api.mdc). Every error is
  * returned as the shared ErrorEnvelope. Unexpected errors are logged in full
@@ -74,14 +124,6 @@ export class ErrorEnvelopeFilter implements ExceptionFilter {
   }
 
   catch(exception: unknown, host: ArgumentsHost): void {
-    const response = host.switchToHttp().getResponse<Response>();
-    const { status, envelope } = map(exception);
-    if (status >= 500) {
-      this.#logger.error("request failed", { status, code: envelope.error.code, error: exception });
-    } else {
-      this.#logger.info("request rejected", { status, code: envelope.error.code });
-    }
-    if (response.headersSent) return;
-    response.status(status).json(envelope);
+    writeErrorResponse(this.#logger, exception, host.switchToHttp().getResponse<Response>());
   }
 }

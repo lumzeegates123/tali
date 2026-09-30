@@ -9,3 +9,14 @@ export {
   createTestDatabase,
   testDatabaseUrls,
 } from "./test-database.js";
+export { assertFixtureSession, FixtureSafetyError, fixtureTargetUrl } from "./fixture-safety.js";
+export type { TenancySnapshot } from "./tenancy-fixtures.js";
+export {
+  addTestCurrencies,
+  readTenancySnapshot,
+  removeTestCurrencies,
+  resetTenancyTables,
+  TENANCY_TABLES,
+  TEST_CURRENCIES,
+  tenancyFixtures,
+} from "./tenancy-fixtures.js";

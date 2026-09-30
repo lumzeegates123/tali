@@ -5,12 +5,18 @@ import { setTimeout as sleep } from "node:timers/promises";
 import {
   ApplicationError,
   ConcurrentModificationError,
+  DependencyUnavailableError,
   type IsolationLevel,
   type TransactionScope,
   type UnitOfWork,
   type UnitOfWorkOptions,
 } from "@tali/application";
-import { isLockNotAvailable, isTransactionConflict, TransactionConflict } from "../errors/postgres-errors.js";
+import {
+  isDatabaseUnavailable,
+  isLockNotAvailable,
+  isTransactionConflict,
+  TransactionConflict,
+} from "../errors/postgres-errors.js";
 import { Prisma, type PrismaClient } from "../generated/prisma/client.js";
 import { closeScope, openScope, type TransactionClient } from "./transaction-scope.js";
 
@@ -77,6 +83,9 @@ function boundedInteger(value: number, name: string, min: number, max: number): 
  *   After the last attempt the error is ConcurrentModificationError;
  * - a lock timeout is not retried and becomes ConcurrentModificationError,
  *   unless an adapter already mapped it (IDEMPOTENCY_IN_PROGRESS);
+ * - an unreachable or refusing database (connection failure, pool exhaustion,
+ *   shutdown) is not retried and becomes DependencyUnavailableError, so no
+ *   raw driver error reaches a caller;
  * - ApplicationErrors, domain errors, other database errors and anything
  *   else the callback throws propagate unchanged and are never retried.
  */
@@ -147,6 +156,9 @@ export class PrismaUnitOfWork implements UnitOfWork {
           continue;
         }
         if (isLockNotAvailable(error)) throw new ConcurrentModificationError(undefined, { cause: error });
+        if (isDatabaseUnavailable(error)) {
+          throw new DependencyUnavailableError("The database is unavailable", { cause: error });
+        }
         throw error;
       }
     }

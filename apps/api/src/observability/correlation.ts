@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { parseCorrelationId, type CorrelationId } from "@tali/application";
 import type { NextFunction, Request, Response } from "express";
+import type { TaliRequest } from "../http/request-context.js";
 import { runWithCorrelationId } from "./correlation-context.js";
 import type { Logger } from "./logger.js";
 
@@ -19,12 +20,15 @@ export function resolveCorrelationId(inbound: string | undefined): CorrelationId
 }
 
 /**
- * Express middleware: binds a correlation ID to the request's async context,
- * echoes it in the response header, and logs one line per completed request.
+ * Express middleware: binds a correlation ID to the request (and its async
+ * context, which stamps every log line), echoes it in the response header, and
+ * logs one line per completed request. Guards pass it into the resolved
+ * contexts, so it reaches use cases and audit records.
  */
 export function correlationMiddleware(logger: Logger) {
   return (request: Request, response: Response, next: NextFunction): void => {
     const correlationId = resolveCorrelationId(request.header(CORRELATION_HEADER));
+    (request as TaliRequest).correlationId = correlationId;
     response.setHeader(CORRELATION_HEADER, correlationId);
     const started = process.hrtime.bigint();
     response.on("finish", () => {

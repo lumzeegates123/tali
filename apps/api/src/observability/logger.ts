@@ -6,8 +6,9 @@ export type LogLevel = "fatal" | "error" | "warn" | "info" | "debug" | "trace";
 const SEVERITY: Record<LogLevel, number> = { fatal: 60, error: 50, warn: 40, info: 30, debug: 20, trace: 10 };
 
 /** Field names whose values are never written to logs. */
+// Plan 003 section 11: JWTs, bearer values, keys, claims, provider subjects, display names and contact details too.
 const REDACTED_FIELD =
-  /pass(word)?|secret|token|authorization|cookie|credential|api[-_]?key|database_?url|connection_?string/i;
+  /pass(word)?|secret|token|authorization|cookie|credential|api[-_]?key|database_?url|connection_?string|jwt|bearer|private[-_]?key|signature|claims?$|subject|display[-_]?name|e[-_]?mail|phone/i;
 
 export type LogFields = Readonly<Record<string, unknown>>;
 
@@ -21,10 +22,32 @@ export interface Logger {
 
 export type LogSink = (line: string) => void;
 
+const ERROR_CODE = /^[A-Za-z0-9_.-]{1,64}$/;
+const MAX_STACK_FRAMES = 30;
+
+/**
+ * An error as logged: name, a bounded `code` and the stack frames. Never the
+ * message: persistence, JWT and parser errors quote request data there (query
+ * arguments, display names, subjects, raw bodies), and the stack's first line
+ * repeats it.
+ */
+function serializeError(error: Error, depth: number): Record<string, unknown> {
+  const code: unknown = (error as { code?: unknown }).code;
+  const frames = (error.stack ?? "")
+    .split("\n")
+    .filter((line) => line.trimStart().startsWith("at "))
+    .slice(0, MAX_STACK_FRAMES)
+    .map((line) => line.trim());
+  return {
+    name: error.name,
+    ...(typeof code === "string" && ERROR_CODE.test(code) ? { code } : {}),
+    ...(frames.length === 0 ? {} : { stack: frames }),
+    ...(error.cause instanceof Error && depth < 3 ? { cause: serializeError(error.cause, depth + 1) } : {}),
+  };
+}
+
 function redact(value: unknown, depth = 0): unknown {
-  if (value instanceof Error) {
-    return { name: value.name, message: value.message, stack: value.stack };
-  }
+  if (value instanceof Error) return serializeError(value, 0);
   if (typeof value === "bigint") return value.toString();
   if (value === null || typeof value !== "object" || depth > 4) return value;
   if (Array.isArray(value)) return value.map((item: unknown) => redact(item, depth + 1));
