@@ -1,0 +1,20 @@
+// Location module (ADR-005 section 6; data-principles section 5). Tenant-owned.
+// The status/default CHECK and the partial unique index "one ACTIVE default
+// location per business" live in the migration SQL.
+
+model BusinessLocation {
+  businessId String   @map("business_id") @db.Uuid
+  id         String   @id @db.Uuid
+  name       String
+  isDefault  Boolean  @map("is_default")
+  status     String
+  createdAt  DateTime @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime @map("updated_at") @db.Timestamptz(3)
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  auditRecords BusinessAuditRecord[]
+
+  @@unique([businessId, id])
+  @@map("business_locations")
+}

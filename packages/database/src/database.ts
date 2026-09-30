@@ -1,5 +1,21 @@
-import { DependencyUnavailableError, type UnitOfWork } from "@tali/application";
+import {
+  type AuditWriter,
+  type BusinessRepository,
+  type CurrencyReferenceRepository,
+  DependencyUnavailableError,
+  type LocationRepository,
+  type MembershipRepository,
+  type UnitOfWork,
+  type UserIdempotencyStore,
+  type UserRepository,
+} from "@tali/application";
 import { createPrismaClient } from "./client/prisma-client.js";
+import { createAuditWriter } from "./repositories/audit-writer.js";
+import { createBusinessRepository, createCurrencyReferenceRepository } from "./repositories/business-repository.js";
+import { createLocationRepository } from "./repositories/location-repository.js";
+import { createMembershipRepository } from "./repositories/membership-repository.js";
+import { createUserIdempotencyStore } from "./repositories/user-idempotency-store.js";
+import { createUserRepository } from "./repositories/user-repository.js";
 import { PrismaUnitOfWork } from "./unit-of-work/prisma-unit-of-work.js";
 
 export interface DatabaseOptions {
@@ -10,6 +26,19 @@ export interface DatabaseOptions {
   readonly applicationName?: string;
   readonly transactionMaxWaitMs?: number;
   readonly transactionTimeoutMs?: number;
+  /** PostgreSQL lock_timeout per transaction, at most 5000 ms (ADR-004 section 13). */
+  readonly lockTimeoutMs?: number;
+}
+
+/** The Slice 2 repository adapters, as application ports. They work only with this database's unit of work. */
+export interface DatabaseRepositories {
+  readonly users: UserRepository;
+  readonly businesses: BusinessRepository;
+  readonly memberships: MembershipRepository;
+  readonly locations: LocationRepository;
+  readonly currencies: CurrencyReferenceRepository;
+  readonly auditWriter: AuditWriter;
+  readonly userIdempotency: UserIdempotencyStore;
 }
 
 /**
@@ -18,9 +47,22 @@ export interface DatabaseOptions {
  */
 export interface Database {
   readonly unitOfWork: UnitOfWork;
+  readonly repositories: DatabaseRepositories;
   /** Round-trips to PostgreSQL. Rejects with DependencyUnavailableError when unreachable. */
   ping(): Promise<void>;
   disconnect(): Promise<void>;
+}
+
+export function createRepositories(): DatabaseRepositories {
+  return Object.freeze({
+    users: createUserRepository(),
+    businesses: createBusinessRepository(),
+    memberships: createMembershipRepository(),
+    locations: createLocationRepository(),
+    currencies: createCurrencyReferenceRepository(),
+    auditWriter: createAuditWriter(),
+    userIdempotency: createUserIdempotencyStore(),
+  });
 }
 
 export function createDatabase(options: DatabaseOptions): Database {
@@ -33,10 +75,12 @@ export function createDatabase(options: DatabaseOptions): Database {
   const unitOfWork = new PrismaUnitOfWork(client, {
     maxWaitMs: options.transactionMaxWaitMs ?? 5_000,
     timeoutMs: options.transactionTimeoutMs ?? 15_000,
+    ...(options.lockTimeoutMs === undefined ? {} : { lockTimeoutMs: options.lockTimeoutMs }),
   });
 
   return {
     unitOfWork,
+    repositories: createRepositories(),
     async ping() {
       try {
         await client.$queryRaw`SELECT 1`;

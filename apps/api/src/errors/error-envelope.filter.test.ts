@@ -2,8 +2,10 @@ import { type ArgumentsHost, BadRequestException, NotFoundException } from "@nes
 import {
   type ApplicationError,
   AuthenticationError,
+  ConcurrentModificationError,
   ConflictError,
   DependencyUnavailableError,
+  IdempotencyInProgressError,
   IdempotencyKeyRequiredError,
   IdempotencyKeyReusedError,
   LocationRequiredError,
@@ -54,6 +56,8 @@ describe("ErrorEnvelopeFilter", () => {
     [new UserDisabledError(), 403, "USER_DISABLED"],
     [new IdempotencyKeyRequiredError(), 400, "IDEMPOTENCY_KEY_REQUIRED"],
     [new IdempotencyKeyReusedError(), 409, "IDEMPOTENCY_KEY_REUSED"],
+    [new IdempotencyInProgressError(), 409, "IDEMPOTENCY_IN_PROGRESS"],
+    [new ConcurrentModificationError(), 409, "CONCURRENT_MODIFICATION"],
   ] as const)("maps %s to %i %s", (error: ApplicationError, status, code) => {
     const result = run(error);
     expect(result.status).toBe(status);

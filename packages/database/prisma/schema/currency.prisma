@@ -1,0 +1,13 @@
+// Currency reference data (ADR-005 section 5; ADR-002 section 13). Global and
+// read-only for the application role. Production rows are legitimate ISO 4217
+// values only, added by reviewed migrations. The format and minor-unit CHECKs
+// live in the migration SQL.
+
+model Currency {
+  code            String @id @db.VarChar(3)
+  minorUnitDigits Int    @map("minor_unit_digits") @db.SmallInt
+
+  businesses Business[]
+
+  @@map("currencies")
+}

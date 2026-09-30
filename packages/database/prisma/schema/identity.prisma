@@ -1,0 +1,36 @@
+// Identity module (ADR-005 sections 3 and 4). Global tables: a Tali user and
+// the external identity that authenticates them. No business, role, email or
+// phone on the user; no tokens or raw claims on the identity. Status, provider
+// and length CHECKs live in the migration SQL.
+
+model User {
+  id          String   @id @db.Uuid
+  displayName String   @map("display_name")
+  status      String
+  createdAt   DateTime @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime @map("updated_at") @db.Timestamptz(3)
+
+  externalIdentities    ExternalIdentity[]
+  createdBusinesses     Business[]
+  memberships           BusinessMembership[]
+  businessAuditActions  BusinessAuditRecord[]
+  platformAuditSubjects PlatformAuditRecord[]   @relation("PlatformAuditSubject")
+  platformAuditActions  PlatformAuditRecord[]   @relation("PlatformAuditActor")
+  idempotencyRecords    UserIdempotencyRecord[]
+
+  @@map("users")
+}
+
+model ExternalIdentity {
+  id              String   @id @db.Uuid
+  userId          String   @map("user_id") @db.Uuid
+  provider        String
+  providerSubject String   @map("provider_subject")
+  createdAt       DateTime @map("created_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([provider, providerSubject])
+  @@index([userId])
+  @@map("external_identities")
+}

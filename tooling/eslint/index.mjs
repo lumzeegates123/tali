@@ -188,20 +188,41 @@ const NEST_CLASS_RULES = {
  * Append-only models: the application role has no UPDATE/DELETE grant (the
  * database enforces it); this gives the same answer at lint time (ADR-002
  * section 19). Add each protected model's Prisma delegate name here, in the
- * same change as the migration that revokes its UPDATE/DELETE. No protected
- * model exists yet (the Wave B spike model was removed).
+ * same change as the migration that revokes its UPDATE/DELETE.
  * @type {string[]}
  */
-const PROTECTED_MODEL_DELEGATES = [];
-const BANNED_PROTECTED_MUTATIONS =
-  PROTECTED_MODEL_DELEGATES.length === 0
+const PROTECTED_MODEL_DELEGATES = [
+  "currency",
+  "externalIdentity",
+  "businessAuditRecord",
+  "platformAuditRecord",
+  "userIdempotencyRecord",
+  "businessIdempotencyRecord",
+];
+/**
+ * Models that are updated through audited status changes but never
+ * hard-deleted (ADR-005 section 20); the application role has no DELETE grant.
+ * @type {string[]}
+ */
+const NO_DELETE_MODEL_DELEGATES = ["user", "business", "businessLocation", "businessMembership"];
+const BANNED_PROTECTED_MUTATIONS = [
+  ...(PROTECTED_MODEL_DELEGATES.length === 0
     ? []
     : [
         {
           selector: `CallExpression[callee.property.name=/^(update|updateMany|updateManyAndReturn|upsert|delete|deleteMany)$/][callee.object.property.name=/^(${PROTECTED_MODEL_DELEGATES.join("|")})$/]`,
           message: "Protected (append-only) models are never updated or deleted. Record a correction as a new row.",
         },
-      ];
+      ]),
+  ...(NO_DELETE_MODEL_DELEGATES.length === 0
+    ? []
+    : [
+        {
+          selector: `CallExpression[callee.property.name=/^(delete|deleteMany)$/][callee.object.property.name=/^(${NO_DELETE_MODEL_DELEGATES.join("|")})$/]`,
+          message: "Build 1 records are never hard-deleted. Change their status through an audited use case.",
+        },
+      ]),
+];
 const BANNED_RAW_SQL = [
   {
     selector: "MemberExpression[property.name=/^\\$(queryRawUnsafe|executeRawUnsafe)$/]",

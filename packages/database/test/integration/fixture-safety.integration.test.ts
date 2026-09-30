@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { testDatabaseUrls } from "../../src/testing/index.js";
 import {
+  addTestCurrencies,
   assertFixtureSession,
   createFixtures,
   dropFixtures,
   FixtureSafetyError,
   fixtureTargetUrl,
+  removeTestCurrencies,
+  resetTenancyTables,
   truncateFixtures,
 } from "../support/fixtures.js";
 import { ownerPool } from "../support/pg.js";
@@ -42,6 +45,9 @@ describe("test fixture safety", () => {
     ["createFixtures", createFixtures],
     ["dropFixtures", dropFixtures],
     ["truncateFixtures", truncateFixtures],
+    ["resetTenancyTables", resetTenancyTables],
+    ["addTestCurrencies", addTestCurrencies],
+    ["removeTestCurrencies", removeTestCurrencies],
   ])("%s refuses a non-test configuration before connecting", async (_name, operation) => {
     await expect(operation({ TALI_ENV: "local", TEST_MIGRATION_DATABASE_URL: TEST_OWNER_URL })).rejects.toBeInstanceOf(
       FixtureSafetyError,

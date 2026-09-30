@@ -6,5 +6,5 @@
  * implementation detail and must never appear in these exports; this is
  * checked by src/containment.test.ts and dependency-cruiser.
  */
-export type { Database, DatabaseOptions } from "./database.js";
+export type { Database, DatabaseOptions, DatabaseRepositories } from "./database.js";
 export { createDatabase } from "./database.js";

@@ -14,9 +14,31 @@ const migrationsDir = fileURLToPath(new URL("../prisma/migrations", import.meta.
 /**
  * Tables the application role may never UPDATE or DELETE, including tables
  * that no longer exist, so the scan keeps covering every migration that
- * touched them.
+ * touched them. Audit and keyed-idempotency records are insert-only
+ * (ADR-004 sections 4.2 and 8.1).
  */
-const PROTECTED_TABLES = ["foundation_spike.protected_entry"];
+const PROTECTED_TABLES = [
+  "foundation_spike.protected_entry",
+  "public.business_audit_records",
+  "public.platform_audit_records",
+  "public.user_idempotency_records",
+  "public.business_idempotency_records",
+];
+
+/**
+ * Build 1 tables that are never hard-deleted (ADR-005 section 20): no
+ * migration may drop, truncate or delete from them, or grant DELETE,
+ * TRUNCATE or ALL on them. UPDATE grants are checked by
+ * EXPECTED_APP_PRIVILEGES.
+ */
+const NO_DELETE_TABLES = [
+  "public.currencies",
+  "public.users",
+  "public.external_identities",
+  "public.businesses",
+  "public.business_locations",
+  "public.business_memberships",
+];
 
 /**
  * Migrations whose destructive statements were explicitly approved by the
@@ -38,14 +60,265 @@ const REMOVED_SCHEMAS = ["foundation_spike"];
  */
 const TEST_ONLY_SCHEMAS = ["test_fixtures"];
 
-/** Exact table privileges expected for the application role. */
-const EXPECTED_APP_PRIVILEGES = {};
+/**
+ * Exact table privileges expected for the application role (Build 1 Slice 2
+ * migration). No table grants DELETE or TRUNCATE; audit and idempotency tables
+ * are insert-only; currencies are read-only.
+ */
+const EXPECTED_APP_PRIVILEGES = {
+  "public.currencies": ["SELECT"],
+  "public.users": ["INSERT", "SELECT", "UPDATE"],
+  "public.external_identities": ["INSERT", "SELECT"],
+  "public.businesses": ["INSERT", "SELECT", "UPDATE"],
+  "public.business_locations": ["INSERT", "SELECT", "UPDATE"],
+  "public.business_memberships": ["INSERT", "SELECT", "UPDATE"],
+  "public.business_audit_records": ["INSERT", "SELECT"],
+  "public.platform_audit_records": ["INSERT", "SELECT"],
+  "public.user_idempotency_records": ["INSERT", "SELECT"],
+  "public.business_idempotency_records": ["INSERT", "SELECT"],
+};
 
-/** @type {{ table: string; name: string; contains: string }[]} */
-const EXPECTED_CHECKS = [];
+const ENVELOPE_SOURCE_CHANNELS =
+  "ARRAY['web'::text, 'mobile'::text, 'whatsapp'::text, 'api'::text, 'webhook'::text, 'ai_assistant'::text, 'offline_sync'::text, 'system'::text]";
+const UUID_TEXT = "'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'::text";
+
+/** The audit envelope CHECKs shared by both audit tables (ADR-004 section 8.2). */
+function auditEnvelopeChecks(table) {
+  return [
+    {
+      table,
+      name: `${table}_action_format`,
+      definition: "CHECK (((char_length(action) <= 100) AND (action ~ '^[a-z][a-z_]*(\\.[a-z][a-z_]*)+$'::text)))",
+    },
+    {
+      table,
+      name: `${table}_entity_type_format`,
+      definition: "CHECK (((char_length(entity_type) <= 64) AND (entity_type ~ '^[a-z][a-z_]*$'::text)))",
+    },
+    {
+      table,
+      name: `${table}_actor_name_length`,
+      definition:
+        "CHECK (((actor_name IS NULL) OR ((char_length(actor_name) >= 1) AND (char_length(actor_name) <= 100))))",
+    },
+    {
+      table,
+      name: `${table}_source_channel_valid`,
+      definition: `CHECK ((source_channel = ANY (${ENVELOPE_SOURCE_CHANNELS})))`,
+    },
+    {
+      table,
+      name: `${table}_correlation_id_format`,
+      definition: "CHECK ((correlation_id ~ '^[A-Za-z0-9._:-]{1,128}$'::text))",
+    },
+    {
+      table,
+      name: `${table}_reason_bounds`,
+      definition:
+        "CHECK (((reason IS NULL) OR (((char_length(reason) >= 1) AND (char_length(reason) <= 500)) AND (reason ~ '[^[:space:]]'::text))))",
+    },
+    { table, name: `${table}_payload_object`, definition: "CHECK ((json_typeof(payload) = 'object'::text))" },
+    { table, name: `${table}_payload_size`, definition: "CHECK ((octet_length((payload)::text) <= 8192))" },
+    {
+      table,
+      name: `${table}_payload_schema_version_positive`,
+      definition: "CHECK ((payload_schema_version >= 1))",
+    },
+  ];
+}
+
+/** The keyed-idempotency CHECKs shared by both scopes (ADR-004 sections 4.2 and 13). */
+function idempotencyChecks(table) {
+  return [
+    {
+      table,
+      name: `${table}_operation_format`,
+      definition:
+        "CHECK (((char_length(operation) <= 100) AND (operation ~ '^[a-z][a-z_]*(\\.[a-z][a-z_]*)*\\.v[1-9][0-9]*$'::text)))",
+    },
+    { table, name: `${table}_fingerprint_length`, definition: "CHECK ((octet_length(fingerprint) = 32))" },
+    { table, name: `${table}_fingerprint_version_positive`, definition: "CHECK ((fingerprint_version >= 1))" },
+    { table, name: `${table}_result_size`, definition: "CHECK ((octet_length((result)::text) <= 16384))" },
+    {
+      table,
+      name: `${table}_resource_type_format`,
+      definition: "CHECK (((char_length(resource_type) <= 64) AND (resource_type ~ '^[a-z][a-z_]*$'::text)))",
+    },
+    {
+      table,
+      name: `${table}_retention`,
+      definition: "CHECK ((expires_at >= (created_at + '720:00:00'::interval)))",
+    },
+  ];
+}
+
+/**
+ * Every custom CHECK constraint, compared with PostgreSQL's canonical
+ * rendering (pg_get_constraintdef), so any change to a constraint fails.
+ * @type {{ table: string; name: string; definition: string }[]}
+ */
+const EXPECTED_CHECKS = [
+  { table: "currencies", name: "currencies_code_format", definition: "CHECK (((code)::text ~ '^[A-Z]{3}$'::text))" },
+  {
+    table: "currencies",
+    name: "currencies_minor_unit_digits_range",
+    definition: "CHECK (((minor_unit_digits >= 0) AND (minor_unit_digits <= 4)))",
+  },
+  {
+    table: "users",
+    name: "users_display_name_length",
+    definition: "CHECK (((char_length(display_name) >= 1) AND (char_length(display_name) <= 100)))",
+  },
+  { table: "users", name: "users_display_name_trimmed", definition: "CHECK ((display_name = btrim(display_name)))" },
+  {
+    table: "users",
+    name: "users_status_valid",
+    definition: "CHECK ((status = ANY (ARRAY['ACTIVE'::text, 'DISABLED'::text])))",
+  },
+  {
+    table: "external_identities",
+    name: "external_identities_provider_valid",
+    definition: "CHECK ((provider = ANY (ARRAY['COGNITO'::text, 'LOCAL'::text])))",
+  },
+  {
+    table: "external_identities",
+    name: "external_identities_provider_subject_length",
+    definition: "CHECK (((char_length(provider_subject) >= 1) AND (char_length(provider_subject) <= 255)))",
+  },
+  {
+    table: "businesses",
+    name: "businesses_name_length",
+    definition: "CHECK (((char_length(name) >= 1) AND (char_length(name) <= 120)))",
+  },
+  { table: "businesses", name: "businesses_name_trimmed", definition: "CHECK ((name = btrim(name)))" },
+  {
+    table: "businesses",
+    name: "businesses_time_zone_length",
+    definition: "CHECK (((char_length(time_zone) >= 1) AND (char_length(time_zone) <= 64)))",
+  },
+  {
+    table: "businesses",
+    name: "businesses_time_zone_format",
+    definition: "CHECK ((time_zone ~ '^[A-Za-z][A-Za-z0-9_+/-]*$'::text))",
+  },
+  {
+    table: "businesses",
+    name: "businesses_status_valid",
+    definition: "CHECK ((status = ANY (ARRAY['ACTIVE'::text, 'SUSPENDED'::text])))",
+  },
+  {
+    table: "business_locations",
+    name: "business_locations_name_length",
+    definition: "CHECK (((char_length(name) >= 1) AND (char_length(name) <= 120)))",
+  },
+  { table: "business_locations", name: "business_locations_name_trimmed", definition: "CHECK ((name = btrim(name)))" },
+  {
+    table: "business_locations",
+    name: "business_locations_status_valid",
+    definition: "CHECK ((status = ANY (ARRAY['ACTIVE'::text, 'ARCHIVED'::text])))",
+  },
+  {
+    table: "business_locations",
+    name: "business_locations_default_is_active",
+    definition: "CHECK (((NOT is_default) OR (status = 'ACTIVE'::text)))",
+  },
+  {
+    table: "business_memberships",
+    name: "business_memberships_role_valid",
+    definition:
+      "CHECK ((role = ANY (ARRAY['OWNER'::text, 'MANAGER'::text, 'CASHIER'::text, 'STOCK_KEEPER'::text, 'ACCOUNTANT'::text])))",
+  },
+  {
+    table: "business_memberships",
+    name: "business_memberships_status_valid",
+    definition: "CHECK ((status = ANY (ARRAY['ACTIVE'::text, 'SUSPENDED'::text])))",
+  },
+  {
+    table: "business_memberships",
+    name: "business_memberships_version_positive",
+    definition: "CHECK ((version >= 1))",
+  },
+  ...["users", "businesses", "business_locations", "business_memberships"].map((table) => ({
+    table,
+    name: `${table}_updated_after_created`,
+    definition: "CHECK ((updated_at >= created_at))",
+  })),
+  ...auditEnvelopeChecks("business_audit_records"),
+  {
+    table: "business_audit_records",
+    name: "business_audit_records_actor_type_valid",
+    definition: "CHECK ((actor_type = ANY (ARRAY['user'::text, 'system'::text, 'integration'::text])))",
+  },
+  {
+    table: "business_audit_records",
+    name: "business_audit_records_actor_shape",
+    definition:
+      "CHECK ((((actor_type = 'user'::text) AND (actor_user_id IS NOT NULL) AND (actor_membership_id IS NOT NULL) AND (actor_name IS NULL)) OR ((actor_type = ANY (ARRAY['system'::text, 'integration'::text])) AND (actor_user_id IS NULL) AND (actor_membership_id IS NULL) AND (actor_name IS NOT NULL))))",
+  },
+  ...auditEnvelopeChecks("platform_audit_records"),
+  {
+    table: "platform_audit_records",
+    name: "platform_audit_records_actor_type_valid",
+    definition: "CHECK ((actor_type = ANY (ARRAY['user'::text, 'system'::text])))",
+  },
+  {
+    table: "platform_audit_records",
+    name: "platform_audit_records_actor_shape",
+    definition:
+      "CHECK ((((actor_type = 'user'::text) AND (actor_user_id IS NOT NULL) AND (actor_name IS NULL)) OR ((actor_type = 'system'::text) AND (actor_user_id IS NULL) AND (actor_name IS NOT NULL))))",
+  },
+  ...idempotencyChecks("user_idempotency_records"),
+  {
+    table: "user_idempotency_records",
+    name: "user_idempotency_records_actor_is_user",
+    definition: "CHECK (((actor_type = 'user'::text) AND (actor_id = (user_id)::text)))",
+  },
+  ...idempotencyChecks("business_idempotency_records"),
+  {
+    table: "business_idempotency_records",
+    name: "business_idempotency_records_actor_type_valid",
+    definition: "CHECK ((actor_type = ANY (ARRAY['user'::text, 'system'::text, 'integration'::text])))",
+  },
+  {
+    table: "business_idempotency_records",
+    name: "business_idempotency_records_actor_id_format",
+    definition: `CHECK ((((char_length(actor_id) >= 1) AND (char_length(actor_id) <= 128)) AND ((actor_type <> 'user'::text) OR (actor_id ~ ${UUID_TEXT}))))`,
+  },
+];
 
 /** @type {{ schema: string; name: string; predicate: string }[]} */
-const EXPECTED_PARTIAL_UNIQUE_INDEXES = [];
+const EXPECTED_PARTIAL_UNIQUE_INDEXES = [
+  {
+    schema: "public",
+    name: "business_locations_one_active_default",
+    predicate: "(is_default AND (status = 'ACTIVE'::text))",
+  },
+];
+
+/**
+ * Composite tenant foreign keys (ADR-005 section 19): a reference from one
+ * tenant-owned row to another carries business_id, so PostgreSQL rejects a
+ * cross-business reference. Prisma's drift check covers foreign keys too; this
+ * list keeps the tenant-safety property explicit.
+ * @type {{ table: string; name: string; definition: string }[]}
+ */
+const EXPECTED_TENANT_FOREIGN_KEYS = [
+  {
+    table: "business_audit_records",
+    name: "business_audit_records_business_id_actor_membership_id_fkey",
+    definition:
+      "FOREIGN KEY (business_id, actor_membership_id) REFERENCES business_memberships(business_id, id) ON UPDATE RESTRICT ON DELETE RESTRICT",
+  },
+  {
+    table: "business_audit_records",
+    name: "business_audit_records_business_id_location_id_fkey",
+    definition:
+      "FOREIGN KEY (business_id, location_id) REFERENCES business_locations(business_id, id) ON UPDATE RESTRICT ON DELETE RESTRICT",
+  },
+];
+
+/** Reference rows every migrated database must contain (ADR-005 section 5: the pilot currency). */
+const EXPECTED_CURRENCIES = [{ code: "NGN", minorUnitDigits: 2 }];
 
 const failures = [];
 const fail = (message) => failures.push(message);
@@ -87,6 +360,16 @@ for (const name of migrationNames) {
         fail(`${where}: destructive statement on protected table ${table}: ${line.trim()}`);
       }
     }
+    for (const table of NO_DELETE_TABLES) {
+      const tableName = table.split(".")[1];
+      const destructive = new RegExp(
+        `^\\s*(DROP\\s+TABLE|TRUNCATE|DELETE\\s+FROM|GRANT\\s+[^;]*\\b(DELETE|TRUNCATE|ALL)\\b[^;]*\\bON\\b)[^;]*\\b${tableName}\\b`,
+        "i",
+      );
+      if (destructive.test(line) && !allowed) {
+        fail(`${where}: delete-capable statement on never-deleted table ${table}: ${line.trim()}`);
+      }
+    }
   });
 }
 
@@ -120,15 +403,50 @@ try {
     if (rows.length > 0) fail(`test-only schema ${schema} exists; it belongs only to a running integration test`);
   }
 
+  const tableExists = async (table) =>
+    (await client.query(`SELECT to_regclass($1) IS NOT NULL AS present`, [table])).rows[0].present;
+
   for (const check of EXPECTED_CHECKS) {
+    if (!(await tableExists(check.table))) {
+      fail(`table ${check.table} for CHECK constraint ${check.name} is missing`);
+      continue;
+    }
     const { rows } = await client.query(
       `SELECT pg_get_constraintdef(oid) AS definition FROM pg_constraint
        WHERE conname = $1 AND contype = 'c' AND conrelid = $2::regclass`,
       [check.name, check.table],
     );
-    if (rows.length !== 1 || !String(rows[0].definition).includes(check.contains)) {
+    if (rows.length !== 1 || rows[0].definition !== check.definition) {
       fail(`CHECK constraint ${check.name} on ${check.table} missing or changed (${rows[0]?.definition ?? "absent"})`);
     }
+  }
+
+  for (const key of EXPECTED_TENANT_FOREIGN_KEYS) {
+    if (!(await tableExists(key.table))) {
+      fail(`table ${key.table} for foreign key ${key.name} is missing`);
+      continue;
+    }
+    const { rows } = await client.query(
+      `SELECT pg_get_constraintdef(oid) AS definition FROM pg_constraint
+       WHERE conname = $1 AND contype = 'f' AND conrelid = $2::regclass`,
+      [key.name, key.table],
+    );
+    if (rows.length !== 1 || rows[0].definition !== key.definition) {
+      fail(`tenant foreign key ${key.name} on ${key.table} missing or changed (${rows[0]?.definition ?? "absent"})`);
+    }
+  }
+
+  if (await tableExists("public.currencies")) {
+    for (const currency of EXPECTED_CURRENCIES) {
+      const { rows } = await client.query(`SELECT minor_unit_digits FROM public.currencies WHERE code = $1`, [
+        currency.code,
+      ]);
+      if (rows.length !== 1 || rows[0].minor_unit_digits !== currency.minorUnitDigits) {
+        fail(`reference currency ${currency.code} (${currency.minorUnitDigits} minor-unit digits) missing or changed`);
+      }
+    }
+  } else {
+    fail("table public.currencies is missing");
   }
 
   for (const index of EXPECTED_PARTIAL_UNIQUE_INDEXES) {
@@ -138,7 +456,7 @@ try {
        WHERE n.nspname = $1 AND c.relname = $2`,
       [index.schema, index.name],
     );
-    if (rows.length !== 1 || !rows[0].unique || !String(rows[0].predicate).includes(index.predicate)) {
+    if (rows.length !== 1 || !rows[0].unique || rows[0].predicate !== index.predicate) {
       fail(`partial unique index ${index.schema}.${index.name} missing or changed`);
     }
   }
@@ -155,6 +473,20 @@ try {
       fail(`${APP_ROLE} privileges on ${table}: expected ${expected}, found ${JSON.stringify(actual[table] ?? [])}`);
     }
   }
+
+  const publicGrants = await client.query(
+    `SELECT table_schema || '.' || table_name AS table, privilege_type FROM information_schema.role_table_grants
+     WHERE grantee = 'PUBLIC' AND table_schema NOT IN ('pg_catalog', 'information_schema')`,
+  );
+  for (const row of publicGrants.rows) fail(`PUBLIC has ${row.privilege_type} on ${row.table}`);
+
+  // RLS stays off in Build 1 (ADR-002 section 21); enabling it needs its own decision.
+  const rls = await client.query(
+    `SELECT n.nspname || '.' || c.relname AS name FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE c.relkind = 'r' AND (c.relrowsecurity OR c.relforcerowsecurity)
+       AND n.nspname NOT IN ('pg_catalog', 'information_schema')`,
+  );
+  for (const row of rls.rows) fail(`row-level security is enabled on ${row.name} without an accepted decision`);
 
   const role = await client.query(
     `SELECT rolsuper, rolcreatedb, rolcreaterole, rolbypassrls FROM pg_roles WHERE rolname = $1`,
@@ -193,5 +525,5 @@ if (failures.length > 0) {
   process.exit(1);
 }
 console.log(
-  `Schema verification passed (${migrationNames.length} migration(s), ${Object.keys(APPROVED_DESTRUCTIVE_MIGRATIONS).length} approved destructive migration(s), ${Object.keys(EXPECTED_APP_PRIVILEGES).length} table grant sets, ${EXPECTED_CHECKS.length} CHECK, ${EXPECTED_PARTIAL_UNIQUE_INDEXES.length} partial unique index, removed schemas absent: ${REMOVED_SCHEMAS.join(", ")}, test-only schemas absent: ${TEST_ONLY_SCHEMAS.join(", ")}).`,
+  `Schema verification passed (${migrationNames.length} migration(s), ${Object.keys(APPROVED_DESTRUCTIVE_MIGRATIONS).length} approved destructive migration(s), ${Object.keys(EXPECTED_APP_PRIVILEGES).length} table grant sets, ${EXPECTED_CHECKS.length} CHECK, ${EXPECTED_PARTIAL_UNIQUE_INDEXES.length} partial unique index, ${EXPECTED_TENANT_FOREIGN_KEYS.length} tenant foreign keys, ${EXPECTED_CURRENCIES.length} reference currency, removed schemas absent: ${REMOVED_SCHEMAS.join(", ")}, test-only schemas absent: ${TEST_ONLY_SCHEMAS.join(", ")}).`,
 );

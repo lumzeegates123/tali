@@ -1,10 +1,13 @@
+import { ConcurrentModificationError, type UnitOfWork } from "@tali/application";
 import { describe, expect, it } from "vitest";
+import { sqlStateOf } from "../../src/errors/postgres-errors.js";
+import { PrismaUnitOfWork } from "../../src/unit-of-work/prisma-unit-of-work.js";
 import { currentIsolationLevel, findProbe, insertProbe, setProbeCounter } from "../support/fixture-repositories.js";
 import { gate, useFixtureHarness, uuid } from "../support/harness.js";
 
 /** Criterion A: interactive transactions. */
 describe("A. interactive transactions", () => {
-  const { unitOfWork, owner } = useFixtureHarness();
+  const { client, unitOfWork, owner } = useFixtureHarness();
 
   const count = async () =>
     Number((await owner.query<{ n: string }>("SELECT count(*) AS n FROM test_fixtures.transaction_probe")).rows[0]?.n);
@@ -91,18 +94,18 @@ describe("A. interactive transactions", () => {
     expect(await observe("read-committed")).toEqual({ before: 2, after: 3 });
   });
 
-  // The pg driver adapter surfaces SQLSTATE 40001 as DriverAdapterError "TransactionWriteConflict";
-  // a future retry policy must recognise that name.
-  it("serializable aborts one of two conflicting transactions (SQLSTATE 40001)", async () => {
+  // Classic write skew: each transaction reads both rows, then writes the row the other read.
+  async function writeSkew(uow: UnitOfWork) {
     await owner.query(
       `INSERT INTO test_fixtures.transaction_probe (id, label, counter) VALUES ($1, 'a', 0), ($2, 'b', 0)`,
       [uuid(1), uuid(2)],
     );
     const bothRead = { a: gate(), b: gate() };
-    // Classic write skew: each reads both rows, then writes the row the other read.
+    let attempts = 0;
     const skew = (self: "a" | "b", readFirst: string, write: string) =>
-      unitOfWork.run(
+      uow.run(
         async (scope) => {
+          attempts += 1;
           await findProbe(scope, readFirst);
           await findProbe(scope, write);
           bothRead[self].open();
@@ -112,8 +115,27 @@ describe("A. interactive transactions", () => {
         { isolationLevel: "serializable" },
       );
     const results = await Promise.allSettled([skew("a", uuid(2), uuid(1)), skew("b", uuid(1), uuid(2))]);
+    return { results, attempts };
+  }
+
+  it("serializable aborts one of two conflicting transactions (SQLSTATE 40001); without retry it is CONCURRENT_MODIFICATION", async () => {
+    const noRetry = new PrismaUnitOfWork(client, { maxWaitMs: 5_000, timeoutMs: 15_000, maxAttempts: 1 });
+    const { results, attempts } = await writeSkew(noRetry);
     const rejected = results.filter((result) => result.status === "rejected");
     expect(rejected).toHaveLength(1);
-    expect(String((rejected[0] as PromiseRejectedResult).reason)).toMatch(/TransactionWriteConflict/);
+    expect(attempts).toBe(2);
+    const reason = (rejected[0] as PromiseRejectedResult).reason as Error;
+    expect(reason).toBeInstanceOf(ConcurrentModificationError);
+    expect(sqlStateOf(reason.cause)).toBe("40001");
+  });
+
+  it("with the default retry policy the aborted transaction re-runs and both commit", async () => {
+    const { results, attempts } = await writeSkew(unitOfWork);
+    expect(results.map((result) => result.status)).toEqual(["fulfilled", "fulfilled"]);
+    expect(attempts).toBe(3);
+    const { rows } = await owner.query<{ counter: number }>(
+      `SELECT counter FROM test_fixtures.transaction_probe ORDER BY id`,
+    );
+    expect(rows.map((row) => row.counter)).toEqual([1, 1]);
   });
 });

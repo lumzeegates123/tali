@@ -17,6 +17,8 @@ const APPLICATION_STATUS: Record<ApplicationErrorCode, number> = {
   USER_DISABLED: HttpStatus.FORBIDDEN,
   IDEMPOTENCY_KEY_REQUIRED: HttpStatus.BAD_REQUEST,
   IDEMPOTENCY_KEY_REUSED: HttpStatus.CONFLICT,
+  IDEMPOTENCY_IN_PROGRESS: HttpStatus.CONFLICT,
+  CONCURRENT_MODIFICATION: HttpStatus.CONFLICT,
 };
 
 const HTTP_CODE: Readonly<Record<number, string>> = {
