@@ -268,6 +268,21 @@ module.exports = {
       },
     },
     {
+      name: "clients-no-direct-identity-sdk",
+      severity: "error",
+      comment:
+        "Clients authenticate only through the Tali API in Build 1: no JWT library and no Cognito or Amplify SDK (plan 003 section 7; Cognito waits for ADR-003).",
+      from: { path: "^apps/(web|mobile)/" },
+      to: { path: "node_modules/(jose|aws-amplify|@aws-amplify|amazon-cognito-identity-js)/" },
+    },
+    {
+      name: "client-runtime-no-node-builtins",
+      severity: "error",
+      comment: "Bundled client code runs in the browser or on Hermes: no Node.js built-ins such as node:crypto.",
+      from: { path: ["^apps/web/src/", "^apps/mobile/(src|app)/"] },
+      to: { dependencyTypes: ["core"] },
+    },
+    {
       name: "client-runtime-not-to-public-build",
       severity: "error",
       comment:

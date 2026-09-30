@@ -196,6 +196,11 @@ const CLIENT_RUNTIME_BANS = [
     message:
       "@tali/config/public-build is for next.config.ts and app.config.ts only; it carries server variable names.",
   },
+  {
+    regex: specifiers(["aws-amplify", "@aws-amplify/", "amazon-cognito-identity-js"]),
+    message: "Clients authenticate only through the Tali API in Build 1; Cognito client work waits for ADR-003.",
+  },
+  ...NODE_BUILTIN_BANS,
 ];
 
 /** NestJS modules are decorated classes with static factories by design. */

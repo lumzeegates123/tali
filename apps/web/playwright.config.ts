@@ -2,10 +2,13 @@ import { fileURLToPath } from "node:url";
 import { defineConfig, devices } from "@playwright/test";
 
 /*
- * Web smoke: starts the compiled API (against the disposable test database)
- * and a production build of the web app configured to call it, then drives the
- * health flow in Chromium. Dedicated ports avoid clashing with local dev.
- * Requires `pnpm run build` first (the API is started from apps/api/dist).
+ * Web end-to-end: starts the compiled API (against the disposable test
+ * database) and a production build of the web app configured to call it, then
+ * drives the health and onboarding flows in Chromium. Both run as
+ * TALI_ENV=local because local sign-in (the only Build 1 sign-in) exists only
+ * there; storage and queue stay in memory. Dedicated ports avoid clashing with
+ * local dev. Requires `pnpm run build` first (the API is started from
+ * apps/api/dist) and a migrated test database.
  */
 const API_PORT = 3910;
 const WEB_PORT = 3911;
@@ -33,9 +36,9 @@ export default defineConfig({
       reuseExistingServer: false,
       timeout: 60_000,
       env: {
-        TALI_ENV: "test",
+        TALI_ENV: "local",
         DATABASE_URL: TEST_DATABASE_URL,
-        IDENTITY_PROVIDER: "fake",
+        IDENTITY_PROVIDER: "local",
         OBJECT_STORAGE_PROVIDER: "memory",
         QUEUE_PROVIDER: "memory",
         API_PORT: String(API_PORT),
@@ -51,7 +54,7 @@ export default defineConfig({
       reuseExistingServer: false,
       timeout: 300_000,
       env: {
-        NEXT_PUBLIC_TALI_ENV: "test",
+        NEXT_PUBLIC_TALI_ENV: "local",
         NEXT_PUBLIC_API_BASE_URL: API_ORIGIN,
         NEXT_TELEMETRY_DISABLED: "1",
       },
