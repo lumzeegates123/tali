@@ -91,11 +91,13 @@ been made yet unless an ADR is listed in the index below.
 
 Cloud infrastructure, the backend framework (NestJS + TypeScript), the database engine (PostgreSQL on Amazon RDS)
 and the authentication provider (Amazon Cognito) are decided in ADR-001 (accepted 2026-09-27). AWS provisioning
-additionally requires the foundation infrastructure ADR to be accepted.
+additionally required the foundation infrastructure ADR, ADR-003, which was accepted on 2026-09-30. Its legal and
+compliance items remain production deployment conditions, and web hosting remains to be confirmed by a spike.
 
 - Record architecture decisions (adopt this process)
 - Foundation infrastructure (VPC/network topology, AWS Region, account structure, web hosting confirmation, RDS,
-  Cognito, SQS, KMS, observability and CI/CD details deferred by ADR-001 section 12). Number reserved: ADR-003.
+  Cognito, SQS, KMS, observability and CI/CD details deferred by ADR-001 section 12). Decided in ADR-003 (accepted
+  2026-09-30); final web-host confirmation is deferred to an implementation spike.
 - Monorepo tooling and repository layout
 - Backend runtime version
 - Data access layer (ORM/query layer) on PostgreSQL
@@ -125,7 +127,7 @@ implementation decisions are made.
 |-----|-------|--------|
 | [ADR-001](ADR-001-aws-infrastructure.md) | AWS-native infrastructure | Accepted (2026-09-27) |
 | [ADR-002](ADR-002-application-foundation.md) | Application foundation | Accepted (2026-09-27) |
-| ADR-003 | AWS foundation topology | Reserved (number referenced by ADR-002; not yet drafted) |
+| [ADR-003](ADR-003-aws-foundation-topology.md) | AWS foundation topology | Accepted (2026-09-30). The foundation infrastructure ADR required by ADR-001 section 11 and deferred to by ADR-002 section 25. Legal/compliance items in its section 35 C remain production deployment conditions. |
 | [ADR-004](ADR-004-mutation-protocol.md) | Mutation protocol: idempotency, audit, transaction boundary, outbox and retries | Accepted (2026-09-29). Partially superseded: only the Zod-specific implementation wording of section 8.3 is replaced by ADR-006; everything else remains in force. |
 | [ADR-005](ADR-005-identity-tenancy-authorization.md) | Identity, tenancy and authorization | Accepted (2026-09-29) |
 | [ADR-006](ADR-006-audit-payload-schema-boundary.md) | Audit payload schema boundary | Accepted (2026-09-29). Supersedes only the Zod-specific implementation wording of ADR-004 section 8.3 (partial supersession). |

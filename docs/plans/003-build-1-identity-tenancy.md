@@ -10,7 +10,7 @@ report in `docs/audits/build-1-slice-1.md`. **Slice 2 is complete (2026-09-29)**
 `docs/audits/build-1-slice-3.md` (dependency added: `jose` 6.2.12 in `packages/integrations`). **Slice 4 is complete
 (2026-09-30)**; its report is in `docs/audits/build-1-slice-4.md` (no dependencies added; currency is shown as the
 approved pilot value because no currency-list endpoint exists). **Slice 5 is complete (2026-09-30)**; its report is
-in `docs/audits/build-1-slice-5.md` (dependency added: `expo-secure-store` 57.0.4 in `apps/mobile`). The Cognito slice (Slice 6) remains blocked on ADR-003 (AWS foundation topology, reserved). Where this
+in `docs/audits/build-1-slice-5.md` (dependency added: `expo-secure-store` 57.0.4 in `apps/mobile`). `docs/decisions/ADR-003-aws-foundation-topology.md` is **ACCEPTED (2026-09-30)**. The Cognito slice (Slice 6) is **UNBLOCKED; not started**. Acceptance unblocks only the adapter work, whose tests use local JWKS fixtures; it does not mean AWS infrastructure, CDK, Cognito user pools or deployment workflows exist, that Amplify Hosting is confirmed, or that the production Region has legal approval (ADR-003 section 40). Where this
 plan and an ADR differ, the ADR is authoritative (`AGENTS.md` section 4).
 
 Scope: implementation step 2 of `docs/product/mvp-scope.md` (identity / tenancy). There is no inventory, sales,
@@ -26,7 +26,7 @@ payments, accounting, purchasing, AI or offline sync in this build.
 | 3 | Auth guard and `BusinessContext` resolver, P0 endpoints, `LocalIdentityProvider` in `packages/integrations` (JWT library dependency to review), API security end-to-end tests | Complete (2026-09-29; `docs/audits/build-1-slice-3.md`) |
 | 4 | Web and mobile onboarding flows for the P0 use cases | Complete (2026-09-30; `docs/audits/build-1-slice-4.md`) |
 | 5 | P1 invitations, member management and device registration and revocation, with security tests | Complete (2026-09-30; `docs/audits/build-1-slice-5.md`) |
-| 6 | Cognito JWT verification adapter with JWKS fixtures, no AWS in CI | Blocked on ADR-003 |
+| 6 | Cognito JWT verification adapter with JWKS fixtures, no AWS in CI | Unblocked; not started (ADR-003 accepted 2026-09-30) |
 
 ## 0. Conflicts and findings
 
@@ -42,7 +42,7 @@ payments, accounting, purchasing, AI or offline sync in this build.
   - OWNER is granted later, through an existing owner's authorized membership-management action.
 - **The foundation plan wording differs.** [docs/plans/001-foundation-plan.md](001-foundation-plan.md) section 8 says "roles map to permission sets stored per membership". ADR-005 settles this as: the role is stored on the membership, and its permissions are derived from a mapping in code (see section 3).
 - **Build 1 mutations must wait for ADR-004** (satisfied: ADR-004 and ADR-005 accepted 2026-09-29). ADR-002 section 25 and plan 001 line 642 require the mutation-protocol ADR and the authorization ADR before the first mutating use case. Business creation and every membership change need audit records, and business creation also needs idempotency.
-- **Cognito work is blocked on ADR-003** (pool configuration, client IDs, sign-in UX, token lifetimes).
+- **Cognito work was blocked on ADR-003** (pool configuration, client IDs, sign-in UX, token lifetimes). ADR-003 was accepted on 2026-09-30; its sections 14 and 15 settle these for the adapter.
 - **Code naming.** Two ID brands in `business-context.ts` differ from the entity names:
   - `Id<"Location">` versus the entity `BusinessLocation`;
   - `Id<"Membership">` versus the entity `BusinessMembership`.
@@ -307,7 +307,7 @@ Each slice is a separate PR. Slice 0 contains documents only and ends at a human
   - `disabledUser`: a DISABLED user, created through controlled test setup (no administrative mutation exists for it);
   - `unregistered`: a verified identity with no Tali user.
 - **Add `authTime`** to `VerifiedIdentity` in [packages/application/src/ports/identity-provider.ts](../../packages/application/src/ports/identity-provider.ts), as plan 001 anticipated, for later step-up authentication.
-- **Cognito adapter (slice 6, blocked on ADR-003):**
+- **Cognito adapter (slice 6; unblocked, not started; contract in ADR-003 section 15):**
   - lives in `packages/integrations/src/aws/cognito`;
   - verification uses a cached JWKS that refreshes when it sees an unknown key ID (`kid`), allows only RS256, and checks the issuer (`https://cognito-idp.{region}.amazonaws.com/{poolId}`), `token_use=access`, that `client_id` is in `COGNITO_CLIENT_IDS`, and `exp`/`iat` with a small clock-skew allowance;
   - the Cognito `sub` becomes `provider_subject`;
