@@ -39,6 +39,7 @@ describe("mobile TaliApiClient", () => {
         code: "INTERNAL",
         message: "Something went wrong",
         correlationId: "c-9",
+        fields: [],
       },
     });
   });

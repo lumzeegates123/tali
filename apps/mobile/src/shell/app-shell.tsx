@@ -37,11 +37,11 @@ export function AppShell({
   readonly children?: (config: PublicConfig) => ReactNode;
 }) {
   return (
-    <ScrollView contentContainerStyle={styles.container}>
+    <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
       <Text accessibilityRole="header" style={styles.title}>
         Tali
       </Text>
-      <Text>Foundation shell</Text>
+      <Text>Private pilot</Text>
       {result.ok ? (
         <>
           <EnvironmentPanel config={result.config} />

@@ -40,6 +40,7 @@ describe("TaliApiClient.getReadiness", () => {
         code: "INTERNAL_ERROR",
         message: "Something went wrong",
         correlationId: "c-500",
+        fields: [],
       },
     });
   });

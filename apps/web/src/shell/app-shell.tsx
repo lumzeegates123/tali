@@ -4,20 +4,20 @@ import { EnvironmentPanel } from "../diagnostics/environment-panel";
 import { ApiHealthPanel } from "../health/api-health";
 import type { WebConfigResult } from "../lib/config/web-config";
 
-/** The foundation web shell: header, environment diagnostics and API health. No business screens. */
+/** The web shell: header, the page content, then environment diagnostics and API health. */
 export function AppShell({ result, children }: { readonly result: WebConfigResult; readonly children?: ReactNode }) {
   return (
     <div className="shell">
       <header className="shell-header">
         <h1>Tali</h1>
-        <p>Foundation shell</p>
+        <p>Private pilot</p>
       </header>
       <main className="shell-main">
         {result.ok ? (
           <>
+            {children}
             <EnvironmentPanel config={result.config} />
             <ApiHealthPanel apiBaseUrl={result.config.apiBaseUrl} />
-            {children}
           </>
         ) : (
           <ConfigurationProblem issues={result.issues} />

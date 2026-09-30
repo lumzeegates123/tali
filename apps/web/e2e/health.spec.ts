@@ -6,7 +6,7 @@ test.describe("web health flow against the real API", () => {
     const readiness = page.waitForResponse(`${E2E.apiOrigin}/health/ready`);
     await page.goto("/");
     await expect(page.getByRole("heading", { level: 1, name: "Tali" })).toBeVisible();
-    await expect(page.getByTestId("environment-name")).toHaveText("test");
+    await expect(page.getByTestId("environment-name")).toHaveText("local");
 
     const response = await readiness;
     expect(response.status()).toBe(200);

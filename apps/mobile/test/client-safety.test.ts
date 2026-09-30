@@ -58,6 +58,56 @@ process.stdout.write(JSON.stringify(out));`;
     expect(resolvableFromApp(forbidden)).toEqual(Object.fromEntries(forbidden.map((specifier) => [specifier, false])));
   });
 
+  // Build 1 keeps the token and selected business in memory (plan 003 section 7): no persistent store is declared,
+  // resolvable or referenced. Secure storage for device credentials is a reviewed Slice 5 dependency.
+  const PERSISTENCE_PACKAGES = [
+    "@react-native-async-storage/async-storage",
+    "expo-secure-store",
+    "expo-sqlite",
+    "react-native-mmkv",
+    "react-native-keychain",
+  ];
+
+  it("declares and resolves no persistent storage package", () => {
+    const manifest = JSON.parse(readFileSync(join(APP_ROOT, "package.json"), "utf8")) as {
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
+    const declared = Object.keys({ ...manifest.dependencies, ...manifest.devDependencies });
+    expect(declared.filter((name) => PERSISTENCE_PACKAGES.includes(name) || name === "expo-file-system")).toEqual([]);
+    expect(resolvableFromApp(PERSISTENCE_PACKAGES)).toEqual(
+      Object.fromEntries(PERSISTENCE_PACKAGES.map((specifier) => [specifier, false])),
+    );
+  });
+
+  it("never references AsyncStorage, SecureStore, SQLite or the file system in app source", () => {
+    const offenders = [...sourceFiles(join(APP_ROOT, "src")), ...sourceFiles(join(APP_ROOT, "app"))].filter((file) =>
+      /AsyncStorage|SecureStore|SQLite|openDatabase|expo-file-system|localStorage|sessionStorage/u.test(
+        readFileSync(file, "utf8"),
+      ),
+    );
+    expect(offenders).toEqual([]);
+  });
+
+  it("cannot resolve a JWT library or an AWS, Amplify or Cognito SDK", () => {
+    const forbidden = [
+      "jose",
+      "aws-amplify",
+      "amazon-cognito-identity-js",
+      "@aws-sdk/client-cognito-identity-provider",
+    ];
+    expect(resolvableFromApp(forbidden)).toEqual(Object.fromEntries(forbidden.map((specifier) => [specifier, false])));
+  });
+
+  it("imports no JWT library, AWS or Cognito SDK, Node.js built-in or backend package in app source", () => {
+    const forbiddenImport =
+      /from\s+["'](jose|aws-amplify|@aws-amplify\/[^"']+|amazon-cognito-identity-js|@aws-sdk\/[^"']+|aws-sdk|node:[^"']+|@tali\/(application|database|integrations)|@tali\/config\/server)["']/u;
+    const offenders = [...sourceFiles(join(APP_ROOT, "src")), ...sourceFiles(join(APP_ROOT, "app"))].filter((file) =>
+      forbiddenImport.test(readFileSync(file, "utf8")),
+    );
+    expect(offenders).toEqual([]);
+  });
+
   it("never reads AWS credentials or server-only variables in app source", () => {
     const offenders = [...sourceFiles(join(APP_ROOT, "src")), ...sourceFiles(join(APP_ROOT, "app"))].filter((file) =>
       /AWS_[A-Z_]+|process\.env\.(?!EXPO_PUBLIC_)[A-Z]/u.test(readFileSync(file, "utf8")),

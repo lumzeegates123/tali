@@ -158,7 +158,7 @@ jobs:
         run: pnpm --filter @tali/database run db:migrate:deploy
       - name: Install the Playwright browser
         run: pnpm --filter @tali/web exec playwright install --with-deps --only-shell chromium
-      - name: Playwright (health flow and browser UUIDv7)
+      - name: Playwright (health flow, browser UUIDv7 and local onboarding)
         run: pnpm --filter @tali/web run e2e
 
   client-bundles:

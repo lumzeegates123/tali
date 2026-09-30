@@ -54,3 +54,135 @@ dl {
 dd {
   margin: 0;
 }
+
+h2:focus {
+  outline: 2px solid #1c1c1a;
+  outline-offset: 2px;
+}
+
+.onboarding form {
+  display: grid;
+  gap: 1rem;
+}
+
+.field {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.field label,
+.field .label {
+  margin: 0;
+  font-weight: 600;
+}
+
+.field input {
+  max-width: 24rem;
+  padding: 0.5rem;
+  border: 1px solid #8a8a84;
+  border-radius: 0.25rem;
+  font: inherit;
+}
+
+.field input[aria-invalid="true"] {
+  border: 2px solid #a11d1d;
+}
+
+.hint {
+  margin: 0;
+  color: #4a4a45;
+}
+
+.field-error {
+  margin: 0;
+  color: #a11d1d;
+  font-weight: 600;
+}
+
+.alert {
+  padding: 0.75rem 1rem;
+  border-left: 4px solid #a11d1d;
+  background: #fbeeee;
+}
+
+.alert p {
+  margin: 0 0 0.5rem;
+}
+
+.notice {
+  padding: 0.5rem 0.75rem;
+  border-left: 4px solid #1c1c1a;
+  background: #efefea;
+}
+
+.dev-only {
+  padding: 0.5rem 0.75rem;
+  border: 1px dashed #8a6d00;
+  background: #fff8e0;
+}
+
+button {
+  padding: 0.5rem 1rem;
+  border: 1px solid #1c1c1a;
+  border-radius: 0.25rem;
+  background: #1c1c1a;
+  color: #f7f7f5;
+  font: inherit;
+  cursor: pointer;
+}
+
+button.secondary {
+  background: #ffffff;
+  color: #1c1c1a;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.session-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.session-bar p {
+  margin: 0;
+}
+
+.business-list {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0;
+  list-style: none;
+}
+
+.business-choice {
+  display: grid;
+  width: 100%;
+  text-align: left;
+  background: #ffffff;
+  color: #1c1c1a;
+}
+
+.business-name {
+  font-weight: 600;
+}
+
+table {
+  border-collapse: collapse;
+}
+
+th,
+td {
+  padding: 0.25rem 1rem 0.25rem 0;
+  text-align: left;
+}
