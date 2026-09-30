@@ -8,7 +8,8 @@ import { AuditPayloadError, validateAuditFields } from "./audit-payload.js";
  */
 export type AuditStream = "business" | "platform";
 
-export type AuditEntityType = "user" | "external_identity" | "business" | "location" | "membership";
+export type AuditEntityType =
+  "user" | "external_identity" | "business" | "location" | "membership" | "invitation" | "device";
 
 export interface AuditActionDefinition<
   Stream extends AuditStream = AuditStream,

@@ -11,15 +11,18 @@ const COMMITTED_MIGRATIONS = [
   "20260928025500_remove_foundation_spike",
   "20260929212026_build1_identity_tenancy",
   "20260929213019_build1_timestamp_consistency",
+  "20260930165547_build1_invitations_devices",
 ];
 
 const BUILD_1_TABLES = [
   "public.business_audit_records",
   "public.business_idempotency_records",
+  "public.business_invitations",
   "public.business_locations",
   "public.business_memberships",
   "public.businesses",
   "public.currencies",
+  "public.devices",
   "public.external_identities",
   "public.platform_audit_records",
   "public.user_idempotency_records",
@@ -30,7 +33,8 @@ const BUILD_1_TABLES = [
  * Criterion E and the migration chain. The global setup has already run
  * `migrate deploy` against this database from empty: the spike migration, the
  * approved cleanup migration that removes the temporary foundation_spike
- * schema, and the two Build 1 identity and tenancy migrations.
+ * schema, the two Build 1 identity and tenancy migrations, and the Slice 5
+ * invitations and devices migration.
  */
 describe("E. migration chain", () => {
   const { owner } = useFixtureHarness();

@@ -1,9 +1,21 @@
-import type { Clock, FingerprintHasher, IdentityProvider, IdGenerator } from "@tali/application";
+import type {
+  Clock,
+  FingerprintHasher,
+  IdentityProvider,
+  IdGenerator,
+  OneTimeSecretGenerator,
+  SecretHasher,
+} from "@tali/application";
 import { FakeIdentityProvider } from "@tali/application/testing";
 import type { ServerConfig } from "@tali/config/server";
 import { createDatabase, type Database } from "@tali/database";
 import { LocalIdentityProvider } from "@tali/integrations/local";
-import { Sha256FingerprintHasher, uuidV7IdGenerator } from "@tali/integrations/platform";
+import {
+  nodeOneTimeSecretGenerator,
+  Sha256FingerprintHasher,
+  sha256SecretHasher,
+  uuidV7IdGenerator,
+} from "@tali/integrations/platform";
 import { FixedWindowRateLimiter } from "../auth/fixed-window-rate-limiter.js";
 import { JsonLogger, type Logger } from "../observability/logger.js";
 import { type ApiServices, composeApiServices } from "./api-services.js";
@@ -20,6 +32,8 @@ export interface ApiRuntime {
   readonly database: Database;
   readonly identityProvider: IdentityProvider;
   readonly services: ApiServices;
+  /** Per-user limiter for invitation acceptance: a per-process safeguard only (ADR-005 section 18). */
+  readonly invitationAcceptLimiter: FixedWindowRateLimiter;
   /** Present only when TALI_ENV=local and the local identity provider is composed (ADR-005 section 16). */
   readonly localSignIn?: LocalSignIn;
   /** Releases process resources (database pool). Idempotent. */
@@ -37,6 +51,13 @@ export class CompositionError extends Error {
 
 /** Local sign-in limits: a local safeguard only (ADR-005 section 18), per client address. */
 export const LOCAL_SIGN_IN_LIMIT = { limit: 20, windowMs: 60_000, maxKeys: 256 } as const;
+
+/**
+ * Invitation acceptance limits, per authenticated user, in this process only.
+ * Tokens carry 256 bits of entropy, so this is defense in depth and never a
+ * global limit across tasks (plan 003 section 5).
+ */
+export const INVITATION_ACCEPT_LIMIT = { limit: 10, windowMs: 60_000, maxKeys: 4_096 } as const;
 
 /**
  * Identity composition. Server configuration already refuses `local` outside
@@ -73,6 +94,8 @@ export interface ApiRuntimeOverrides {
   readonly identityProvider?: IdentityProvider;
   readonly ids?: IdGenerator;
   readonly hasher?: FingerprintHasher;
+  readonly secrets?: OneTimeSecretGenerator;
+  readonly secretHasher?: SecretHasher;
 }
 
 export async function createApiRuntime(config: ServerConfig, overrides: ApiRuntimeOverrides = {}): Promise<ApiRuntime> {
@@ -95,7 +118,10 @@ export async function createApiRuntime(config: ServerConfig, overrides: ApiRunti
     clock,
     ids: overrides.ids ?? uuidV7IdGenerator,
     hasher: overrides.hasher ?? new Sha256FingerprintHasher(),
+    secrets: overrides.secrets ?? nodeOneTimeSecretGenerator,
+    secretHasher: overrides.secretHasher ?? sha256SecretHasher,
   });
+  const invitationAcceptLimiter = new FixedWindowRateLimiter({ clock, ...INVITATION_ACCEPT_LIMIT });
   const localSignIn: LocalSignIn | undefined =
     config.env === "local" && identity.local !== undefined
       ? { issuer: identity.local, limiter: new FixedWindowRateLimiter({ clock, ...LOCAL_SIGN_IN_LIMIT }) }
@@ -109,6 +135,7 @@ export async function createApiRuntime(config: ServerConfig, overrides: ApiRunti
     database,
     identityProvider: identity.provider,
     services,
+    invitationAcceptLimiter,
     ...(localSignIn === undefined ? {} : { localSignIn }),
     close() {
       closed ??= database.disconnect();

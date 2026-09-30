@@ -1,8 +1,11 @@
 import {
   type AuditWriter,
+  type BusinessIdempotencyStore,
   type BusinessRepository,
   type CurrencyReferenceRepository,
   DependencyUnavailableError,
+  type DeviceRepository,
+  type InvitationRepository,
   type LocationRepository,
   type MembershipRepository,
   type UnitOfWork,
@@ -11,7 +14,10 @@ import {
 } from "@tali/application";
 import { createPrismaClient } from "./client/prisma-client.js";
 import { createAuditWriter } from "./repositories/audit-writer.js";
+import { createBusinessIdempotencyStore } from "./repositories/business-idempotency-store.js";
 import { createBusinessRepository, createCurrencyReferenceRepository } from "./repositories/business-repository.js";
+import { createDeviceRepository } from "./repositories/device-repository.js";
+import { createInvitationRepository } from "./repositories/invitation-repository.js";
 import { createLocationRepository } from "./repositories/location-repository.js";
 import { createMembershipRepository } from "./repositories/membership-repository.js";
 import { createUserIdempotencyStore } from "./repositories/user-idempotency-store.js";
@@ -30,15 +36,18 @@ export interface DatabaseOptions {
   readonly lockTimeoutMs?: number;
 }
 
-/** The Slice 2 repository adapters, as application ports. They work only with this database's unit of work. */
+/** The Build 1 repository adapters, as application ports. They work only with this database's unit of work. */
 export interface DatabaseRepositories {
   readonly users: UserRepository;
   readonly businesses: BusinessRepository;
   readonly memberships: MembershipRepository;
   readonly locations: LocationRepository;
   readonly currencies: CurrencyReferenceRepository;
+  readonly invitations: InvitationRepository;
+  readonly devices: DeviceRepository;
   readonly auditWriter: AuditWriter;
   readonly userIdempotency: UserIdempotencyStore;
+  readonly businessIdempotency: BusinessIdempotencyStore;
 }
 
 /**
@@ -60,8 +69,11 @@ export function createRepositories(): DatabaseRepositories {
     memberships: createMembershipRepository(),
     locations: createLocationRepository(),
     currencies: createCurrencyReferenceRepository(),
+    invitations: createInvitationRepository(),
+    devices: createDeviceRepository(),
     auditWriter: createAuditWriter(),
     userIdempotency: createUserIdempotencyStore(),
+    businessIdempotency: createBusinessIdempotencyStore(),
   });
 }
 

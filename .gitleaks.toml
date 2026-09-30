@@ -3,6 +3,23 @@ title = "Tali gitleaks configuration"
 [extend]
 useDefault = true
 
+# Tali one-time secrets: an invitation token or device credential is a prefix plus
+# 32 random bytes in base64url. Test fixtures use low-entropy stand-ins, which the
+# entropy threshold leaves alone; a real, random value is reported.
+[[rules]]
+id = "tali-invitation-token"
+description = "Tali invitation token (one-time bearer secret)"
+regex = '''tali_inv_[A-Za-z0-9_-]{43}'''
+entropy = 3.5
+keywords = ["tali_inv_"]
+
+[[rules]]
+id = "tali-device-credential"
+description = "Tali device credential (one-time bearer secret)"
+regex = '''tali_dev_[A-Za-z0-9_-]{43}'''
+entropy = 3.5
+keywords = ["tali_dev_"]
+
 # Documented placeholders and prose in governance docs, not credentials.
 # Each entry must match both the file and the exact line text; keep this list minimal.
 [[allowlists]]

@@ -36,6 +36,13 @@ export function createMembershipRepository(): MembershipRepository {
       return row === null ? undefined : toMembership(row);
     },
 
+    async findById(scope, businessId, membershipId) {
+      const row = await transactionClient(scope).businessMembership.findUnique({
+        where: { businessId_id: { businessId, id: membershipId } },
+      });
+      return row === null ? undefined : toMembership(row);
+    },
+
     async insert(scope, membership) {
       await transactionClient(scope).businessMembership.create({
         data: {

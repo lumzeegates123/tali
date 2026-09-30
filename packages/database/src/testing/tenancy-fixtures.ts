@@ -31,6 +31,8 @@ export const TENANCY_TABLES = [
   "user_idempotency_records",
   "business_audit_records",
   "platform_audit_records",
+  "business_invitations",
+  "devices",
   "business_memberships",
   "business_locations",
   "businesses",
@@ -131,6 +133,17 @@ export const tenancyFixtures = {
       [locationId],
     );
   },
+
+  /** Moves a PENDING invitation's creation and expiry into the past, so it is expired now. */
+  async expireInvitation(invitationId: string, env: Env = process.env): Promise<void> {
+    await updateOne(
+      env,
+      `UPDATE public.business_invitations
+       SET created_at = now() - interval '73 hours', expires_at = now() - interval '1 hour'
+       WHERE id = $1 AND status = 'PENDING'`,
+      [invitationId],
+    );
+  },
 };
 
 async function updateOne(env: Env, sql: string, values: readonly unknown[]): Promise<void> {
@@ -198,6 +211,36 @@ export interface TenancySnapshot {
     resourceId: string;
     resultText: string;
   }[];
+  readonly businessIdempotency: readonly {
+    businessId: string;
+    actorType: string;
+    actorId: string;
+    operation: string;
+    idempotencyKey: string;
+    resourceType: string;
+    resourceId: string;
+    resultText: string;
+  }[];
+  readonly invitations: readonly {
+    id: string;
+    businessId: string;
+    tokenHashHex: string;
+    role: string;
+    status: string;
+    createdByMembershipId: string;
+    acceptedByMembershipId: string | null;
+    revokedByMembershipId: string | null;
+  }[];
+  readonly devices: readonly {
+    id: string;
+    businessId: string;
+    platform: string;
+    label: string;
+    credentialHashHex: string;
+    status: string;
+    registeredByMembershipId: string;
+    revokedByMembershipId: string | null;
+  }[];
 }
 
 export async function readTenancySnapshot(env: Env = process.env): Promise<TenancySnapshot> {
@@ -240,6 +283,25 @@ export async function readTenancySnapshot(env: Env = process.env): Promise<Tenan
                 encode(fingerprint, 'hex') AS "fingerprintHex", fingerprint_version AS "fingerprintVersion",
                 resource_type AS "resourceType", resource_id AS "resourceId", result::text AS "resultText"
          FROM public.user_idempotency_records ORDER BY id`,
+      ),
+      businessIdempotency: await rows(
+        `SELECT business_id AS "businessId", actor_type AS "actorType", actor_id AS "actorId", operation,
+                idempotency_key AS "idempotencyKey", resource_type AS "resourceType", resource_id AS "resourceId",
+                result::text AS "resultText"
+         FROM public.business_idempotency_records ORDER BY id`,
+      ),
+      invitations: await rows(
+        `SELECT id, business_id AS "businessId", encode(token_hash, 'hex') AS "tokenHashHex", role, status,
+                created_by_membership_id AS "createdByMembershipId",
+                accepted_by_membership_id AS "acceptedByMembershipId",
+                revoked_by_membership_id AS "revokedByMembershipId"
+         FROM public.business_invitations ORDER BY id`,
+      ),
+      devices: await rows(
+        `SELECT id, business_id AS "businessId", platform, label, encode(credential_hash, 'hex') AS "credentialHashHex",
+                status, registered_by_membership_id AS "registeredByMembershipId",
+                revoked_by_membership_id AS "revokedByMembershipId"
+         FROM public.devices ORDER BY id`,
       ),
     };
   });

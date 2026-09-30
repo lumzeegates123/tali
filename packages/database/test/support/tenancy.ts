@@ -7,30 +7,57 @@
  * test-only decorator, never through a production switch.
  */
 import {
+  type AcceptInvitation,
   AuditRecorder,
   type AuthenticatedUserContext,
+  type BusinessContext,
+  type ChangeMemberRole,
   type CreateBusiness,
   type CreateBusinessInput,
   type CreateBusinessOutcome,
+  type CreateInvitation,
+  createAcceptInvitation,
+  createBusinessContextResolver,
+  createChangeMemberRole,
   createCreateBusiness,
+  createCreateInvitation,
   createDefaultLocationCreation,
+  createDeviceVerifier,
+  createListDevices,
   createListLocations,
   createListMembers,
   createListMyBusinesses,
+  createReactivateMember,
   createRegisterCurrentUser,
+  createRegisterDevice,
+  createRevokeDevice,
+  createRevokeInvitation,
+  createSuspendMember,
+  createUpdateBusinessName,
+  createUserContextResolver,
+  type DeviceVerifier,
   KeyedIdempotency,
+  type ListDevices,
   type ListLocations,
   type ListMembers,
   type ListMyBusinesses,
   parseCorrelationId,
+  type ReactivateMember,
   type RegisterCurrentUser,
+  type RegisterDevice,
+  type RevokeDevice,
+  type RevokeInvitation,
+  type SuspendMember,
   taliAuditRegistry,
   type UnitOfWork,
+  type UpdateBusinessName,
   type UserId,
 } from "@tali/application";
 import {
   FakeFingerprintHasher,
   FakeIdentityProvider,
+  FakeOneTimeSecretGenerator,
+  FakeSecretHasher,
   FixedClock,
   SequentialIdGenerator,
 } from "@tali/application/testing";
@@ -56,8 +83,21 @@ export interface Tenancy {
   readonly listMyBusinesses: ListMyBusinesses;
   readonly listMembers: ListMembers;
   readonly listLocations: ListLocations;
+  readonly updateBusinessName: UpdateBusinessName;
+  readonly changeMemberRole: ChangeMemberRole;
+  readonly suspendMember: SuspendMember;
+  readonly reactivateMember: ReactivateMember;
+  readonly createInvitation: CreateInvitation;
+  readonly revokeInvitation: RevokeInvitation;
+  readonly acceptInvitation: AcceptInvitation;
+  readonly registerDevice: RegisterDevice;
+  readonly listDevices: ListDevices;
+  readonly revokeDevice: RevokeDevice;
+  readonly deviceVerifier: DeviceVerifier;
   registeredUser(subject: string, displayName?: string): Promise<RegisteredUser>;
   create(user: RegisteredUser, input?: Partial<CreateBusinessInput>): Promise<CreateBusinessOutcome>;
+  /** The server-resolved context of an ACTIVE member, as the API's BusinessContextGuard produces it. */
+  contextFor(user: RegisteredUser, businessId: BusinessId): Promise<BusinessContext>;
 }
 
 /** Per-test deterministic inputs, shared by every composition in the test so identifiers never collide. */
@@ -66,6 +106,8 @@ interface World {
   readonly ids: SequentialIdGenerator;
   readonly hasher: FakeFingerprintHasher;
   readonly identities: FakeIdentityProvider;
+  readonly secrets: FakeOneTimeSecretGenerator;
+  readonly secretHasher: FakeSecretHasher;
 }
 
 function newWorld(): World {
@@ -75,6 +117,8 @@ function newWorld(): World {
     ids: new SequentialIdGenerator(),
     hasher: new FakeFingerprintHasher(),
     identities: new FakeIdentityProvider(clock),
+    secrets: new FakeOneTimeSecretGenerator(),
+    secretHasher: new FakeSecretHasher(),
   };
 }
 
@@ -95,7 +139,11 @@ export function useTenancyHarness() {
   ): Tenancy {
     const uow = options.unitOfWork ?? base.unitOfWork;
     const repos: DatabaseRepositories = { ...repositories, ...options.decorate };
-    const { clock, ids, hasher, identities } = world;
+    const { clock, ids, hasher, identities, secrets, secretHasher } = world;
+    const { businesses, memberships, invitations, devices } = repos;
+    const businessIdempotency = new KeyedIdempotency({ businessStore: repos.businessIdempotency, clock, ids });
+    const userContexts = createUserContextResolver({ unitOfWork: uow, users: repos.users });
+    const businessContexts = createBusinessContextResolver({ unitOfWork: uow, userContexts, businesses, memberships });
     const audit = new AuditRecorder({ registry: taliAuditRegistry, writer: repos.auditWriter, clock, ids });
     const registerCurrentUser = createRegisterCurrentUser({ unitOfWork: uow, users: repos.users, audit, ids, clock });
     const createBusiness = createCreateBusiness({
@@ -119,6 +167,52 @@ export function useTenancyHarness() {
       listMyBusinesses: createListMyBusinesses({ unitOfWork: uow, users: repos.users, memberships: repos.memberships }),
       listMembers: createListMembers({ unitOfWork: uow, memberships: repos.memberships }),
       listLocations: createListLocations({ unitOfWork: uow, locations: repos.locations }),
+      updateBusinessName: createUpdateBusinessName({ unitOfWork: uow, businesses, memberships, audit, clock }),
+      changeMemberRole: createChangeMemberRole({ unitOfWork: uow, businesses, memberships, audit, clock }),
+      suspendMember: createSuspendMember({ unitOfWork: uow, businesses, memberships, audit, clock }),
+      reactivateMember: createReactivateMember({ unitOfWork: uow, businesses, memberships, audit, clock }),
+      createInvitation: createCreateInvitation({
+        unitOfWork: uow,
+        memberships,
+        invitations,
+        idempotency: businessIdempotency,
+        hasher,
+        secrets,
+        secretHasher,
+        audit,
+        ids,
+        clock,
+      }),
+      revokeInvitation: createRevokeInvitation({ unitOfWork: uow, memberships, invitations, audit, clock }),
+      acceptInvitation: createAcceptInvitation({
+        unitOfWork: uow,
+        users: repos.users,
+        businesses,
+        memberships,
+        invitations,
+        secretHasher,
+        audit,
+        ids,
+        clock,
+      }),
+      registerDevice: createRegisterDevice({
+        unitOfWork: uow,
+        memberships,
+        devices,
+        idempotency: businessIdempotency,
+        hasher,
+        secrets,
+        secretHasher,
+        audit,
+        ids,
+        clock,
+      }),
+      listDevices: createListDevices({ unitOfWork: uow, devices }),
+      revokeDevice: createRevokeDevice({ unitOfWork: uow, memberships, devices, audit, clock }),
+      deviceVerifier: createDeviceVerifier({ unitOfWork: uow, devices, secretHasher }),
+      contextFor(user, businessId) {
+        return businessContexts.resolveForUser(user.context, businessId);
+      },
       async registeredUser(subject, displayName = "Test User") {
         const identity = await identities.verifyAccessToken(identities.issueToken(subject));
         const { user } = await registerCurrentUser.execute({

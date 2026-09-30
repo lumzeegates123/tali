@@ -25,5 +25,11 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   version: "0.0.0",
   orientation: "portrait",
   android: { package: "com.tali.mobile" },
-  plugins: ["expo-router", ["expo-build-properties", { android: { usesCleartextTraffic: allowCleartextHttp } }]],
+  plugins: [
+    "expo-router",
+    ["expo-build-properties", { android: { usesCleartextTraffic: allowCleartextHttp } }],
+    // Device credentials are Business-scoped secrets; they are excluded from Android Auto Backup so a restored
+    // phone must register again. No biometric prompt is used, so no Face ID permission is requested.
+    ["expo-secure-store", { configureAndroidBackup: true, faceIDPermission: false }],
+  ],
 });

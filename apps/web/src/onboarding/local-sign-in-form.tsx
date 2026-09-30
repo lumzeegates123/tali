@@ -12,6 +12,7 @@ const NOTICE_TEXT: Record<SessionNotice, string> = {
   signedOut: "You have signed out.",
   sessionEnded: "Your session has ended. Sign in again.",
   businessUnavailable: "That business is no longer available to you.",
+  invitationAccepted: "Invitation accepted.",
 };
 
 /**

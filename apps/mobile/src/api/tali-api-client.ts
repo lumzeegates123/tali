@@ -1,4 +1,5 @@
 import type {
+  AcceptInvitationResponse,
   BusinessResponse,
   CreateBusinessRequest,
   CreateBusinessResponse,
@@ -8,9 +9,14 @@ import type {
   MembersResponse,
   MyBusinessesResponse,
   ReadinessResponse,
+  RegisterDeviceResponse,
 } from "@tali/shared";
 import {
+  AcceptInvitationResponseSchema,
   BusinessResponseSchema,
+  DEVICE_CREDENTIAL_HEADER,
+  DEVICE_ID_HEADER,
+  RegisterDeviceResponseSchema,
   CreateBusinessResponseSchema,
   CurrentUserResponseSchema,
   ErrorEnvelopeSchema,
@@ -56,6 +62,16 @@ export interface TaliApiClientOptions {
 
 /** The bearer access token, held only by the in-memory session. */
 export type AccessToken = string & { readonly __brand: "AccessToken" };
+
+/**
+ * Device verification headers for one business-scoped request. The caller
+ * passes them only for the business the registration belongs to; they never
+ * replace the bearer token.
+ */
+export interface DeviceHeaders {
+  readonly deviceId: string;
+  readonly credential: string;
+}
 
 export interface PageRequest {
   readonly limit?: number;
@@ -158,17 +174,31 @@ export class TaliApiClient {
     );
   }
 
-  async getBusiness(token: AccessToken, businessId: string): Promise<ApiResult<BusinessResponse>> {
-    return this.#call({ method: "GET", path: businessPath(businessId), token }, [200], BusinessResponseSchema);
+  async getBusiness(
+    token: AccessToken,
+    businessId: string,
+    device?: DeviceHeaders,
+  ): Promise<ApiResult<BusinessResponse>> {
+    return this.#call(
+      { method: "GET", path: businessPath(businessId), token, headers: deviceHeaders(device) },
+      [200],
+      BusinessResponseSchema,
+    );
   }
 
   async listLocations(
     token: AccessToken,
     businessId: string,
     page: PageRequest = {},
+    device?: DeviceHeaders,
   ): Promise<ApiResult<LocationsResponse>> {
     return this.#call(
-      { method: "GET", path: `${businessPath(businessId)}/locations${pageQuery(page)}`, token },
+      {
+        method: "GET",
+        path: `${businessPath(businessId)}/locations${pageQuery(page)}`,
+        token,
+        headers: deviceHeaders(device),
+      },
       [200],
       LocationsResponseSchema,
     );
@@ -178,11 +208,49 @@ export class TaliApiClient {
     token: AccessToken,
     businessId: string,
     page: PageRequest = {},
+    device?: DeviceHeaders,
   ): Promise<ApiResult<MembersResponse>> {
     return this.#call(
-      { method: "GET", path: `${businessPath(businessId)}/members${pageQuery(page)}`, token },
+      {
+        method: "GET",
+        path: `${businessPath(businessId)}/members${pageQuery(page)}`,
+        token,
+        headers: deviceHeaders(device),
+      },
       [200],
       MembersResponseSchema,
+    );
+  }
+
+  /**
+   * `POST .../devices` (`device:register`), Android only. The credential is
+   * only in the first 201 response; a replay answers `credentialAvailable: false`.
+   */
+  async registerDevice(
+    token: AccessToken,
+    businessId: string,
+    label: string,
+    idempotencyKey: string,
+  ): Promise<ApiResult<RegisterDeviceResponse>> {
+    return this.#call(
+      {
+        method: "POST",
+        path: `${businessPath(businessId)}/devices`,
+        token,
+        body: { platform: "ANDROID", label },
+        headers: { [IDEMPOTENCY_KEY_HEADER]: idempotencyKey },
+      },
+      [201],
+      RegisterDeviceResponseSchema,
+    );
+  }
+
+  /** `POST /v1/invitations/accept`: the invitation token travels in the body only, never in a URL. */
+  async acceptInvitation(token: AccessToken, invitationToken: string): Promise<ApiResult<AcceptInvitationResponse>> {
+    return this.#call(
+      { method: "POST", path: "/v1/invitations/accept", token, body: { token: invitationToken } },
+      [200],
+      AcceptInvitationResponseSchema,
     );
   }
 
@@ -229,6 +297,12 @@ export class TaliApiClient {
       clearTimeout(timer);
     }
   }
+}
+
+function deviceHeaders(device: DeviceHeaders | undefined): Readonly<Record<string, string>> {
+  return device === undefined
+    ? {}
+    : { [DEVICE_ID_HEADER]: device.deviceId, [DEVICE_CREDENTIAL_HEADER]: device.credential };
 }
 
 function businessPath(businessId: string): string {

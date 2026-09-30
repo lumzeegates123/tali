@@ -13,6 +13,7 @@ export type ApplicationErrorCode =
   | "DEPENDENCY_UNAVAILABLE"
   | "USER_NOT_REGISTERED"
   | "USER_DISABLED"
+  | "DEVICE_NOT_TRUSTED"
   | "IDEMPOTENCY_KEY_REQUIRED"
   | "IDEMPOTENCY_KEY_REUSED"
   | "IDEMPOTENCY_IN_PROGRESS"
@@ -29,6 +30,7 @@ const RETRYABLE: Readonly<Record<ApplicationErrorCode, boolean>> = {
   DEPENDENCY_UNAVAILABLE: true,
   USER_NOT_REGISTERED: false,
   USER_DISABLED: false,
+  DEVICE_NOT_TRUSTED: false,
   IDEMPOTENCY_KEY_REQUIRED: false,
   IDEMPOTENCY_KEY_REUSED: false,
   IDEMPOTENCY_IN_PROGRESS: true,
@@ -111,6 +113,17 @@ export class UserNotRegisteredError extends ApplicationError {
 export class UserDisabledError extends ApplicationError {
   constructor(message = "This user is disabled") {
     super("USER_DISABLED", message);
+  }
+}
+
+/**
+ * Device headers were present but did not verify (ADR-005 sections 13.1 and
+ * 15.3). One message for every cause: missing half, malformed, unknown,
+ * foreign, revoked or mismatched. The client must register the device again.
+ */
+export class DeviceNotTrustedError extends ApplicationError {
+  constructor(message = "This device is not trusted for this business") {
+    super("DEVICE_NOT_TRUSTED", message);
   }
 }
 

@@ -11,6 +11,27 @@ export {
 export type { BusinessId, MembershipId } from "./ids.js";
 export { parseBusinessId, parseMembershipId } from "./ids.js";
 export type {
+  BusinessInvitation,
+  InvitableRole,
+  InvitationId,
+  InvitationStatus,
+  InvitationTransition,
+} from "./invitation.js";
+export {
+  acceptInvitation,
+  createInvitation,
+  INVITABLE_ROLES,
+  INVITATION_STATUSES,
+  INVITATION_TTL_MS,
+  isInvitableRole,
+  isInvitationExpired,
+  isInvitationOpen,
+  parseInvitableRole,
+  parseInvitationId,
+  restoreInvitation,
+  revokeInvitation,
+} from "./invitation.js";
+export type {
   BusinessMembership,
   MembershipChangeReason,
   MembershipRole,
@@ -22,6 +43,7 @@ export {
   changeMembershipRole,
   countActiveOwners,
   createFoundingOwnerMembership,
+  createInvitedMembership,
   isActiveOwner,
   isMembershipActive,
   isMembershipRole,

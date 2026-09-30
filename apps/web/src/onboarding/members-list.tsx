@@ -18,7 +18,7 @@ type MembersState =
 /**
  * Read-only `GET /v1/businesses/:id/members`. The server decides who may see
  * it (`member:read`); PERMISSION_DENIED is shown as "not available", never as
- * an empty list. No role, suspension or invitation controls (Slice 5).
+ * an empty list. Role and suspension changes are API-only in Build 1.
  */
 export function MembersList({ businessId }: { readonly businessId: string }) {
   const store = useSessionStore();

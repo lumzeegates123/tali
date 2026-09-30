@@ -33,6 +33,14 @@ describe("client-bundle scan", () => {
     );
   });
 
+  it("finds one-time secret prefixes (invitation tokens, device credentials)", () => {
+    const dir = fixture({ "chunk.js": 'const t="tali_inv_";const d="tali_dev_";' });
+    expect(scanFiles(listFiles(dir), forbiddenNeedles(), dir).map((finding) => finding.needle)).toEqual([
+      "one-time secret prefix tali_inv_",
+      "one-time secret prefix tali_dev_",
+    ]);
+  });
+
   it("finds strings stored as UTF-16 (Hermes bytecode string tables for non-ASCII strings)", () => {
     const dir = fixture({
       "entry.hbc": Buffer.concat([Buffer.from([0xc6, 0x1f]), Buffer.from("S3_BUCKET", "utf16le")]),

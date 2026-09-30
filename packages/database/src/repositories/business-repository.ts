@@ -25,6 +25,23 @@ export function createBusinessRepository(): BusinessRepository {
       return row === null ? undefined : toBusiness(row);
     },
 
+    async findByIdForUpdate(scope, businessId) {
+      const client = transactionClient(scope);
+      const locked = await client.$queryRaw<{ id: string }[]>`
+        SELECT id::text AS id FROM businesses WHERE id = ${businessId}::uuid FOR UPDATE`;
+      if (locked.length !== 1) return undefined;
+      const row = await client.business.findUnique({ where: { id: businessId } });
+      return row === null ? undefined : toBusiness(row);
+    },
+
+    async update(scope, business) {
+      const { count } = await transactionClient(scope).business.updateMany({
+        where: { id: business.id },
+        data: { name: business.name, updatedAt: business.updatedAt },
+      });
+      if (count !== 1) throw new Error("business update affected no row");
+    },
+
     async insert(scope, business) {
       await transactionClient(scope).business.create({
         data: {

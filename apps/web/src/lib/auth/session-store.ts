@@ -2,12 +2,20 @@ import type {
   BusinessResponse,
   CreateBusinessRequest,
   CurrentUserResponse,
+  InvitationResponse,
   LocationResponse,
   MembersResponse,
   MyBusinessesResponse,
 } from "@tali/shared";
 import { CreateBusinessRequestSchema } from "@tali/shared";
-import type { AccessToken, ApiFailure, ApiResult, PageRequest, TaliApiClient } from "../api-client/tali-api-client";
+import type {
+  AccessToken,
+  ApiFailure,
+  ApiResult,
+  InvitableRole,
+  PageRequest,
+  TaliApiClient,
+} from "../api-client/tali-api-client";
 
 /**
  * Build 1 client session (plan 003 section 7): the access token, the current
@@ -27,12 +35,13 @@ export type SessionPhase =
   | "businessSelected"
   | "error";
 
-export type SessionAction = "signIn" | "checkUser" | "register" | "loadBusinesses" | "createBusiness";
+export type SessionAction =
+  "signIn" | "checkUser" | "register" | "loadBusinesses" | "createBusiness" | "acceptInvitation";
 
 export type BusinessSummary = MyBusinessesResponse["items"][number];
 
 /** Why the session ended or the selection was cleared; wording is generic by design. */
-export type SessionNotice = "signedOut" | "sessionEnded" | "businessUnavailable";
+export type SessionNotice = "signedOut" | "sessionEnded" | "businessUnavailable" | "invitationAccepted";
 
 export interface SessionError {
   readonly action: SessionAction;
@@ -49,7 +58,21 @@ export interface SessionSnapshot {
   readonly pending: SessionAction | "loadMoreBusinesses" | undefined;
   readonly error: SessionError | undefined;
   readonly notice: SessionNotice | undefined;
+  /** An invitation link was opened and its token is held in memory, waiting to be accepted. */
+  readonly hasPendingInvitation: boolean;
 }
+
+export type CreateInvitationOutcome =
+  | { readonly status: "created"; readonly invitation: InvitationResponse; readonly token: string }
+  /** A retry replayed an invitation created earlier; its one-time token cannot be shown again. */
+  | { readonly status: "alreadyShown"; readonly invitation: InvitationResponse }
+  | { readonly status: "ignored" }
+  | { readonly status: "failed"; readonly failure: ApiFailure };
+
+export type RevokeInvitationOutcome =
+  | { readonly status: "revoked"; readonly invitation: InvitationResponse }
+  | { readonly status: "ignored" }
+  | { readonly status: "failed"; readonly failure: ApiFailure };
 
 export type CreateBusinessOutcome =
   | { readonly status: "created"; readonly businessId: string }
@@ -86,12 +109,22 @@ const SIGNED_OUT: SessionSnapshot = Object.freeze({
   pending: undefined,
   error: undefined,
   notice: undefined,
+  hasPendingInvitation: false,
 });
 
 interface CreateAttempt {
   readonly command: CreateBusinessRequest;
   readonly key: string;
 }
+
+interface InviteAttempt {
+  readonly businessId: string;
+  readonly role: InvitableRole;
+  readonly key: string;
+}
+
+/** Accept failures after which the same token can never succeed; it is dropped from memory. */
+const FINAL_ACCEPT_FAILURES = new Set(["NOT_FOUND", "CONFLICT", "VALIDATION_FAILED"]);
 
 function isApiError(failure: ApiFailure, code: string): boolean {
   return failure.kind === "api-error" && failure.code === code;
@@ -111,6 +144,10 @@ export class SessionStore {
   #epoch = 0;
   #createAttempt: CreateAttempt | undefined;
   #createInFlight = false;
+  #inviteAttempt: InviteAttempt | undefined;
+  #inviteInFlight = false;
+  /** An invitation token from an opened link; memory only, never rendered, logged or stored. */
+  #pendingInvitation: string | undefined;
 
   constructor(options: SessionStoreOptions) {
     this.#api = options.api;
@@ -301,10 +338,112 @@ export class SessionStore {
     return this.#businessRead(businessId, (token) => this.#api.listMembers(token, businessId, page));
   }
 
-  /** Clears the token, user, businesses, selection and any pending idempotency key. */
+  /**
+   * `POST .../invitations` with one Idempotency-Key per logical submission
+   * (business and role): retrying after a failure reuses the key, so the
+   * server replays instead of creating a second invitation. A replay carries
+   * no token, and the caller must say the link cannot be shown again.
+   */
+  async createInvitation(businessId: string, role: InvitableRole): Promise<CreateInvitationOutcome> {
+    const token = this.#token;
+    if (token === undefined || this.#inviteInFlight || this.#snapshot.selectedBusinessId !== businessId) {
+      return { status: "ignored" };
+    }
+    const previous = this.#inviteAttempt;
+    const attempt =
+      previous !== undefined && previous.businessId === businessId && previous.role === role
+        ? previous
+        : { businessId, role, key: this.#newIdempotencyKey() };
+    this.#inviteAttempt = attempt;
+    this.#inviteInFlight = true;
+    const epoch = this.#epoch;
+    let result;
+    try {
+      result = await this.#api.createInvitation(token, businessId, role, attempt.key);
+    } finally {
+      this.#inviteInFlight = false;
+    }
+    if (epoch !== this.#epoch) return { status: "ignored" };
+    if (!result.ok) {
+      if (isApiError(result.failure, "IDEMPOTENCY_KEY_REUSED")) this.#inviteAttempt = undefined;
+      this.#applySessionEffects(result.failure);
+      return { status: "failed", failure: result.failure };
+    }
+    this.#inviteAttempt = undefined;
+    return result.value.tokenAvailable
+      ? { status: "created", invitation: result.value.invitation, token: result.value.token }
+      : { status: "alreadyShown", invitation: result.value.invitation };
+  }
+
+  /** `POST .../invitations/:id/revoke`; revoking an already revoked invitation succeeds without change. */
+  async revokeInvitation(businessId: string, invitationId: string): Promise<RevokeInvitationOutcome> {
+    const token = this.#token;
+    if (token === undefined || this.#snapshot.selectedBusinessId !== businessId) return { status: "ignored" };
+    const epoch = this.#epoch;
+    const result = await this.#api.revokeInvitation(token, businessId, invitationId);
+    if (epoch !== this.#epoch) return { status: "ignored" };
+    if (!result.ok) {
+      this.#applySessionEffects(result.failure);
+      return { status: "failed", failure: result.failure };
+    }
+    return { status: "revoked", invitation: result.value.invitation };
+  }
+
+  /**
+   * Keeps the token from an opened invitation link in memory until the user
+   * is signed in and accepts it. The first token wins; it is never rendered.
+   */
+  holdInvitation(invitationToken: string): void {
+    if (this.#pendingInvitation !== undefined || invitationToken === "") return;
+    this.#pendingInvitation = invitationToken;
+    this.#patch({});
+  }
+
+  /** Forgets the held invitation token without accepting it. */
+  discardInvitation(): void {
+    this.#pendingInvitation = undefined;
+    this.#patch({ error: this.#errorUnless("acceptInvitation") });
+  }
+
+  /**
+   * `POST /v1/invitations/accept` with the held token, once the user is
+   * registered. On success the business list is reloaded, so the new business
+   * appears in the picker. A token that can never succeed (not found,
+   * already a member, malformed) is dropped; a transport failure keeps it for
+   * a retry, which the server answers idempotently for the same user.
+   */
+  async acceptInvitation(): Promise<void> {
+    const token = this.#token;
+    const invitationToken = this.#pendingInvitation;
+    const { phase, pending } = this.#snapshot;
+    if (token === undefined || invitationToken === undefined || pending !== undefined) return;
+    if (phase !== "choosingBusiness" && phase !== "businessSelected") return;
+    const epoch = this.#epoch;
+    this.#patch({ pending: "acceptInvitation", error: undefined, notice: undefined });
+    const result = await this.#api.acceptInvitation(token, invitationToken);
+    if (epoch !== this.#epoch) return;
+    if (!result.ok) {
+      if (this.#applySessionEffects(result.failure)) return;
+      if (result.failure.kind === "api-error" && FINAL_ACCEPT_FAILURES.has(result.failure.code)) {
+        this.#pendingInvitation = undefined;
+      }
+      this.#patch({ pending: undefined, error: { action: "acceptInvitation", failure: result.failure } });
+      return;
+    }
+    this.#pendingInvitation = undefined;
+    this.#patch({ pending: undefined });
+    await this.#loadBusinesses(epoch, "invitationAccepted");
+  }
+
+  /** Clears the token, user, businesses, selection, any held invitation and any pending idempotency key. */
   signOut(): void {
     this.#reset();
+    this.#pendingInvitation = undefined;
     this.#set({ ...SIGNED_OUT, notice: "signedOut" });
+  }
+
+  #errorUnless(action: SessionAction): SessionError | undefined {
+    return this.#snapshot.error?.action === action ? undefined : this.#snapshot.error;
   }
 
   async #checkUser(epoch: number): Promise<void> {
@@ -396,6 +535,8 @@ export class SessionStore {
     this.#token = undefined;
     this.#createAttempt = undefined;
     this.#createInFlight = false;
+    this.#inviteAttempt = undefined;
+    this.#inviteInFlight = false;
     this.#epoch += 1;
     return this.#epoch;
   }
@@ -405,7 +546,7 @@ export class SessionStore {
   }
 
   #set(next: SessionSnapshot): void {
-    this.#snapshot = Object.freeze(next);
+    this.#snapshot = Object.freeze({ ...next, hasPendingInvitation: this.#pendingInvitation !== undefined });
     for (const listener of this.#listeners) listener();
   }
 }

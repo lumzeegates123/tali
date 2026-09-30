@@ -1,16 +1,23 @@
 import type {
+  AcceptInvitationResponse,
   BusinessResponse,
   CreateBusinessRequest,
   CreateBusinessResponse,
+  CreateInvitationRequest,
+  CreateInvitationResponse,
   CurrentUserResponse,
   LocalSignInResponse,
   LocationsResponse,
   MembersResponse,
   MyBusinessesResponse,
   ReadinessResponse,
+  RevokeInvitationResponse,
 } from "@tali/shared";
 import {
+  AcceptInvitationResponseSchema,
   BusinessResponseSchema,
+  CreateInvitationResponseSchema,
+  RevokeInvitationResponseSchema,
   CreateBusinessResponseSchema,
   CurrentUserResponseSchema,
   ErrorEnvelopeSchema,
@@ -56,6 +63,8 @@ export interface TaliApiClientOptions {
 
 /** The bearer access token, held only by the in-memory session. */
 export type AccessToken = string & { readonly __brand: "AccessToken" };
+
+export type InvitableRole = CreateInvitationRequest["role"];
 
 export interface PageRequest {
   readonly limit?: number;
@@ -181,6 +190,55 @@ export class TaliApiClient {
       { method: "GET", path: `${businessPath(businessId)}/members${pageQuery(page)}`, token },
       [200],
       MembersResponseSchema,
+    );
+  }
+
+  /**
+   * `POST .../invitations` (`member:invite`). The token is only in the first
+   * 201 response; a replay answers `tokenAvailable: false`.
+   */
+  async createInvitation(
+    token: AccessToken,
+    businessId: string,
+    role: InvitableRole,
+    idempotencyKey: string,
+  ): Promise<ApiResult<CreateInvitationResponse>> {
+    return this.#call(
+      {
+        method: "POST",
+        path: `${businessPath(businessId)}/invitations`,
+        token,
+        body: { role },
+        headers: { [IDEMPOTENCY_KEY_HEADER]: idempotencyKey },
+      },
+      [201],
+      CreateInvitationResponseSchema,
+    );
+  }
+
+  async revokeInvitation(
+    token: AccessToken,
+    businessId: string,
+    invitationId: string,
+  ): Promise<ApiResult<RevokeInvitationResponse>> {
+    return this.#call(
+      {
+        method: "POST",
+        path: `${businessPath(businessId)}/invitations/${encodeURIComponent(invitationId)}/revoke`,
+        token,
+        body: {},
+      },
+      [200],
+      RevokeInvitationResponseSchema,
+    );
+  }
+
+  /** `POST /v1/invitations/accept`: the invitation token travels in the body only, never in a URL. */
+  async acceptInvitation(token: AccessToken, invitationToken: string): Promise<ApiResult<AcceptInvitationResponse>> {
+    return this.#call(
+      { method: "POST", path: "/v1/invitations/accept", token, body: { token: invitationToken } },
+      [200],
+      AcceptInvitationResponseSchema,
     );
   }
 

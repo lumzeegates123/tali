@@ -1,19 +1,57 @@
 import type {
   Business,
   BusinessId,
+  BusinessInvitation,
   BusinessMembership,
   CurrencyCode,
   CurrencyDefinition,
   DisplayName,
+  InvitationId,
+  MembershipId,
   UserId,
 } from "@tali/domain";
+import type { SecretDigest } from "../../ports/one-time-secret.js";
 import type { TransactionScope } from "../../ports/unit-of-work.js";
 import type { Page, PageRequest } from "../../queries/pagination.js";
 
 export interface BusinessRepository {
   /** Callers pass only a business ID from a resolved context or a membership they have already loaded. */
   findById(scope: TransactionScope, businessId: BusinessId): Promise<Business | undefined>;
+  /**
+   * The business with its row locked (SELECT ... FOR UPDATE) until the
+   * transaction ends: the same lock as lockBusinessForMembershipChange, so
+   * business changes and membership changes are serialized per business.
+   */
+  findByIdForUpdate(scope: TransactionScope, businessId: BusinessId): Promise<Business | undefined>;
   insert(scope: TransactionScope, business: Business): Promise<void>;
+  /** Persists a change to the mutable business fields (Build 1: the name). Call under findByIdForUpdate. */
+  update(scope: TransactionScope, business: Business): Promise<void>;
+}
+
+/**
+ * Business invitations (tenant-owned; ADR-005 section 14). The token digest is
+ * write-only through this port except for the acceptance lookup, whose key is
+ * the digest itself (globally unique by construction).
+ */
+export interface InvitationRepository {
+  insert(scope: TransactionScope, invitation: BusinessInvitation, tokenDigest: SecretDigest): Promise<void>;
+  /** The invitation of this business, row-locked until the transaction ends. */
+  findByIdForUpdate(
+    scope: TransactionScope,
+    businessId: BusinessId,
+    invitationId: InvitationId,
+  ): Promise<BusinessInvitation | undefined>;
+  /** The invitation whose token has this digest, row-locked until the transaction ends. */
+  findByTokenDigestForUpdate(
+    scope: TransactionScope,
+    tokenDigest: SecretDigest,
+  ): Promise<BusinessInvitation | undefined>;
+  /**
+   * Persists a transition of `previous` to `next` (same ID and business).
+   * Throws ConcurrentModificationError when the stored status is no longer
+   * `previous.status`.
+   */
+  update(scope: TransactionScope, previous: BusinessInvitation, next: BusinessInvitation): Promise<void>;
 }
 
 /** A member of a business with the display name to show for them. */
@@ -34,6 +72,12 @@ export interface MembershipRepository {
     scope: TransactionScope,
     businessId: BusinessId,
     userId: UserId,
+  ): Promise<BusinessMembership | undefined>;
+  /** A membership of this business by ID, whatever its status; a foreign ID is not found. */
+  findById(
+    scope: TransactionScope,
+    businessId: BusinessId,
+    membershipId: MembershipId,
   ): Promise<BusinessMembership | undefined>;
   insert(scope: TransactionScope, membership: BusinessMembership): Promise<void>;
   /**
@@ -76,6 +120,22 @@ export function assertMembershipTransition(previous: BusinessMembership, next: B
     next.version !== previous.version + 1
   ) {
     throw new Error("a membership update must keep its identity and advance the version by one");
+  }
+}
+
+/** Precondition of InvitationRepository.update, shared by every adapter. */
+export function assertInvitationTransition(previous: BusinessInvitation, next: BusinessInvitation): void {
+  if (
+    next.id !== previous.id ||
+    next.businessId !== previous.businessId ||
+    next.role !== previous.role ||
+    next.createdByMembershipId !== previous.createdByMembershipId ||
+    next.expiresAt.getTime() !== previous.expiresAt.getTime() ||
+    next.createdAt.getTime() !== previous.createdAt.getTime() ||
+    previous.status !== "PENDING" ||
+    next.status === "PENDING"
+  ) {
+    throw new Error("an invitation update must keep its identity and leave PENDING");
   }
 }
 

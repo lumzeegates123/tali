@@ -2,10 +2,13 @@ import { type DynamicModule, Module, type Provider, type Type } from "@nestjs/co
 import { APP_FILTER } from "@nestjs/core";
 import { AuthenticationGuard } from "./auth/authentication.guard.js";
 import { BusinessContextGuard } from "./auth/business-context.guard.js";
+import { DeviceContextGuard } from "./auth/device-context.guard.js";
 import { LocalSignInController } from "./auth/local-sign-in.controller.js";
 import { RegisteredUserGuard } from "./auth/registered-user.guard.js";
 import { TestIdentityController } from "./auth/test-identity.controller.js";
+import { BusinessDevicesController } from "./business/business-devices.controller.js";
 import { BusinessScopedController } from "./business/business-scoped.controller.js";
+import { BusinessTeamController } from "./business/business-team.controller.js";
 import { BusinessesController } from "./business/businesses.controller.js";
 import type { ApiRuntime } from "./composition/api-runtime.js";
 import {
@@ -14,12 +17,14 @@ import {
   CLOCK,
   DATABASE_HEALTH,
   IDENTITY_PROVIDER,
+  INVITATION_ACCEPT_LIMITER,
   LOCAL_SIGN_IN,
   LOGGER,
   SERVER_CONFIG,
 } from "./composition/tokens.js";
 import { ErrorEnvelopeFilter } from "./errors/error-envelope.filter.js";
 import { HealthController } from "./health/health.controller.js";
+import { InvitationAcceptanceController } from "./identity/invitation-acceptance.controller.js";
 import { MeController } from "./identity/me.controller.js";
 import { RuntimeShutdown } from "./lifecycle/runtime-shutdown.js";
 
@@ -35,7 +40,15 @@ import { RuntimeShutdown } from "./lifecycle/runtime-shutdown.js";
 @Module({})
 export class AppModule {
   static register(runtime: ApiRuntime): DynamicModule {
-    const controllers: Type[] = [HealthController, MeController, BusinessesController, BusinessScopedController];
+    const controllers: Type[] = [
+      HealthController,
+      MeController,
+      BusinessesController,
+      InvitationAcceptanceController,
+      BusinessScopedController,
+      BusinessTeamController,
+      BusinessDevicesController,
+    ];
     const providers: Provider[] = [
       { provide: SERVER_CONFIG, useValue: runtime.config },
       { provide: LOGGER, useValue: runtime.logger },
@@ -44,10 +57,12 @@ export class AppModule {
       { provide: IDENTITY_PROVIDER, useValue: runtime.identityProvider },
       { provide: API_SERVICES, useValue: runtime.services },
       { provide: API_RUNTIME, useValue: runtime },
+      { provide: INVITATION_ACCEPT_LIMITER, useValue: runtime.invitationAcceptLimiter },
       { provide: APP_FILTER, useClass: ErrorEnvelopeFilter },
       AuthenticationGuard,
       RegisteredUserGuard,
       BusinessContextGuard,
+      DeviceContextGuard,
       RuntimeShutdown,
     ];
     if (runtime.config.api.testRoutesEnabled) {

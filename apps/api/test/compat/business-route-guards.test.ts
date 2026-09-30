@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { AppModule } from "../../src/app.module.js";
 import { AuthenticationGuard } from "../../src/auth/authentication.guard.js";
 import { BusinessContextGuard } from "../../src/auth/business-context.guard.js";
+import { DeviceContextGuard } from "../../src/auth/device-context.guard.js";
 import { RegisteredUserGuard } from "../../src/auth/registered-user.guard.js";
 import { BUSINESS_SCOPED_PATH } from "../../src/business/business-scoped.controller.js";
 import { createApiApplication } from "../../src/bootstrap.js";
@@ -16,16 +17,18 @@ import { JsonLogger } from "../../src/observability/logger.js";
 import { type GuardRef, metadataRoutes, registeredRoutes, type RouteInfo } from "../support/route-inventory.js";
 
 /*
- * Permanent tenancy regression check (Build 1 Slice 3 audit): every route that
- * carries a `:businessId` parameter must live under `v1/businesses/:businessId`
- * and run exactly AuthenticationGuard then BusinessContextGuard, so its
- * handler only ever sees a BusinessContext resolved server-side for the
- * route's business. Routes are read from Nest's controller metadata, and that
- * inventory must equal the routes Express actually registered, so a controller
- * the scan cannot see fails the check instead of escaping it.
+ * Permanent tenancy regression check (Build 1 Slice 3 audit, extended in
+ * Slice 5): every route that carries a `:businessId` parameter must live under
+ * `v1/businesses/:businessId` and run exactly AuthenticationGuard, then
+ * BusinessContextGuard, then DeviceContextGuard, so its handler only ever sees
+ * a BusinessContext resolved server-side for the route's business, with a
+ * device set only after verification against that business. Routes are read
+ * from Nest's controller metadata, and that inventory must equal the routes
+ * Express actually registered, so a controller the scan cannot see fails the
+ * check instead of escaping it.
  */
 
-const REQUIRED_BUSINESS_GUARDS: readonly GuardRef[] = [AuthenticationGuard, BusinessContextGuard];
+const REQUIRED_BUSINESS_GUARDS: readonly GuardRef[] = [AuthenticationGuard, BusinessContextGuard, DeviceContextGuard];
 const BUSINESS_PREFIX = `/${BUSINESS_SCOPED_PATH}`;
 
 const guardName = (guard: GuardRef) => (typeof guard === "function" ? guard.name : guard.constructor.name);
@@ -51,6 +54,9 @@ function businessRouteViolations(routes: readonly RouteInfo[]): string[] {
     }
     if (!businessScoped && route.guards.includes(BusinessContextGuard)) {
       violations.push(`${label}: BusinessContextGuard outside ${BUSINESS_PREFIX}`);
+    }
+    if (!businessScoped && route.guards.includes(DeviceContextGuard)) {
+      violations.push(`${label}: DeviceContextGuard outside ${BUSINESS_PREFIX}`);
     }
   }
   return violations;
@@ -104,12 +110,26 @@ describe.each(["test", "local"] as const)("business route guards (TALI_ENV=%s)",
     const business = routes.filter((route) => route.path.startsWith(BUSINESS_PREFIX));
     expect(business.map((route) => `${route.method} ${route.path}`).sort()).toEqual([
       "GET /v1/businesses/:businessId",
+      "GET /v1/businesses/:businessId/devices",
       "GET /v1/businesses/:businessId/locations",
       "GET /v1/businesses/:businessId/members",
+      "PATCH /v1/businesses/:businessId",
+      "POST /v1/businesses/:businessId/devices",
+      "POST /v1/businesses/:businessId/devices/:deviceId/revoke",
+      "POST /v1/businesses/:businessId/invitations",
+      "POST /v1/businesses/:businessId/invitations/:invitationId/revoke",
+      "POST /v1/businesses/:businessId/members/:membershipId/reactivate",
+      "POST /v1/businesses/:businessId/members/:membershipId/role",
+      "POST /v1/businesses/:businessId/members/:membershipId/suspend",
     ]);
   });
 
-  it("protects every business-scoped route with AuthenticationGuard then BusinessContextGuard", () => {
+  it("serves invitation acceptance as a user-level route with no business or device guard", () => {
+    const accept = routes.find((route) => route.path === "/v1/invitations/accept");
+    expect(accept).toMatchObject({ method: "POST", guards: [AuthenticationGuard, RegisteredUserGuard] });
+  });
+
+  it("protects every business-scoped route with AuthenticationGuard, BusinessContextGuard, DeviceContextGuard", () => {
     expect(businessRouteViolations(routes)).toEqual([]);
   });
 
@@ -130,6 +150,15 @@ describe("the check fails for an unprotected business route", () => {
     @Get()
     read(): string {
       return "leak";
+    }
+  }
+
+  @Controller(BUSINESS_SCOPED_PATH)
+  class MissingDeviceGuardController {
+    @Get("no-device-check")
+    @UseGuards(AuthenticationGuard, BusinessContextGuard)
+    noDevice(): string {
+      return "unverified";
     }
   }
 
@@ -167,6 +196,7 @@ describe("the check fails for an unprotected business route", () => {
       controllers: [
         ...(base.controllers ?? []),
         UnguardedController,
+        MissingDeviceGuardController,
         MethodGuardedWrongController,
         MisplacedController,
       ],
@@ -181,8 +211,9 @@ describe("the check fails for an unprotected business route", () => {
 
   it("reports each violation and nothing about the real routes", () => {
     const violations = businessRouteViolations(metadataRoutes(app));
-    expect(violations).toHaveLength(5);
+    expect(violations).toHaveLength(6);
     expect(violations.join("\n")).toMatch(/GET \/v1\/businesses\/:businessId\/rogue .*guards \[\]/);
+    expect(violations.join("\n")).toMatch(/no-device-check .*guards \[AuthenticationGuard, BusinessContextGuard\]/);
     expect(violations.join("\n")).toMatch(/reversed .*guards \[BusinessContextGuard, AuthenticationGuard\]/);
     expect(violations.join("\n")).toMatch(/user-only .*guards \[AuthenticationGuard, RegisteredUserGuard\]/);
     expect(violations.join("\n")).toMatch(/\/v1\/reports\/:businessId .*must live under/);

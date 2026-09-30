@@ -11,7 +11,7 @@ export const IDEMPOTENCY_RESULT_MAX_BYTES = 16_384;
  * The result as stored: compact JSON in a `json` column, which keeps the
  * exact text, so this byte count is what the database CHECK measures.
  */
-function encodedResult(result: JsonValue): string {
+export function encodedIdempotencyResult(result: JsonValue): string {
   const encoded = JSON.stringify(result);
   const bytes = Buffer.byteLength(encoded, "utf8");
   if (bytes > IDEMPOTENCY_RESULT_MAX_BYTES) {
@@ -57,7 +57,7 @@ export function createUserIdempotencyStore(): UserIdempotencyStore {
     },
 
     async insert(scope, record) {
-      const result = encodedResult(record.result);
+      const result = encodedIdempotencyResult(record.result);
       try {
         const inserted = await transactionClient(scope).$executeRaw`
           INSERT INTO user_idempotency_records (

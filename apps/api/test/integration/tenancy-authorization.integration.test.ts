@@ -9,6 +9,7 @@ import { metadataRoutes } from "../support/route-inventory.js";
 import { anyString, bearer, createBusinessAs, registerActor, type RegisteredActor } from "../support/tenancy-client.js";
 
 const code = (body: unknown) => ErrorEnvelopeSchema.parse(body).error.code;
+const BUSINESS_PARAM_PATH = "/v1/businesses/:businessId";
 
 describe("Slice 3 authentication and tenant isolation", () => {
   let api: ApiHarness;
@@ -217,7 +218,11 @@ describe("Slice 3 authentication and tenant isolation", () => {
           expect(code(response.body)).toBe("NOT_FOUND");
         }
         const own = await call(world.businessA, world.userA.token);
-        expect({ label, ok: own.status < 400 }).toEqual({ label, ok: true });
+        if (route.method === "GET" && !route.path.slice(BUSINESS_PARAM_PATH.length).includes(":")) {
+          expect({ label, ok: own.status < 400 }).toEqual({ label, ok: true });
+        } else {
+          expect({ label, reachedHandler: ![401, 403].includes(own.status) }).toEqual({ label, reachedHandler: true });
+        }
       }
     });
 

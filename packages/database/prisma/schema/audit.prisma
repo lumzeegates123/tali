@@ -2,7 +2,8 @@
 // Insert-only for the application role (SELECT and INSERT granted, never
 // UPDATE or DELETE). Business records are tenant-owned; their membership and
 // location references are composite (business_id, x_id) foreign keys, so a
-// record can never point into another business. Platform records carry the
+// record can never point into another business; the same holds for the
+// device reference. Platform records carry the
 // subject user and no business. Payloads are stored as `json` (exact text), so
 // the size CHECKs in the migration SQL measure the bytes that were written.
 
@@ -30,6 +31,7 @@ model BusinessAuditRecord {
   actorUser       User?               @relation(fields: [actorUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   actorMembership BusinessMembership? @relation(fields: [businessId, actorMembershipId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
   location        BusinessLocation?   @relation(fields: [businessId, locationId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  device          Device?             @relation(fields: [businessId, deviceId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
 
   @@unique([businessId, id])
   @@map("business_audit_records")

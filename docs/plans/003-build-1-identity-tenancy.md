@@ -1,6 +1,6 @@
 # Tali Build 1: identity, tenancy, roles and devices (plan)
 
-Status: **APPROVED IN PRINCIPLE (2026-09-29). Slices 0, 1, 2, 3 and 4 complete.**
+Status: **APPROVED IN PRINCIPLE (2026-09-29). Slices 0, 1, 2, 3, 4 and 5 complete.**
 `docs/decisions/ADR-004-mutation-protocol.md` and `docs/decisions/ADR-005-identity-tenancy-authorization.md` are
 **ACCEPTED (2026-09-29)**. Slice 1 found a conflict between ADR-004 section 8.3 (Zod audit schemas) and ADR-002
 section 6 (application depends only on domain). `docs/decisions/ADR-006-audit-payload-schema-boundary.md` resolves it
@@ -9,7 +9,8 @@ report in `docs/audits/build-1-slice-1.md`. **Slice 2 is complete (2026-09-29)**
 `docs/audits/build-1-slice-2.md`. **Slice 3 is complete (2026-09-29)**; its report is in
 `docs/audits/build-1-slice-3.md` (dependency added: `jose` 6.2.12 in `packages/integrations`). **Slice 4 is complete
 (2026-09-30)**; its report is in `docs/audits/build-1-slice-4.md` (no dependencies added; currency is shown as the
-approved pilot value because no currency-list endpoint exists). The Cognito slice (Slice 6) remains blocked on ADR-003 (AWS foundation topology, reserved). Where this
+approved pilot value because no currency-list endpoint exists). **Slice 5 is complete (2026-09-30)**; its report is
+in `docs/audits/build-1-slice-5.md` (dependency added: `expo-secure-store` 57.0.4 in `apps/mobile`). The Cognito slice (Slice 6) remains blocked on ADR-003 (AWS foundation topology, reserved). Where this
 plan and an ADR differ, the ADR is authoritative (`AGENTS.md` section 4).
 
 Scope: implementation step 2 of `docs/product/mvp-scope.md` (identity / tenancy). There is no inventory, sales,
@@ -24,7 +25,7 @@ payments, accounting, purchasing, AI or offline sync in this build.
 | 2 | Prisma schema and SQL migration (composite FKs, CHECKs, partial unique indexes, grants, currencies reference data), repositories, `verify-schema.mjs` expectations, integration and concurrency tests | Complete (2026-09-29; `docs/audits/build-1-slice-2.md`) |
 | 3 | Auth guard and `BusinessContext` resolver, P0 endpoints, `LocalIdentityProvider` in `packages/integrations` (JWT library dependency to review), API security end-to-end tests | Complete (2026-09-29; `docs/audits/build-1-slice-3.md`) |
 | 4 | Web and mobile onboarding flows for the P0 use cases | Complete (2026-09-30; `docs/audits/build-1-slice-4.md`) |
-| 5 | P1 invitations, member management and device registration and revocation, with security tests | Not started |
+| 5 | P1 invitations, member management and device registration and revocation, with security tests | Complete (2026-09-30; `docs/audits/build-1-slice-5.md`) |
 | 6 | Cognito JWT verification adapter with JWKS fixtures, no AWS in CI | Blocked on ADR-003 |
 
 ## 0. Conflicts and findings

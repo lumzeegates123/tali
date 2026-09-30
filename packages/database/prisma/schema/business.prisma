@@ -20,6 +20,8 @@ model Business {
   memberships        BusinessMembership[]
   auditRecords       BusinessAuditRecord[]
   idempotencyRecords BusinessIdempotencyRecord[]
+  invitations        BusinessInvitation[]
+  devices            Device[]
 
   @@map("businesses")
 }
@@ -37,10 +39,72 @@ model BusinessMembership {
   business Business @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   user     User     @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
-  actedAuditRecords BusinessAuditRecord[]
+  actedAuditRecords   BusinessAuditRecord[]
+  createdInvitations  BusinessInvitation[] @relation("InvitationCreatedBy")
+  acceptedInvitations BusinessInvitation[] @relation("InvitationAcceptedBy")
+  revokedInvitations  BusinessInvitation[] @relation("InvitationRevokedBy")
+  registeredDevices   Device[]             @relation("DeviceRegisteredBy")
+  revokedDevices      Device[]             @relation("DeviceRevokedBy")
 
   @@unique([businessId, id])
   @@unique([businessId, userId])
   @@index([userId])
   @@map("business_memberships")
+}
+
+// Invitations (ADR-005 section 14). Only the 32-byte SHA-256 digest of the
+// one-time token is stored; `token_hash` is globally unique so acceptance can
+// find the row without a business. EXPIRED is derived from `expires_at`, never
+// stored. Role, status, digest-length and timestamp CHECKs live in the
+// migration SQL. Membership references are composite, so they stay in the
+// invitation's business.
+model BusinessInvitation {
+  businessId             String    @map("business_id") @db.Uuid
+  id                     String    @id @db.Uuid
+  tokenHash              Bytes     @unique @map("token_hash")
+  role                   String
+  status                 String
+  expiresAt              DateTime  @map("expires_at") @db.Timestamptz(3)
+  createdByMembershipId  String    @map("created_by_membership_id") @db.Uuid
+  createdAt              DateTime  @map("created_at") @db.Timestamptz(3)
+  acceptedByMembershipId String?   @map("accepted_by_membership_id") @db.Uuid
+  acceptedAt             DateTime? @map("accepted_at") @db.Timestamptz(3)
+  revokedByMembershipId  String?   @map("revoked_by_membership_id") @db.Uuid
+  revokedAt              DateTime? @map("revoked_at") @db.Timestamptz(3)
+
+  business   Business            @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  createdBy  BusinessMembership  @relation("InvitationCreatedBy", fields: [businessId, createdByMembershipId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  acceptedBy BusinessMembership? @relation("InvitationAcceptedBy", fields: [businessId, acceptedByMembershipId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  revokedBy  BusinessMembership? @relation("InvitationRevokedBy", fields: [businessId, revokedByMembershipId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([businessId, id])
+  @@index([businessId, status])
+  @@map("business_invitations")
+}
+
+// Devices (ADR-005 section 15). A registration belongs to one business; the
+// same physical device registers separately per business. Only the 32-byte
+// SHA-256 digest of the one-time credential is stored. There is no
+// last_seen_at column (ADR-005 sections 15.1 and 15.4).
+model Device {
+  businessId               String    @map("business_id") @db.Uuid
+  id                       String    @id @db.Uuid
+  platform                 String
+  label                    String
+  credentialHash           Bytes     @map("credential_hash")
+  status                   String
+  registeredByMembershipId String    @map("registered_by_membership_id") @db.Uuid
+  registeredAt             DateTime  @map("registered_at") @db.Timestamptz(3)
+  revokedByMembershipId    String?   @map("revoked_by_membership_id") @db.Uuid
+  revokedAt                DateTime? @map("revoked_at") @db.Timestamptz(3)
+
+  business     Business            @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  registeredBy BusinessMembership  @relation("DeviceRegisteredBy", fields: [businessId, registeredByMembershipId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  revokedBy    BusinessMembership? @relation("DeviceRevokedBy", fields: [businessId, revokedByMembershipId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  auditRecords BusinessAuditRecord[]
+
+  @@unique([businessId, id])
+  @@index([businessId, status])
+  @@map("devices")
 }

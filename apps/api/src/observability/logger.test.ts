@@ -105,4 +105,20 @@ describe("JsonLogger", () => {
       displayName: "[REDACTED]",
     });
   });
+
+  it("redacts one-time secrets, their digests and device labels", () => {
+    const { logger, lines } = capture();
+    logger.info("slice5", {
+      token: "synthetic-invitation-value",
+      credential: "synthetic-device-value",
+      "x-tali-device-credential": "synthetic-device-value",
+      tokenHash: "00ff",
+      credentialDigest: "00ff",
+      label: "Amina's phone",
+      deviceId: "0190a000-0000-7000-8000-000000000002",
+    });
+    const text = JSON.stringify(lines[0]);
+    expect(text).not.toMatch(/synthetic-|00ff|Amina/);
+    expect(lines[0]).toMatchObject({ deviceId: "0190a000-0000-7000-8000-000000000002", label: "[REDACTED]" });
+  });
 });

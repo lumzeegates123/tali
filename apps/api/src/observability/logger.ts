@@ -7,8 +7,9 @@ const SEVERITY: Record<LogLevel, number> = { fatal: 60, error: 50, warn: 40, inf
 
 /** Field names whose values are never written to logs. */
 // Plan 003 section 11: JWTs, bearer values, keys, claims, provider subjects, display names and contact details too.
+// Slice 5: one-time secrets and their digests (invitation tokens, device credentials) and free-text device labels.
 const REDACTED_FIELD =
-  /pass(word)?|secret|token|authorization|cookie|credential|api[-_]?key|database_?url|connection_?string|jwt|bearer|private[-_]?key|signature|claims?$|subject|display[-_]?name|e[-_]?mail|phone/i;
+  /pass(word)?|secret|token|authorization|cookie|credential|api[-_]?key|database_?url|connection_?string|jwt|bearer|private[-_]?key|signature|claims?$|subject|display[-_]?name|e[-_]?mail|phone|hash|digest|label/i;
 
 export type LogFields = Readonly<Record<string, unknown>>;
 

@@ -13,6 +13,8 @@ const BUILD_1_TABLES = [
   "businesses",
   "business_locations",
   "business_memberships",
+  "business_invitations",
+  "devices",
   "business_audit_records",
   "platform_audit_records",
   "user_idempotency_records",
