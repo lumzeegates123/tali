@@ -39,8 +39,12 @@ import {
   createRegisterCurrentUser,
   createUserContextResolver,
 } from "../modules/identity/index.js";
-import type { ListLocations } from "../modules/location/index.js";
-import { createDefaultLocationCreation, createListLocations } from "../modules/location/index.js";
+import type { DefaultLocationResolver, ListLocations } from "../modules/location/index.js";
+import {
+  createDefaultLocationCreation,
+  createDefaultLocationResolver,
+  createListLocations,
+} from "../modules/location/index.js";
 import { FakeFingerprintHasher } from "./fake-fingerprint-hasher.js";
 import { FakeIdentityProvider } from "./fake-identity-provider.js";
 import { FixedClock } from "./fixed-clock.js";
@@ -69,6 +73,7 @@ export interface TenancyHarness {
   readonly getBusiness: GetBusiness;
   readonly listLocations: ListLocations;
   readonly listMembers: ListMembers;
+  readonly defaultLocations: DefaultLocationResolver;
   /** Verified identity for a provider subject, as the transport guard would produce. */
   identityFor(subject: string): Promise<VerifiedIdentity>;
   /** Registers a user through RegisterCurrentUser and returns its resolved context. */
@@ -215,5 +220,6 @@ export function createTenancyHarness(options: {
     getBusiness: createGetBusiness({ unitOfWork, businesses }),
     listLocations: createListLocations({ unitOfWork, locations }),
     listMembers: createListMembers({ unitOfWork, memberships }),
+    defaultLocations: createDefaultLocationResolver({ unitOfWork, locations }),
   };
 }

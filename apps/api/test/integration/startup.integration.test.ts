@@ -52,10 +52,16 @@ describe("API process startup", () => {
   });
 
   it("fails loudly for an identity provider that is not implemented yet", async () => {
-    const result = await runApi({ ...TEST_ENV, TALI_ENV: "local", IDENTITY_PROVIDER: "local" });
+    const result = await runApi({
+      ...TEST_ENV,
+      IDENTITY_PROVIDER: "cognito",
+      COGNITO_REGION: "eu-west-1",
+      COGNITO_USER_POOL_ID: "eu-west-1_Synthetic1",
+      COGNITO_CLIENT_IDS: "synthetic-client-id",
+    });
     expect(result.code).toBe(1);
     expect(result.stderr).toMatch(/API failed to start/);
-    expect(result.stderr).toMatch(/not implemented yet/);
+    expect(result.stderr).toMatch(/not implemented yet \(blocked on ADR-003\)/);
   });
 
   // Readiness-based: wait (bounded) for the listening log line and a live HTTP

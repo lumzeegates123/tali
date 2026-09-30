@@ -54,7 +54,55 @@ describe("JsonLogger", () => {
       password: "[REDACTED]",
       nested: { authorization: "[REDACTED]", databaseUrl: "[REDACTED]", safe: "ok" },
       amountMinor: "9007199254740993",
-      error: { name: "Error", message: "failed" },
+      error: { name: "Error" },
+    });
+  });
+
+  it("logs errors by name, code and stack frames only, never their message", () => {
+    const { logger, lines } = capture();
+    const prismaLike = Object.assign(
+      new Error('Invalid `prisma.user.create()` invocation: { displayName: "synthetic-secret-name" }', {
+        cause: new SyntaxError('"synthetic-raw-body" is not valid JSON'),
+      }),
+      { name: "PrismaClientValidationError", code: "P2009" },
+    );
+    logger.error("request failed", { error: prismaLike, other: Object.assign(new Error("x"), { code: "has spaces" }) });
+    const text = JSON.stringify(lines[0]);
+    expect(text).not.toMatch(/synthetic-secret-name|synthetic-raw-body|invocation/);
+    expect(lines[0]).toMatchObject({
+      error: { name: "PrismaClientValidationError", code: "P2009", cause: { name: "SyntaxError" } },
+      other: { name: "Error" },
+    });
+    expect((lines[0]?.["other"] as Record<string, unknown>)["code"]).toBeUndefined();
+    const stack = (lines[0]?.["error"] as { stack: string[] }).stack;
+    expect(stack.length).toBeGreaterThan(0);
+    expect(stack.every((frame) => frame.startsWith("at "))).toBe(true);
+  });
+
+  it("redacts identity material: JWTs, keys, claims, provider subjects, display names and contact details", () => {
+    const { logger, lines } = capture();
+    logger.info("identity", {
+      jwt: "eyJhbGciOiJFUzI1NiJ9.e30.sig",
+      accessToken: "a.b.c",
+      bearer: "a.b.c",
+      privateKey: "-----BEGIN PRIVATE KEY-----",
+      signature: "sig",
+      claims: { sub: "local-user-amina", roles: ["OWNER"] },
+      providerSubject: "local-user-amina",
+      subject: "local-user-amina",
+      displayName: "Amina",
+      email: "amina@example.test",
+      phone: "+2340000000000",
+      userId: "0190a000-0000-7000-8000-000000000001",
+      reason: "verification_failed",
+    });
+    const text = JSON.stringify(lines[0]);
+    expect(text).not.toMatch(/eyJ|a\.b\.c|PRIVATE KEY|local-user-amina|Amina|example\.test|\+234|OWNER/);
+    expect(lines[0]).toMatchObject({
+      userId: "0190a000-0000-7000-8000-000000000001",
+      reason: "verification_failed",
+      subject: "[REDACTED]",
+      displayName: "[REDACTED]",
     });
   });
 });

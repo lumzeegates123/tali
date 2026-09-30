@@ -1,5 +1,15 @@
-import pg from "pg";
-import { testDatabaseUrls } from "../../src/testing/index.js";
+import { withFixtureSession } from "../../src/testing/fixture-session.js";
+
+export {
+  addTestCurrencies,
+  assertFixtureSession,
+  FixtureSafetyError,
+  fixtureTargetUrl,
+  removeTestCurrencies,
+  resetTenancyTables,
+  TENANCY_TABLES,
+  TEST_CURRENCIES,
+} from "../../src/testing/index.js";
 
 /**
  * Test-only fixture tables for the database foundation regression tests
@@ -33,60 +43,6 @@ export const FIXTURE_TABLES = [
 ] as const;
 
 type Env = Readonly<Record<string, string | undefined>>;
-
-export class FixtureSafetyError extends Error {
-  constructor(message: string) {
-    super(`Refusing to run test-fixture DDL: ${message}`);
-    this.name = "FixtureSafetyError";
-  }
-}
-
-/** Checks 1 and 2. Returns the only connection string fixture DDL may use. */
-export function fixtureTargetUrl(env: Env = process.env): string {
-  if (env["TALI_ENV"] !== "test") {
-    throw new FixtureSafetyError(`TALI_ENV must be "test" (found ${JSON.stringify(env["TALI_ENV"] ?? null)})`);
-  }
-  try {
-    return testDatabaseUrls(env).owner;
-  } catch (error) {
-    throw new FixtureSafetyError(error instanceof Error ? error.message : String(error));
-  }
-}
-
-interface SessionIdentity {
-  database: string;
-  user: string;
-}
-
-interface Queryable {
-  query(sql: string): Promise<{ rows: Partial<SessionIdentity>[] }>;
-}
-
-/** Check 3: the server, not the URL, confirms which database and role this session is. */
-export async function assertFixtureSession(session: Queryable, targetUrl: string): Promise<void> {
-  const url = new URL(targetUrl);
-  const expectedDatabase = decodeURIComponent(url.pathname.replace(/^\//u, ""));
-  const expectedUser = decodeURIComponent(url.username);
-  const { rows } = await session.query("SELECT current_database() AS database, current_user AS user");
-  const actual = rows[0];
-  if (actual?.database !== expectedDatabase || !expectedDatabase.endsWith("_test") || actual.user !== expectedUser) {
-    throw new FixtureSafetyError(
-      `connected session is ${actual?.user ?? "?"}@${actual?.database ?? "?"}, expected ${expectedUser}@${expectedDatabase}`,
-    );
-  }
-}
-
-async function withFixtureSession(env: Env, work: (client: pg.Client) => Promise<void>): Promise<void> {
-  const target = fixtureTargetUrl(env);
-  const client = new pg.Client({ connectionString: target, application_name: "tali-test-fixtures" });
-  await client.connect();
-  try {
-    await assertFixtureSession(client, target);
-    await work(client);
-  } finally {
-    await client.end();
-  }
-}
 
 const CREATE_FIXTURES = `
 DROP SCHEMA IF EXISTS ${FIXTURE_SCHEMA} CASCADE;
@@ -150,60 +106,5 @@ export async function dropFixtures(env: Env = process.env): Promise<void> {
 export async function truncateFixtures(env: Env = process.env): Promise<void> {
   await withFixtureSession(env, async (client) => {
     await client.query(`TRUNCATE ${FIXTURE_TABLES.map((table) => `${FIXTURE_SCHEMA}.${table}`).join(", ")}`);
-  });
-}
-
-/**
- * The Build 1 tables that tests write through the repositories. Reset between
- * tests in the disposable test database only, as the owner role, behind the
- * same safety checks; the application role can never do this. `currencies`
- * is reference data and is never truncated.
- */
-export const TENANCY_TABLES = [
-  "business_idempotency_records",
-  "user_idempotency_records",
-  "business_audit_records",
-  "platform_audit_records",
-  "business_memberships",
-  "business_locations",
-  "businesses",
-  "external_identities",
-  "users",
-] as const;
-
-/**
- * Legitimate ISO 4217 currencies added as test-only reference rows (ADR-005
- * section 5), with different minor-unit exponents, so tests prove no
- * currency is special-cased. Never part of a migration.
- */
-export const TEST_CURRENCIES = [
-  { code: "KES", minorUnitDigits: 2 },
-  { code: "JPY", minorUnitDigits: 0 },
-  { code: "BHD", minorUnitDigits: 3 },
-] as const;
-
-export async function resetTenancyTables(env: Env = process.env): Promise<void> {
-  await withFixtureSession(env, async (client) => {
-    await client.query(`TRUNCATE ${TENANCY_TABLES.map((table) => `public.${table}`).join(", ")}`);
-  });
-}
-
-export async function addTestCurrencies(env: Env = process.env): Promise<void> {
-  await withFixtureSession(env, async (client) => {
-    for (const currency of TEST_CURRENCIES) {
-      await client.query(
-        `INSERT INTO public.currencies (code, minor_unit_digits) VALUES ($1, $2) ON CONFLICT (code) DO NOTHING`,
-        [currency.code, currency.minorUnitDigits],
-      );
-    }
-  });
-}
-
-/** Removes the test-only currencies; runs after the tenancy tables are reset, so nothing references them. */
-export async function removeTestCurrencies(env: Env = process.env): Promise<void> {
-  await withFixtureSession(env, async (client) => {
-    await client.query(`DELETE FROM public.currencies WHERE code = ANY($1::text[])`, [
-      TEST_CURRENCIES.map((currency) => currency.code),
-    ]);
   });
 }

@@ -46,6 +46,10 @@ const VENDOR_SDK_BANS = [
     regex: specifiers(["@nestjs/"]),
     message: "@nestjs/* is imported only in apps/api and apps/worker (ADR-002 section 19).",
   },
+  {
+    regex: specifiers(["jose"]),
+    message: "jose (JWT) is imported only in packages/integrations (Build 1 Slice 3 dependency audit).",
+  },
 ];
 
 /** @type {PatternRule[]} */
@@ -110,6 +114,21 @@ function restrictedImports(patterns, vendorBans = VENDOR_SDK_BANS) {
 
 /** packages/database owns Prisma and pg; every other vendor ban still applies. */
 const DATABASE_VENDOR_BANS = VENDOR_SDK_BANS.filter((rule) => !rule.message.startsWith("@prisma/client"));
+
+/** packages/integrations owns vendor SDKs and jose, never Prisma or NestJS. */
+const INTEGRATIONS_VENDOR_BANS = VENDOR_SDK_BANS.filter(
+  (rule) => !rule.message.startsWith("AWS SDKs") && !rule.message.startsWith("jose"),
+);
+
+/** @type {PatternRule[]} */
+const INTEGRATIONS_BANS = [
+  workspaceBan(
+    ["@tali/database", "@tali/shared", "@tali/ai", "@tali/ui", "@tali/api", "@tali/worker"],
+    "packages/integrations implements application ports; it depends only on application and domain (ADR-002 section 6).",
+  ),
+  { regex: specifiers(["@prisma/", "prisma", "pg", "postgres"]), message: "Persistence is packages/database." },
+  { regex: specifiers(["express"]), message: "packages/integrations is framework-free." },
+];
 
 /** The deployable apps own NestJS; every other vendor ban still applies. */
 const APP_VENDOR_BANS = VENDOR_SDK_BANS.filter((rule) => !rule.message.startsWith("@nestjs/*"));
@@ -371,6 +390,28 @@ export function createConfig({ tsconfigRootDir }) {
           DATABASE_VENDOR_BANS,
         ),
         "no-restricted-syntax": ["error", ...BANNED_RAW_SQL, ...BANNED_PROTECTED_MUTATIONS],
+      },
+    },
+    {
+      files: ["packages/integrations/**/*.ts"],
+      rules: {
+        "no-restricted-imports": restrictedImports(INTEGRATIONS_BANS, INTEGRATIONS_VENDOR_BANS),
+      },
+    },
+    {
+      files: ["packages/integrations/src/local/**/*.ts"],
+      rules: {
+        "no-restricted-imports": restrictedImports(
+          [
+            ...INTEGRATIONS_BANS,
+            {
+              regex: specifiers(["fs", "fs/promises", "node:fs", "node:fs/promises"]),
+              message:
+                "The local signing key is generated per process and never persisted or loaded (ADR-005 section 16).",
+            },
+          ],
+          INTEGRATIONS_VENDOR_BANS,
+        ),
       },
     },
     {

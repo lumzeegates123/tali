@@ -17,6 +17,7 @@
     "@tali/application": "workspace:*",
     "@tali/config": "workspace:*",
     "@tali/database": "workspace:*",
+    "@tali/integrations": "workspace:*",
     "@tali/shared": "workspace:*",
     "express": "5.2.1",
     "reflect-metadata": "0.2.2",

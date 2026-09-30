@@ -9,3 +9,5 @@ export const CLOCK = Symbol("CLOCK");
 export const DATABASE_HEALTH = Symbol("DATABASE_HEALTH");
 export const IDENTITY_PROVIDER = Symbol("IDENTITY_PROVIDER");
 export const API_RUNTIME = Symbol("API_RUNTIME");
+export const API_SERVICES = Symbol("API_SERVICES");
+export const LOCAL_SIGN_IN = Symbol("LOCAL_SIGN_IN");

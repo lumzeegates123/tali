@@ -1,6 +1,6 @@
 import type { Server } from "node:http";
 import type { INestApplication } from "@nestjs/common";
-import type { IdentityProvider } from "@tali/application";
+import type { Clock, IdentityProvider, IdGenerator } from "@tali/application";
 import { FakeIdentityProvider, FixedClock } from "@tali/application/testing";
 import { loadServerConfig, type ServerConfig } from "@tali/config/server";
 import type { Database } from "@tali/database";
@@ -33,6 +33,10 @@ export async function startApi(
     readonly config?: ServerConfig;
     readonly database?: Database;
     readonly identityProvider?: IdentityProvider;
+    /** Compose the identity provider from config (e.g. the real LocalIdentityProvider) instead of the fake. */
+    readonly composeIdentity?: boolean;
+    readonly clock?: Clock;
+    readonly ids?: IdGenerator;
   } = {},
 ): Promise<ApiHarness> {
   const config = options.config ?? loadServerConfig({ ...TEST_ENV, ...options.env });
@@ -43,10 +47,12 @@ export async function startApi(
     sink: (line) => logs.push(JSON.parse(line) as Record<string, unknown>),
   });
   const identity = new FakeIdentityProvider(new FixedClock("2026-09-27T10:00:00Z"));
-  const runtime = createApiRuntime(config, {
+  const runtime = await createApiRuntime(config, {
     logger,
-    identityProvider: options.identityProvider ?? identity,
+    ...(options.composeIdentity === true ? {} : { identityProvider: options.identityProvider ?? identity }),
     ...(options.database === undefined ? {} : { database: options.database }),
+    ...(options.clock === undefined ? {} : { clock: options.clock }),
+    ...(options.ids === undefined ? {} : { ids: options.ids }),
   });
   const app = await createApiApplication(runtime);
   await app.init();

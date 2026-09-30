@@ -49,6 +49,9 @@ importers:
       '@tali/database':
         specifier: workspace:*
         version: link:../../packages/database
+      '@tali/integrations':
+        specifier: workspace:*
+        version: link:../../packages/integrations
       '@tali/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -365,6 +368,37 @@ importers:
       '@tali/tsconfig':
         specifier: workspace:*
         version: link:../../tooling/typescript
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+      vite:
+        specifier: 8.3.1
+        version: 8.3.1(@types/node@24.19.0)(jiti@2.7.0)(terser@5.51.2)(yaml@2.9.1)
+      vitest:
+        specifier: 5.0.2
+        version: 5.0.2(@types/node@24.19.0)(jsdom@30.1.1(@noble/hashes@1.8.0))(vite@8.3.1(@types/node@24.19.0)(jiti@2.7.0)(terser@5.51.2)(yaml@2.9.1))
+
+  packages/integrations:
+    dependencies:
+      '@tali/application':
+        specifier: workspace:*
+        version: link:../application
+      '@tali/domain':
+        specifier: workspace:*
+        version: link:../domain
+      jose:
+        specifier: 6.2.12
+        version: 6.2.12
+      uuid:
+        specifier: 14.0.2
+        version: 14.0.2
+    devDependencies:
+      '@tali/tsconfig':
+        specifier: workspace:*
+        version: link:../../tooling/typescript
+      '@types/node':
+        specifier: 24.19.0
+        version: 24.19.0
       typescript:
         specifier: 6.0.3
         version: 6.0.3
@@ -4152,6 +4186,9 @@ packages:
   jiti@2.7.0:
     resolution: {integrity: sha512-AC/7JofJvZGrrneWNaEnJeOLUx+JlGt7tNa0wZiRPT4MY1wmfKjt2+6O2p2uz2+skll8OZZmJMNqeke7kKbNgQ==}
     hasBin: true
+
+  jose@6.2.12:
+    resolution: {integrity: sha512-9NiFmJEex0sy2Dk58j2UGBSHgUs2ypF9eZSu4L6vjOX3Dp96Sw1F3uL+H+D1sx02jZZdzUT0HgvCy59CuvXcWw==}
 
   js-tokens@4.0.0:
     resolution: {integrity: sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ==}
@@ -10419,6 +10456,8 @@ snapshots:
   jimp-compact@0.16.1: {}
 
   jiti@2.7.0: {}
+
+  jose@6.2.12: {}
 
   js-tokens@4.0.0: {}
 

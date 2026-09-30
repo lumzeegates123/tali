@@ -71,6 +71,20 @@ module.exports = {
       to: { path: "node_modules/(pg|pg-[^/]+|@prisma/adapter-pg)/" },
     },
     {
+      name: "jose-only-in-integrations",
+      severity: "error",
+      comment: "JWT handling is an identity-adapter concern (Build 1 Slice 3 audit).",
+      from: { pathNot: "^packages/integrations/" },
+      to: { path: "node_modules/jose/" },
+    },
+    {
+      name: "local-identity-no-filesystem",
+      severity: "error",
+      comment: "The local signing key is generated per process and never persisted or loaded (ADR-005 section 16).",
+      from: { path: "^packages/integrations/src/local/" },
+      to: { dependencyTypes: ["core"], path: "^(node:)?(fs|fs/promises)$" },
+    },
+    {
       name: "database-test-fixtures-not-in-production",
       severity: "error",
       comment: "Test-only fixture tables and adapters (packages/database/test) are never reachable from shipped code.",

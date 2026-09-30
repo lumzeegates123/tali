@@ -59,6 +59,54 @@ export function isLockNotAvailable(error: unknown): boolean {
   return sqlStateOf(error) === LOCK_NOT_AVAILABLE;
 }
 
+/** Prisma codes for an unreachable server, a dropped connection or pool exhaustion. */
+const UNAVAILABLE_PRISMA_CODES = new Set(["P1001", "P1002", "P1017", "P2024"]);
+/** @prisma/driver-adapter-utils error kinds for the same conditions. */
+const UNAVAILABLE_ADAPTER_KINDS = new Set([
+  "DatabaseNotReachable",
+  "ConnectionClosed",
+  "SocketTimeout",
+  "TooManyConnections",
+  "TlsConnectionError",
+]);
+/** Node.js socket errors seen when the driver cannot reach the server. */
+const UNAVAILABLE_SOCKET_CODES = new Set([
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "ETIMEDOUT",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "EPIPE",
+]);
+
+/**
+ * The database cannot be reached or is refusing work (ADR-005 section 13.1:
+ * DEPENDENCY_UNAVAILABLE): SQLSTATE class 08 (connection exception), 57P01 to
+ * 57P03 (shutdown, cannot connect now), 53300 (too many connections), the
+ * matching Prisma and driver-adapter errors, or a socket failure.
+ */
+export function isDatabaseUnavailable(error: unknown): boolean {
+  const state = sqlStateOf(error);
+  if (state !== undefined) {
+    return state.startsWith("08") || ["57P01", "57P02", "57P03", "53300"].includes(state);
+  }
+  const pending: unknown[] = [error];
+  const visited = new Set<unknown>();
+  while (pending.length > 0 && visited.size < MAX_VISITS) {
+    const current = pending.shift();
+    if (typeof current !== "object" || current === null || visited.has(current)) continue;
+    visited.add(current);
+    const code = property(current, "code");
+    const kind = property(current, "kind");
+    if (typeof code === "string" && (UNAVAILABLE_PRISMA_CODES.has(code) || UNAVAILABLE_SOCKET_CODES.has(code))) {
+      return true;
+    }
+    if (typeof kind === "string" && UNAVAILABLE_ADAPTER_KINDS.has(kind)) return true;
+    pending.push(property(current, "cause"), property(property(current, "meta"), "driverAdapterError"));
+  }
+  return false;
+}
+
 /**
  * Internal: a transaction attempt failed with a serialization failure or
  * deadlock (ADR-004 section 11 "TransactionConflict"). The unit of work

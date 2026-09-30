@@ -1,0 +1,35 @@
+{
+  "name": "@tali/integrations",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    "./local": {
+      "types": "./dist/local/index.d.ts",
+      "default": "./dist/local/index.js"
+    },
+    "./platform": {
+      "types": "./dist/platform/index.d.ts",
+      "default": "./dist/platform/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@tali/application": "workspace:*",
+    "@tali/domain": "workspace:*",
+    "jose": "6.2.12",
+    "uuid": "14.0.2"
+  },
+  "devDependencies": {
+    "@tali/tsconfig": "workspace:*",
+    "@types/node": "24.19.0",
+    "typescript": "6.0.3",
+    "vite": "8.3.1",
+    "vitest": "5.0.2"
+  }
+}

@@ -43,5 +43,12 @@ export function createLocationRepository(): LocationRepository {
       });
       return toPage(rows, request, (row) => row.id, toLocation);
     },
+
+    async findActiveDefault(scope, businessId) {
+      const row = await transactionClient(scope).businessLocation.findFirst({
+        where: { businessId, isDefault: true, status: "ACTIVE" },
+      });
+      return row === null ? undefined : toLocation(row);
+    },
   };
 }
