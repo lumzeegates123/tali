@@ -19,7 +19,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import { canaryEnvironment, forbiddenNeedles } from "./policy.mjs";
+import { canaryEnvironment, forbiddenNeedles, THIRD_PARTY_IDENTIFIERS } from "./policy.mjs";
 import { listFiles, scanFiles } from "./scan.mjs";
 
 const root = fileURLToPath(new URL("../../..", import.meta.url));
@@ -104,7 +104,7 @@ for (const target of targets) {
     failed = true;
     continue;
   }
-  const findings = scanFiles(target.files, needles, root);
+  const findings = scanFiles(target.files, needles, root, THIRD_PARTY_IDENTIFIERS);
   if (findings.length === 0) {
     console.log(
       `client-bundle-check: ${target.name}: ${target.files.length} file(s), ${needles.length} forbidden needle(s), clean.`,

@@ -131,6 +131,7 @@ implementation decisions are made.
 | [ADR-004](ADR-004-mutation-protocol.md) | Mutation protocol: idempotency, audit, transaction boundary, outbox and retries | Accepted (2026-09-29). Partially superseded: only the Zod-specific implementation wording of section 8.3 is replaced by ADR-006; everything else remains in force. |
 | [ADR-005](ADR-005-identity-tenancy-authorization.md) | Identity, tenancy and authorization | Accepted (2026-09-29) |
 | [ADR-006](ADR-006-audit-payload-schema-boundary.md) | Audit payload schema boundary | Accepted (2026-09-29). Supersedes only the Zod-specific implementation wording of ADR-004 section 8.3 (partial supersession). |
+| [ADR-007](ADR-007-mobile-cognito-session-persistence.md) | Mobile Cognito session persistence | Accepted (2026-09-30). Option B: the complete Amplify-managed session in Expo SecureStore through the public storage interface. Partially supersedes only the mobile Cognito persistence wording of ADR-003 section 14.4; ADR-003 remains ACCEPTED and otherwise unchanged. |
 
 "Reserved" is not an ADR status. It marks a number that an accepted ADR already refers to, so the number is not
 reused for another decision.

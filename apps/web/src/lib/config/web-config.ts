@@ -1,8 +1,8 @@
-import type { ConfigurationIssue, EnvSource, PublicConfig } from "@tali/config/public";
+import type { ConfigurationIssue, EnvSource, WebPublicConfig } from "@tali/config/public";
 import { ConfigurationError, loadWebPublicConfig } from "@tali/config/public";
 
 export type WebConfigResult =
-  | { readonly ok: true; readonly config: PublicConfig }
+  | { readonly ok: true; readonly config: WebPublicConfig }
   | { readonly ok: false; readonly issues: readonly ConfigurationIssue[] };
 
 /**
@@ -13,6 +13,7 @@ export function publicEnvironment(): EnvSource {
   return {
     NEXT_PUBLIC_TALI_ENV: process.env.NEXT_PUBLIC_TALI_ENV,
     NEXT_PUBLIC_API_BASE_URL: process.env.NEXT_PUBLIC_API_BASE_URL,
+    NEXT_PUBLIC_AUTH_MODE: process.env.NEXT_PUBLIC_AUTH_MODE,
     NEXT_PUBLIC_COGNITO_REGION: process.env.NEXT_PUBLIC_COGNITO_REGION,
     NEXT_PUBLIC_COGNITO_USER_POOL_ID: process.env.NEXT_PUBLIC_COGNITO_USER_POOL_ID,
     NEXT_PUBLIC_COGNITO_CLIENT_ID: process.env.NEXT_PUBLIC_COGNITO_CLIENT_ID,

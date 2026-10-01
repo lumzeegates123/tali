@@ -271,9 +271,32 @@ module.exports = {
       name: "clients-no-direct-identity-sdk",
       severity: "error",
       comment:
-        "Clients authenticate only through the Tali API in Build 1: no JWT library and no Cognito or Amplify SDK (plan 003 section 7; Cognito waits for ADR-003).",
+        "Clients never verify JWTs and never use Amplify internals or amazon-cognito-identity-js (REFRESH_TOKEN_AUTH); web uses only the public aws-amplify package (ADR-003, Build 1 Slice 6 dependency audit).",
       from: { path: "^apps/(web|mobile)/" },
-      to: { path: "node_modules/(jose|aws-amplify|@aws-amplify|amazon-cognito-identity-js)/" },
+      to: { path: "node_modules/(jose|@aws-amplify|amazon-cognito-identity-js)/" },
+    },
+    {
+      name: "mobile-no-cognito-client",
+      severity: "error",
+      comment: "Mobile Cognito session persistence is blocked on ADR-007; mobile keeps Local auth only.",
+      from: { path: "^apps/mobile/" },
+      to: { path: "node_modules/aws-amplify/" },
+    },
+    {
+      name: "web-amplify-only-in-cognito-module",
+      severity: "error",
+      comment:
+        "aws-amplify is confined to the web Cognito auth module so the rest of the web app stays provider-neutral.",
+      from: { path: "^apps/web/", pathNot: "^apps/web/src/lib/auth/cognito/" },
+      to: { path: "node_modules/aws-amplify/" },
+    },
+    {
+      name: "server-no-cognito-client",
+      severity: "error",
+      comment:
+        "The server verifies Cognito tokens with jose in packages/integrations; it never uses a Cognito client SDK.",
+      from: { path: "^(apps/(api|worker)|packages|tooling)/" },
+      to: { path: "node_modules/(aws-amplify|@aws-amplify|amazon-cognito-identity-js)/" },
     },
     {
       name: "client-runtime-no-node-builtins",

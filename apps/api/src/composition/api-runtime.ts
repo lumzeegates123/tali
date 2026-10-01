@@ -9,6 +9,7 @@ import type {
 import { FakeIdentityProvider } from "@tali/application/testing";
 import type { ServerConfig } from "@tali/config/server";
 import { createDatabase, type Database } from "@tali/database";
+import { CognitoIdentityProvider, type JwksFetch } from "@tali/integrations/aws/cognito";
 import { LocalIdentityProvider } from "@tali/integrations/local";
 import {
   nodeOneTimeSecretGenerator,
@@ -60,14 +61,17 @@ export const LOCAL_SIGN_IN_LIMIT = { limit: 20, windowMs: 60_000, maxKeys: 256 }
 export const INVITATION_ACCEPT_LIMIT = { limit: 10, windowMs: 60_000, maxKeys: 4_096 } as const;
 
 /**
- * Identity composition. Server configuration already refuses `local` outside
- * TALI_ENV=local and `fake` outside local and test; composition checks again,
- * so a hand-built or altered config can never put a development provider in a
- * deployed process. Cognito is blocked on ADR-003 and fails loudly.
+ * Identity composition, selected only by IDENTITY_PROVIDER, with no fallback.
+ * Server configuration already refuses `local` outside TALI_ENV=local and
+ * `fake` outside local and test; composition checks again, so a hand-built or
+ * altered config can never put a development provider in a deployed process.
+ * Cognito verifies access tokens locally against the pool's JWKS; it is
+ * constructed without any network access (the JWKS is fetched on first use).
  */
 async function composeIdentityProvider(
   config: ServerConfig,
   clock: Clock,
+  jwksFetch: JwksFetch | undefined,
 ): Promise<{ provider: IdentityProvider; local?: LocalIdentityProvider }> {
   switch (config.identity.provider) {
     case "fake":
@@ -82,8 +86,21 @@ async function composeIdentityProvider(
       const local = await LocalIdentityProvider.create({ clock });
       return { provider: local, local };
     }
-    case "cognito":
-      throw new CompositionError("IDENTITY_PROVIDER=cognito is not implemented yet (blocked on ADR-003)");
+    case "cognito": {
+      if (jwksFetch !== undefined && config.env !== "local" && config.env !== "test") {
+        throw new CompositionError(`A replacement JWKS fetch is not allowed in ${config.env}`);
+      }
+      const { region, userPoolId, clientIds } = config.identity;
+      return {
+        provider: new CognitoIdentityProvider({
+          region,
+          userPoolId,
+          clientIds,
+          clock,
+          ...(jwksFetch === undefined ? {} : { fetch: jwksFetch }),
+        }),
+      };
+    }
   }
 }
 
@@ -96,6 +113,8 @@ export interface ApiRuntimeOverrides {
   readonly hasher?: FingerprintHasher;
   readonly secrets?: OneTimeSecretGenerator;
   readonly secretHasher?: SecretHasher;
+  /** Tests only (TALI_ENV local or test): serves the Cognito JWKS without the network. */
+  readonly cognitoJwksFetch?: JwksFetch;
 }
 
 export async function createApiRuntime(config: ServerConfig, overrides: ApiRuntimeOverrides = {}): Promise<ApiRuntime> {
@@ -105,7 +124,7 @@ export async function createApiRuntime(config: ServerConfig, overrides: ApiRunti
   const clock = overrides.clock ?? systemClock;
   const identity =
     overrides.identityProvider === undefined
-      ? await composeIdentityProvider(config, clock)
+      ? await composeIdentityProvider(config, clock, overrides.cognitoJwksFetch)
       : { provider: overrides.identityProvider };
   const database =
     overrides.database ??

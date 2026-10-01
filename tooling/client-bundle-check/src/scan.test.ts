@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { canaryEnvironment, canaryValue, CANARY_PREFIX, forbiddenNeedles } from "./policy.mjs";
+import { canaryEnvironment, canaryValue, CANARY_PREFIX, forbiddenNeedles, THIRD_PARTY_IDENTIFIERS } from "./policy.mjs";
 import { listFiles, scanFiles } from "./scan.mjs";
 
 const dirs: string[] = [];
@@ -55,6 +55,23 @@ describe("client-bundle scan", () => {
       "chunk.js": 'const e={NEXT_PUBLIC_API_BASE_URL:"http://127.0.0.1:3910",EXPO_PUBLIC_TALI_ENV:"test"};',
     });
     expect(scanFiles(listFiles(dir), forbiddenNeedles(), dir)).toEqual([]);
+  });
+
+  it("ignores only aws-amplify's own LOG_LEVEL properties, never a Tali server variable", () => {
+    const amplify = fixture({
+      "chunk.js": "m.LOG_LEVEL&&(n=m.LOG_LEVEL),window.LOG_LEVEL&&(n=window.LOG_LEVEL);m.BIND_ALL_LOG_LEVELS=!1;",
+    });
+    expect(scanFiles(listFiles(amplify), forbiddenNeedles(), amplify, THIRD_PARTY_IDENTIFIERS)).toEqual([]);
+
+    for (const leak of [
+      'const k="LOG_LEVEL";',
+      "const c={LOG_LEVEL:1};",
+      "const l=process.env.LOG_LEVEL;",
+      `m.LOG_LEVEL="${canaryValue("LOG_LEVEL")}";`,
+    ]) {
+      const dir = fixture({ "chunk.js": leak });
+      expect(scanFiles(listFiles(dir), forbiddenNeedles(), dir, THIRD_PARTY_IDENTIFIERS)).not.toEqual([]);
+    }
   });
 
   it("injects a canary into every forbidden server variable", () => {

@@ -110,6 +110,52 @@ describe("loadServerConfig", () => {
     expect(keys).toEqual(expect.arrayContaining(["COGNITO_USER_POOL_ID", "S3_BUCKET", "SQS_QUEUE_URL"]));
   });
 
+  describe("Cognito identity (ADR-003 section 15)", () => {
+    const issueKeys = (overrides: Record<string, string | undefined>): string[] =>
+      configError({ ...deployedEnv, ...overrides }).issues.map((issue) => issue.key);
+
+    it("accepts the web and mobile client IDs and up to ten approved public clients", () => {
+      const ids = Array.from({ length: 10 }, (_, index) => `approvedclient${String(index)}`);
+      expect(loadServerConfig({ ...deployedEnv, COGNITO_CLIENT_IDS: ids.join(",") }).identity).toMatchObject({
+        clientIds: ids,
+      });
+    });
+
+    it("refuses a missing user pool, region or client allowlist", () => {
+      expect(issueKeys({ COGNITO_USER_POOL_ID: undefined })).toContain("COGNITO_USER_POOL_ID");
+      expect(issueKeys({ COGNITO_REGION: undefined })).toContain("COGNITO_REGION");
+      expect(issueKeys({ COGNITO_CLIENT_IDS: undefined })).toEqual(["COGNITO_CLIENT_IDS"]);
+      expect(issueKeys({ COGNITO_CLIENT_IDS: " , ," })).toEqual(["COGNITO_CLIENT_IDS"]);
+    });
+
+    it("refuses malformed region, pool and client values", () => {
+      expect(issueKeys({ COGNITO_REGION: "https://evil.example" })).toContain("COGNITO_REGION");
+      expect(issueKeys({ COGNITO_USER_POOL_ID: "eu-west-1/Example" })).toContain("COGNITO_USER_POOL_ID");
+      expect(issueKeys({ COGNITO_USER_POOL_ID: "eu-west-2_Example123" })).toEqual(["COGNITO_USER_POOL_ID"]);
+      expect(issueKeys({ COGNITO_CLIENT_IDS: "good,bad-id" })).toEqual(["COGNITO_CLIENT_IDS"]);
+      expect(issueKeys({ COGNITO_CLIENT_IDS: "dup,dup" })).toEqual(["COGNITO_CLIENT_IDS"]);
+      const eleven = Array.from({ length: 11 }, (_, index) => `client${String(index)}`).join(",");
+      expect(issueKeys({ COGNITO_CLIENT_IDS: eleven })).toEqual(["COGNITO_CLIENT_IDS"]);
+    });
+
+    it("allows Cognito in local and test (a developer may target a development pool)", () => {
+      for (const env of ["local", "test"]) {
+        expect(loadServerConfig({ ...deployedEnv, TALI_ENV: env }).identity.provider).toBe("cognito");
+      }
+    });
+
+    it.each(["development", "staging", "production"])("requires Cognito identity in %s", (env) => {
+      for (const provider of ["local", "fake"]) {
+        expect(issueKeys({ TALI_ENV: env, IDENTITY_PROVIDER: provider })).toContain("IDENTITY_PROVIDER");
+      }
+    });
+
+    it("needs no secret: the configuration holds public identifiers only", () => {
+      const config = loadServerConfig(deployedEnv);
+      expect(Object.keys(config.identity).sort()).toEqual(["clientIds", "provider", "region", "userPoolId"]);
+    });
+  });
+
   it("validates bounds", () => {
     expect(configError({ ...localEnv, SIGNED_URL_TTL_SECONDS: "7200" }).issues.map((issue) => issue.key)).toEqual([
       "SIGNED_URL_TTL_SECONDS",

@@ -19,6 +19,21 @@ export const PLACEHOLDER_SECRETS = ["local-only-owner", "local-only-app", "local
 export const ONE_TIME_SECRET_PREFIXES = ["tali_inv_", "tali_dev_"];
 
 /**
+ * Third-party identifiers that contain a server variable name but are not
+ * Tali configuration. Each is masked before scanning, and only in exactly this
+ * form: a quoted name, an object key or `process.env.<NAME>` is still found,
+ * and canary values are never masked.
+ * - aws-amplify's ConsoleLogger reads its own `ConsoleLogger.LOG_LEVEL`,
+ *   `window.LOG_LEVEL` and `BIND_ALL_LOG_LEVELS` static properties (web
+ *   Cognito client, Build 1 Slice 6).
+ * @type {readonly { readonly reason: string; readonly pattern: RegExp }[]}
+ */
+export const THIRD_PARTY_IDENTIFIERS = [
+  { reason: "aws-amplify ConsoleLogger.LOG_LEVEL property", pattern: /(?<!(?:^|[^\w$])env)\.LOG_LEVEL(?![\w$])/gu },
+  { reason: "aws-amplify ConsoleLogger.BIND_ALL_LOG_LEVELS property", pattern: /\.BIND_ALL_LOG_LEVELS(?![\w$])/gu },
+];
+
+/**
  * @param {string} name
  * @returns {string}
  */

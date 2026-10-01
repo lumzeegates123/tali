@@ -3,6 +3,6 @@
   "compilerOptions": {
     "types": ["node"]
   },
-  "include": ["next-env.d.ts", "src", "test", "e2e", "*.ts", ".next/types/**/*.ts"],
+  "include": ["next-env.d.ts", "src", "test", "e2e", "e2e-cognito", "*.ts", ".next/types/**/*.ts"],
   "exclude": ["node_modules"]
 }

@@ -38,11 +38,20 @@ describe("web shell", () => {
         result={readWebConfig({
           NEXT_PUBLIC_TALI_ENV: "production",
           NEXT_PUBLIC_API_BASE_URL: "https://api.example.com",
+          NEXT_PUBLIC_COGNITO_REGION: "eu-west-1",
+          NEXT_PUBLIC_COGNITO_USER_POOL_ID: "eu-west-1_Example123",
+          NEXT_PUBLIC_COGNITO_CLIENT_ID: "examplewebclient",
         })}
       />,
     );
     expect(screen.queryByTestId("environment-name")).toBeNull();
     expect(screen.getByRole("heading", { name: "API health" })).toBeDefined();
+  });
+
+  it("refuses a deployed build without Cognito public configuration", () => {
+    expect(
+      readWebConfig({ NEXT_PUBLIC_TALI_ENV: "production", NEXT_PUBLIC_API_BASE_URL: "https://api.example.com" }),
+    ).toMatchObject({ ok: false });
   });
 
   it("shows a configuration error, names keys but not values, and never calls the API", () => {

@@ -50,6 +50,25 @@ const VENDOR_SDK_BANS = [
     regex: specifiers(["jose"]),
     message: "jose (JWT) is imported only in packages/integrations (Build 1 Slice 3 dependency audit).",
   },
+  {
+    regex: specifiers(["aws-amplify", "@aws-amplify/", "amazon-cognito-identity-js"]),
+    message:
+      "Cognito client code lives only in apps/web/src/lib/auth/cognito (ADR-003); mobile Cognito waits for ADR-007.",
+  },
+];
+
+/**
+ * The web Cognito module uses the public aws-amplify package through its
+ * documented modular entry points only; never @aws-amplify/* internals or
+ * amazon-cognito-identity-js (REFRESH_TOKEN_AUTH).
+ */
+const WEB_COGNITO_VENDOR_BANS = [
+  ...VENDOR_SDK_BANS.filter((rule) => !rule.message.startsWith("Cognito client code")),
+  {
+    regex: "^(@aws-amplify/.+|amazon-cognito-identity-js(/.*)?|aws-amplify/(?!(auth|auth/cognito|utils)$).+)$",
+    message:
+      "Use only aws-amplify, aws-amplify/auth, aws-amplify/auth/cognito and aws-amplify/utils (Build 1 Slice 6 dependency audit).",
+  },
 ];
 
 /** @type {PatternRule[]} */
@@ -196,10 +215,6 @@ const CLIENT_RUNTIME_BANS = [
     message:
       "@tali/config/public-build is for next.config.ts and app.config.ts only; it carries server variable names.",
   },
-  {
-    regex: specifiers(["aws-amplify", "@aws-amplify/", "amazon-cognito-identity-js"]),
-    message: "Clients authenticate only through the Tali API in Build 1; Cognito client work waits for ADR-003.",
-  },
   ...NODE_BUILTIN_BANS,
 ];
 
@@ -258,6 +273,21 @@ const BANNED_RAW_SQL = [
   {
     selector: "MemberExpression[property.name=/^\\$(queryRawUnsafe|executeRawUnsafe)$/]",
     message: "Unsafe raw SQL is banned (ADR-002 section 19). Use parameterized queries.",
+  },
+];
+
+/**
+ * Cognito groups and custom attributes are never authorization input (ADR-003
+ * section 8, ADR-005); only tests may name them, to prove they are ignored.
+ */
+const BANNED_IDENTITY_CLAIMS = [
+  {
+    selector: "Literal[value=/^(cognito|custom):/]",
+    message: "Cognito groups and custom claims are never read: Tali authorizes from its database (ADR-003).",
+  },
+  {
+    selector: "TemplateElement[value.raw=/^(cognito|custom):/]",
+    message: "Cognito groups and custom claims are never read: Tali authorizes from its database (ADR-003).",
   },
 ];
 
@@ -330,7 +360,7 @@ export function createConfig({ tsconfigRootDir }) {
       files: ["**/*.{ts,tsx,mts,cts,mjs,cjs,js}"],
       rules: {
         "no-restricted-imports": restrictedImports([]),
-        "no-restricted-syntax": ["error", ...BANNED_RAW_SQL],
+        "no-restricted-syntax": ["error", ...BANNED_RAW_SQL, ...BANNED_IDENTITY_CLAIMS],
       },
     },
     {
@@ -342,7 +372,7 @@ export function createConfig({ tsconfigRootDir }) {
           workspaceBan(["@tali/"], "packages/domain depends on no other workspace package."),
           workspaceBan(["zod"], "packages/domain is dependency-free; validation lives at the edges."),
         ]),
-        "no-restricted-syntax": ["error", ...BANNED_RAW_SQL, ...DETERMINISM_SYNTAX],
+        "no-restricted-syntax": ["error", ...BANNED_RAW_SQL, ...BANNED_IDENTITY_CLAIMS, ...DETERMINISM_SYNTAX],
         "no-restricted-properties": ["error", ...DETERMINISM_PROPERTIES],
         "no-restricted-globals": ["error", { name: "parseFloat", message: "No floating-point parsing in the domain." }],
       },
@@ -374,7 +404,7 @@ export function createConfig({ tsconfigRootDir }) {
             "packages/application defines ports; adapters depend on it, never the reverse.",
           ),
         ]),
-        "no-restricted-syntax": ["error", ...BANNED_RAW_SQL, ...DETERMINISM_SYNTAX],
+        "no-restricted-syntax": ["error", ...BANNED_RAW_SQL, ...BANNED_IDENTITY_CLAIMS, ...DETERMINISM_SYNTAX],
         "no-restricted-properties": ["error", ...DETERMINISM_PROPERTIES],
       },
     },
@@ -401,7 +431,7 @@ export function createConfig({ tsconfigRootDir }) {
           ],
           DATABASE_VENDOR_BANS,
         ),
-        "no-restricted-syntax": ["error", ...BANNED_RAW_SQL, ...BANNED_PROTECTED_MUTATIONS],
+        "no-restricted-syntax": ["error", ...BANNED_RAW_SQL, ...BANNED_IDENTITY_CLAIMS, ...BANNED_PROTECTED_MUTATIONS],
       },
     },
     {
@@ -480,6 +510,20 @@ export function createConfig({ tsconfigRootDir }) {
       files: ["apps/web/src/**/*.{ts,tsx}", "apps/mobile/src/**/*.{ts,tsx}", "apps/mobile/app/**/*.{ts,tsx}"],
       rules: {
         "no-restricted-imports": restrictedImports([...CLIENT_BANS, ...CLIENT_RUNTIME_BANS]),
+      },
+    },
+    {
+      files: ["apps/web/src/lib/auth/cognito/**/*.{ts,tsx}"],
+      rules: {
+        "no-restricted-imports": restrictedImports([...CLIENT_BANS, ...CLIENT_RUNTIME_BANS], WEB_COGNITO_VENDOR_BANS),
+      },
+    },
+    {
+      // Tests prove groups and custom claims are ignored, so they may name them.
+      files: ["**/*.test.{ts,tsx}", "apps/*/test/**/*.ts", "apps/web/e2e/**/*.ts", "apps/web/e2e-cognito/**/*.ts"],
+      ignores: ["packages/domain/**", "packages/application/**", "packages/database/**"],
+      rules: {
+        "no-restricted-syntax": ["error", ...BANNED_RAW_SQL],
       },
     },
   );

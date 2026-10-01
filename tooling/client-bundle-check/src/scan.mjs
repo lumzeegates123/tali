@@ -20,14 +20,29 @@ export function listFiles(dir) {
 }
 
 /**
+ * Replaces each match of the (ASCII) mask patterns with the same number of
+ * spaces, preserving every other byte.
+ * @param {Buffer} content
+ * @param {readonly { readonly pattern: RegExp }[]} masks
+ * @returns {Buffer}
+ */
+function masked(content, masks) {
+  if (masks.length === 0) return content;
+  let text = content.toString("latin1");
+  for (const { pattern } of masks) text = text.replace(pattern, (match) => " ".repeat(match.length));
+  return Buffer.from(text, "latin1");
+}
+
+/**
  * Searches raw bytes for each needle in UTF-8 and UTF-16LE, so JavaScript,
  * HTML, RSC payloads and Hermes bytecode string tables are all covered.
  * @param {readonly string[]} files
  * @param {readonly Needle[]} needles
  * @param {string} root report paths relative to this directory
+ * @param {readonly { readonly pattern: RegExp }[]} [masks] exact third-party identifiers to ignore
  * @returns {Finding[]}
  */
-export function scanFiles(files, needles, root) {
+export function scanFiles(files, needles, root, masks = []) {
   const patterns = needles.flatMap((needle) => [
     { needle, encoding: /** @type {const} */ ("utf8"), bytes: Buffer.from(needle.value, "utf8") },
     { needle, encoding: /** @type {const} */ ("utf16le"), bytes: Buffer.from(needle.value, "utf16le") },
@@ -35,7 +50,7 @@ export function scanFiles(files, needles, root) {
   /** @type {Finding[]} */
   const findings = [];
   for (const file of files) {
-    const content = readFileSync(file);
+    const content = masked(readFileSync(file), masks);
     for (const { needle, encoding, bytes } of patterns) {
       if (content.includes(bytes)) {
         findings.push({ file: relative(root, file).replaceAll("\\", "/"), needle: needle.label, encoding });

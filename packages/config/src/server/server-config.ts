@@ -5,6 +5,10 @@ import { SERVER_ENV_KEYS } from "../common/server-keys.js";
 
 const AWS_REGION = /^[a-z]{2}(-gov)?-[a-z]+-[0-9]$/;
 const COGNITO_USER_POOL_ID = /^[a-z]{2}(-gov)?-[a-z]+-[0-9]_[A-Za-z0-9]+$/;
+/** Cognito app client IDs (`[\w+]+`). Public identifiers: the approved clients have no secret (ADR-003 14.2). */
+const COGNITO_CLIENT_ID = /^[\w+]{1,128}$/;
+/** The approved web and mobile clients, with room for more approved public clients without a code change. */
+const MAX_COGNITO_CLIENT_IDS = 10;
 const S3_BUCKET_NAME = /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/;
 
 const optionalText = z
@@ -126,10 +130,20 @@ function identityConfig(raw: RawServerEnv, issues: IssueCollector): IdentityConf
     case "cognito": {
       const region = issues.require("COGNITO_REGION", raw.COGNITO_REGION, AWS_REGION);
       const userPoolId = issues.require("COGNITO_USER_POOL_ID", raw.COGNITO_USER_POOL_ID, COGNITO_USER_POOL_ID);
-      if (raw.COGNITO_CLIENT_IDS.length === 0) {
-        issues.forbid("COGNITO_CLIENT_IDS", "is required for the selected provider");
+      if (region !== "" && userPoolId !== "" && !userPoolId.startsWith(`${region}_`)) {
+        issues.forbid("COGNITO_USER_POOL_ID", "must belong to COGNITO_REGION");
       }
-      return { provider: "cognito", region, userPoolId, clientIds: raw.COGNITO_CLIENT_IDS };
+      const clientIds = raw.COGNITO_CLIENT_IDS;
+      if (clientIds.length === 0) {
+        issues.forbid("COGNITO_CLIENT_IDS", "is required for the selected provider");
+      } else if (clientIds.length > MAX_COGNITO_CLIENT_IDS) {
+        issues.forbid("COGNITO_CLIENT_IDS", `lists more than ${String(MAX_COGNITO_CLIENT_IDS)} app clients`);
+      } else if (!clientIds.every((id) => COGNITO_CLIENT_ID.test(id))) {
+        issues.forbid("COGNITO_CLIENT_IDS", "has an invalid format");
+      } else if (new Set(clientIds).size !== clientIds.length) {
+        issues.forbid("COGNITO_CLIENT_IDS", "lists an app client more than once");
+      }
+      return { provider: "cognito", region, userPoolId, clientIds };
     }
     case "local":
       if (raw.TALI_ENV !== "local")

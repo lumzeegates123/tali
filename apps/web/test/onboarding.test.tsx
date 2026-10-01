@@ -1,4 +1,4 @@
-import type { PublicConfig } from "@tali/config/public";
+import type { WebPublicConfig } from "@tali/config/public";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IDEMPOTENCY_KEY_HEADER } from "../src/lib/api-client/tali-api-client";
@@ -18,9 +18,9 @@ import {
   USER,
 } from "./support/fake-tali-api";
 
-const LOCAL: PublicConfig = { env: "local", apiBaseUrl: "http://api.test" };
+const LOCAL: WebPublicConfig = { env: "local", apiBaseUrl: "http://api.test", authMode: "local" };
 
-function renderWith(api: FakeTaliApi, config: PublicConfig = LOCAL) {
+function renderWith(api: FakeTaliApi, config: WebPublicConfig = LOCAL) {
   vi.stubGlobal("fetch", api.fetch);
   return render(<OnboardingApp config={config} />);
 }
@@ -57,7 +57,7 @@ describe("signed-out view and local sign-in gating", () => {
     "offers no sign-in and calls nothing when TALI_ENV=%s",
     (env) => {
       const api = registeredUserApi();
-      renderWith(api, { env, apiBaseUrl: "https://api.example.test" });
+      renderWith(api, { env, apiBaseUrl: "https://api.example.test", authMode: "unavailable" });
       expect(screen.getByTestId("sign-in-unavailable")).toBeDefined();
       expect(screen.queryByLabelText("Local subject")).toBeNull();
       expect(api.requests).toHaveLength(0);
