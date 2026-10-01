@@ -5,7 +5,13 @@
  */
 export type { ConfigurationIssue, EnvSource, TaliEnv } from "../common/environment.js";
 export { ConfigurationError } from "../common/environment.js";
-export type { AuthMode, PublicCognitoConfig, PublicConfig, WebPublicConfig } from "./public-config.js";
+export type {
+  AuthMode,
+  MobilePublicConfig,
+  PublicCognitoConfig,
+  PublicConfig,
+  WebPublicConfig,
+} from "./public-config.js";
 export {
   loadMobilePublicConfig,
   loadWebPublicConfig,

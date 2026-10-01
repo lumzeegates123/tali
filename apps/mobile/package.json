@@ -10,11 +10,14 @@
     "test": "jest --ci"
   },
   "dependencies": {
+    "@aws-amplify/react-native": "1.3.3",
     "@expo/log-box": "57.0.4",
     "@expo/metro-runtime": "57.0.16",
+    "@react-native-async-storage/async-storage": "2.2.0",
     "@tali/config": "workspace:*",
     "@tali/domain": "workspace:*",
     "@tali/shared": "workspace:*",
+    "aws-amplify": "6.22.1",
     "expo": "57.0.25",
     "expo-build-properties": "57.0.22",
     "expo-constants": "57.0.19",
@@ -26,6 +29,7 @@
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.86.3",
+    "react-native-get-random-values": "1.11.0",
     "react-native-safe-area-context": "5.7.0",
     "react-native-screens": "4.26.2",
     "uuid": "14.0.2"

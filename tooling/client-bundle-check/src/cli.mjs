@@ -2,9 +2,11 @@
 // @ts-check
 /**
  * Client-bundle secret check (Wave C). Builds the web app and exports the
- * Android bundle with every server variable set to a canary value, then scans
- * the client-delivered output for server variable names, placeholder secrets
- * and canaries. A defence in depth: dependency boundaries and the public/server
+ * Android and iOS bundles with every server variable set to a canary value,
+ * then scans the client-delivered output for server variable names,
+ * placeholder secrets and canaries. Mobile bundles are exported twice: as
+ * JavaScript, scanned for names and values, and as Hermes bytecode, scanned
+ * for values. A defence in depth: dependency boundaries and the public/server
  * config split remain the primary protection.
  *
  * Usage:
@@ -19,7 +21,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import { canaryEnvironment, forbiddenNeedles, THIRD_PARTY_IDENTIFIERS } from "./policy.mjs";
+import { canaryEnvironment, forbiddenNeedles, forbiddenValueNeedles, THIRD_PARTY_IDENTIFIERS } from "./policy.mjs";
 import { listFiles, scanFiles } from "./scan.mjs";
 
 const root = fileURLToPath(new URL("../../..", import.meta.url));
@@ -28,6 +30,8 @@ const mobileDir = join(root, "apps/mobile");
 // The resolved public app config (including `extra`) is embedded in native
 // builds and update manifests but is not part of the `expo export` output.
 const mobilePublicConfig = join(mobileDir, ".expo/client-bundle-check/public-config.json");
+// The same Android and iOS bundles as Hermes bytecode, the form shipped in builds.
+const mobileBytecodeDir = join(mobileDir, ".expo/client-bundle-check/hermes");
 
 /** Browser-delivered web output: static chunks plus prerendered HTML and RSC payloads. */
 function webClientFiles() {
@@ -37,8 +41,9 @@ function webClientFiles() {
   return [...staticFiles, ...prerendered];
 }
 
-function mobileClientFiles() {
-  return listFiles(join(mobileDir, "dist"));
+/** @param {string} dir */
+function filesIn(dir) {
+  return existsSync(dir) ? listFiles(dir) : [];
 }
 
 /**
@@ -76,8 +81,11 @@ function build() {
     EXPO_PUBLIC_TALI_ENV: "test",
     EXPO_PUBLIC_API_BASE_URL: "http://127.0.0.1:3910",
   };
+  const platforms = ["--platform", "android", "--platform", "ios"];
   rmSync(join(mobileDir, "dist"), { recursive: true, force: true });
-  run(mobileDir, ["expo", "export", "--platform", "android", "--output-dir", "dist"], mobileEnv);
+  run(mobileDir, ["expo", "export", ...platforms, "--no-bytecode", "--output-dir", "dist"], mobileEnv);
+  rmSync(mobileBytecodeDir, { recursive: true, force: true });
+  run(mobileDir, ["expo", "export", ...platforms, "--output-dir", mobileBytecodeDir], mobileEnv);
   const publicConfig = run(mobileDir, ["expo", "config", "--type", "public", "--json"], mobileEnv, {
     captureStdout: true,
   });
@@ -87,13 +95,16 @@ function build() {
 
 if (!process.argv.includes("--scan-only")) build();
 
-const needles = forbiddenNeedles();
+const names = { needles: forbiddenNeedles(), masks: THIRD_PARTY_IDENTIFIERS };
+const values = { needles: forbiddenValueNeedles(), masks: [] };
 const targets = [
-  { name: "web (.next static and prerendered output)", files: webClientFiles() },
-  { name: "mobile (Expo Android export)", files: mobileClientFiles() },
+  { name: "web (.next static and prerendered output)", files: webClientFiles(), ...names },
+  { name: "mobile (Expo Android and iOS JavaScript export)", files: filesIn(join(mobileDir, "dist")), ...names },
+  { name: "mobile (Expo Android and iOS Hermes bytecode export)", files: filesIn(mobileBytecodeDir), ...values },
   {
     name: "mobile (public app config embedded in native builds)",
     files: existsSync(mobilePublicConfig) ? [mobilePublicConfig] : [],
+    ...names,
   },
 ];
 
@@ -104,10 +115,10 @@ for (const target of targets) {
     failed = true;
     continue;
   }
-  const findings = scanFiles(target.files, needles, root, THIRD_PARTY_IDENTIFIERS);
+  const findings = scanFiles(target.files, target.needles, root, target.masks);
   if (findings.length === 0) {
     console.log(
-      `client-bundle-check: ${target.name}: ${target.files.length} file(s), ${needles.length} forbidden needle(s), clean.`,
+      `client-bundle-check: ${target.name}: ${target.files.length} file(s), ${target.needles.length} forbidden needle(s), clean.`,
     );
   } else {
     failed = true;

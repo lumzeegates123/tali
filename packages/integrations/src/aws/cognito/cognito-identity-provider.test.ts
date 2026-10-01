@@ -252,18 +252,23 @@ describe("Cognito JWKS cache through the provider", () => {
     expect(pool.fetchCount).toBe(2);
   });
 
-  it("rate-limits repeated unknown kids to one fetch per window and never caches them", async () => {
-    await verify();
-    for (let index = 0; index < 200; index += 1) {
-      expect(await forgedKid(`forged-${String(index)}`)).toBeInstanceOf(AuthenticationError);
-    }
-    expect(pool.fetchCount).toBe(1);
-    clock.advance(60_000);
-    await Promise.all(Array.from({ length: 50 }, (_, index) => forgedKid(`burst-${String(index)}`)));
-    expect(pool.fetchCount).toBe(2);
-    await verify();
-    expect(pool.fetchCount).toBe(2);
-  });
+  // 250 RS256 signatures: CPU-bound, so it gets more time when `pnpm verify` runs every suite in parallel.
+  it(
+    "rate-limits repeated unknown kids to one fetch per window and never caches them",
+    { timeout: 20_000 },
+    async () => {
+      await verify();
+      for (let index = 0; index < 200; index += 1) {
+        expect(await forgedKid(`forged-${String(index)}`)).toBeInstanceOf(AuthenticationError);
+      }
+      expect(pool.fetchCount).toBe(1);
+      clock.advance(60_000);
+      await Promise.all(Array.from({ length: 50 }, (_, index) => forgedKid(`burst-${String(index)}`)));
+      expect(pool.fetchCount).toBe(2);
+      await verify();
+      expect(pool.fetchCount).toBe(2);
+    },
+  );
 
   for (const [name, reply] of [
     ["HTTP failure", { kind: "status", status: 500 }],

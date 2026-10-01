@@ -271,16 +271,33 @@ module.exports = {
       name: "clients-no-direct-identity-sdk",
       severity: "error",
       comment:
-        "Clients never verify JWTs and never use Amplify internals or amazon-cognito-identity-js (REFRESH_TOKEN_AUTH); web uses only the public aws-amplify package (ADR-003, Build 1 Slice 6 dependency audit).",
+        "Clients never verify JWTs and never use Amplify internals (including @aws-amplify/react-native) or amazon-cognito-identity-js (REFRESH_TOKEN_AUTH); web and mobile use only the public aws-amplify package (ADR-003, ADR-007, Build 1 Slice 6 dependency audit).",
       from: { path: "^apps/(web|mobile)/" },
       to: { path: "node_modules/(jose|@aws-amplify|amazon-cognito-identity-js)/" },
     },
     {
-      name: "mobile-no-cognito-client",
+      name: "mobile-amplify-only-in-cognito-module",
       severity: "error",
-      comment: "Mobile Cognito session persistence is blocked on ADR-007; mobile keeps Local auth only.",
-      from: { path: "^apps/mobile/" },
+      comment:
+        "aws-amplify is confined to the mobile Cognito boundary module, which installs Tali's SecureStore adapter before configuring Amplify (ADR-007 section 6.3); its test may inspect that order.",
+      from: {
+        path: "^apps/mobile/",
+        pathNot: [
+          "^apps/mobile/src/auth/cognito/amplify-cognito-auth\\.ts$",
+          "^apps/mobile/test/amplify-init-order\\.test\\.ts$",
+        ],
+      },
       to: { path: "node_modules/aws-amplify/" },
+    },
+    {
+      name: "mobile-no-amplify-runtime-peers",
+      severity: "error",
+      comment:
+        "AsyncStorage, the random-values polyfill and NetInfo are installed only for Amplify's own use; Tali code never imports them and never persists anything in AsyncStorage (ADR-007 section 6.2).",
+      from: { path: "^apps/mobile/" },
+      to: {
+        path: "node_modules/(@react-native-async-storage|react-native-get-random-values|@react-native-community/netinfo)/",
+      },
     },
     {
       name: "web-amplify-only-in-cognito-module",

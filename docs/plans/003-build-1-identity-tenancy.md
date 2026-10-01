@@ -1,8 +1,8 @@
 # Tali Build 1: identity, tenancy, roles and devices (plan)
 
 Status: **APPROVED IN PRINCIPLE (2026-09-29). Slices 0, 1, 2, 3, 4 and 5 complete. Slice 6: IN PROGRESS (server
-adapter and web Cognito client implemented; mobile Cognito client UNBLOCKED by ADR-007, accepted 2026-09-30, but not
-started).**
+adapter, web Cognito client and mobile Cognito client (ADR-007) implemented and verified in automated tests; the
+mobile client is NOT yet verified on the reference Android device, which blocks Slice 6 completion).**
 `docs/decisions/ADR-004-mutation-protocol.md` and `docs/decisions/ADR-005-identity-tenancy-authorization.md` are
 **ACCEPTED (2026-09-29)**. Slice 1 found a conflict between ADR-004 section 8.3 (Zod audit schemas) and ADR-002
 section 6 (application depends only on domain). `docs/decisions/ADR-006-audit-payload-schema-boundary.md` resolves it
@@ -28,7 +28,7 @@ payments, accounting, purchasing, AI or offline sync in this build.
 | 3 | Auth guard and `BusinessContext` resolver, P0 endpoints, `LocalIdentityProvider` in `packages/integrations` (JWT library dependency to review), API security end-to-end tests | Complete (2026-09-29; `docs/audits/build-1-slice-3.md`) |
 | 4 | Web and mobile onboarding flows for the P0 use cases | Complete (2026-09-30; `docs/audits/build-1-slice-4.md`) |
 | 5 | P1 invitations, member management and device registration and revocation, with security tests | Complete (2026-09-30; `docs/audits/build-1-slice-5.md`) |
-| 6 | Cognito JWT verification adapter with JWKS fixtures, no AWS in CI; web and mobile Cognito clients | **IN PROGRESS** (`docs/audits/build-1-slice-6.md`). Server adapter (`CognitoIdentityProvider`, JWKS cache, config, composition, API end-to-end tests): implemented. Web Cognito client (`aws-amplify` 6.22.1, SRP, memory-only tokens, refresh rotation, revoke/global sign-out): implemented. **Mobile Cognito client: UNBLOCKED; not started** (ADR-007 accepted 2026-09-30: complete Amplify session in SecureStore through the public storage interface, with the ADR-007 preconditions). Slice 6 is not complete. |
+| 6 | Cognito JWT verification adapter with JWKS fixtures, no AWS in CI; web and mobile Cognito clients | **IN PROGRESS** (`docs/audits/build-1-slice-6.md`). Server adapter (`CognitoIdentityProvider`, JWKS cache, config, composition, API end-to-end tests): implemented. Web Cognito client (`aws-amplify` 6.22.1, SRP, memory-only tokens, refresh rotation, revoke/global sign-out): implemented. Mobile Cognito client (ADR-007: complete Amplify session in SecureStore through a Tali opaque chunked adapter installed before `Amplify.configure`, nothing in AsyncStorage, SRP, restore after restart, rotation, revoke/global sign-out): implemented and verified in automated tests. **Reference Android device verification: outstanding (no device available); Slice 6 is not complete.** iOS: JavaScript export only, not native-verified. |
 
 ## 0. Conflicts and findings
 
@@ -278,8 +278,8 @@ Each slice is a separate PR. Slice 0 contains documents only and ends at a human
 
 - **Web** ([apps/web](../../apps/web)) onboarding flow:
   1. sign in (local provider when `TALI_ENV=local`; Cognito email + password with SRP in the app's own UI when
-     `NEXT_PUBLIC_AUTH_MODE=cognito`, required for deployed builds; Slice 6). Mobile stays on the local provider until
-     the mobile Cognito client (ADR-007, accepted) is implemented;
+     `NEXT_PUBLIC_AUTH_MODE=cognito`, required for deployed builds; Slice 6). Mobile uses the same Cognito flow when
+     `EXPO_PUBLIC_AUTH_MODE=cognito` (ADR-007);
   2. register a display name;
   3. create a business (name, currency chosen from the server's list, time zone);
   4. business picker;
@@ -288,9 +288,12 @@ Each slice is a separate PR. Slice 0 contains documents only and ends at a human
   7. invitations (P1): create the link, revoke, accept at `/invitations/accept`.
   - No fake dashboards or metrics.
 - **Mobile** ([apps/mobile](../../apps/mobile), Android):
-  - flow: sign in (local), register, pick or create a business, accept an invitation, see the business overview;
+  - flow: sign in (local, or Cognito email + password with SRP when `EXPO_PUBLIC_AUTH_MODE=cognito`, required for
+    deployed builds), register, pick or create a business, accept an invitation, see the business overview;
   - device registration (P1);
-  - the token and selected business are held in memory; logout clears them;
+  - the selected business is held in memory. A local token is memory-only. The Cognito session is persisted only in
+    SecureStore under `tali.cognito.v1.*` (ADR-007), never in AsyncStorage. Logout clears both and keeps the Device
+    registration;
   - no inventory, sales, camera, voice or offline features.
 - Both apps use the existing API clients and `src/lib/auth`. The web app never talks to AWS.
 
@@ -311,8 +314,8 @@ Each slice is a separate PR. Slice 0 contains documents only and ends at a human
   - `disabledUser`: a DISABLED user, created through controlled test setup (no administrative mutation exists for it);
   - `unregistered`: a verified identity with no Tali user.
 - **Add `authTime`** to `VerifiedIdentity` in [packages/application/src/ports/identity-provider.ts](../../packages/application/src/ports/identity-provider.ts), as plan 001 anticipated, for later step-up authentication.
-- **Cognito adapter (slice 6; in progress: server adapter and web client implemented, mobile client unblocked by
-  ADR-007 (accepted) but not started; contract in ADR-003 section 15; report in `docs/audits/build-1-slice-6.md`):**
+- **Cognito adapter (slice 6; in progress: server adapter, web client and mobile client implemented; mobile
+  reference-device verification outstanding; contract in ADR-003 section 15; report in `docs/audits/build-1-slice-6.md`):**
   - lives in `packages/integrations/src/aws/cognito`;
   - verification uses a cached JWKS that refreshes when it sees an unknown key ID (`kid`), allows only RS256, and checks the issuer (`https://cognito-idp.{region}.amazonaws.com/{poolId}`), `token_use=access`, that `client_id` is in `COGNITO_CLIENT_IDS`, and `exp`/`iat` with a small clock-skew allowance;
   - the Cognito `sub` becomes `provider_subject`;

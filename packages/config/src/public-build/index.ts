@@ -13,7 +13,7 @@ import {
   SERVER_ONLY_ENV_KEYS,
   TOOLING_ONLY_ENV_KEYS,
 } from "../common/server-keys.js";
-import type { PublicConfig, WebPublicConfig } from "../public/public-config.js";
+import type { MobilePublicConfig, WebPublicConfig } from "../public/public-config.js";
 import {
   loadMobilePublicConfig,
   loadWebPublicConfig,
@@ -50,7 +50,7 @@ export function validateWebBuildEnvironment(env: EnvSource): WebPublicConfig {
 }
 
 /** Build-time guard for the mobile app: no exposed secrets, then a valid public config. */
-export function validateMobileBuildEnvironment(env: EnvSource): PublicConfig {
+export function validateMobileBuildEnvironment(env: EnvSource): MobilePublicConfig {
   assertNoExposedSecrets("mobile public", env, MOBILE_PUBLIC_PREFIX);
   return loadMobilePublicConfig(env);
 }

@@ -20,7 +20,11 @@ describe("public config", () => {
       EXPO_PUBLIC_API_BASE_URL: "http://10.0.2.2:3000",
     };
     expect(loadWebPublicConfig(env)).toEqual({ env: "local", apiBaseUrl: "http://localhost:3000", authMode: "local" });
-    expect(loadMobilePublicConfig(env)).toEqual({ env: "local", apiBaseUrl: "http://10.0.2.2:3000" });
+    expect(loadMobilePublicConfig(env)).toEqual({
+      env: "local",
+      apiBaseUrl: "http://10.0.2.2:3000",
+      authMode: "local",
+    });
   });
 
   it("never reads server variables, even when present", () => {
@@ -124,17 +128,23 @@ describe("public config", () => {
       ]);
     });
 
-    it("leaves the mobile configuration shape unchanged", () => {
-      const config = loadMobilePublicConfig({
-        EXPO_PUBLIC_TALI_ENV: "staging",
-        EXPO_PUBLIC_API_BASE_URL: "https://api.example.com",
-      });
-      expect(config).toEqual({ env: "staging", apiBaseUrl: "https://api.example.com" });
+    it("requires Cognito for deployed mobile builds too (ADR-007)", () => {
+      for (const env of ["development", "staging", "production"]) {
+        expect(
+          keysOf(() =>
+            loadMobilePublicConfig({ EXPO_PUBLIC_TALI_ENV: env, EXPO_PUBLIC_API_BASE_URL: "https://api.example.com" }),
+          ),
+        ).toEqual(["EXPO_PUBLIC_AUTH_MODE"]);
+      }
+      expect(
+        loadMobilePublicConfig({ EXPO_PUBLIC_TALI_ENV: "test", EXPO_PUBLIC_API_BASE_URL: "http://10.0.2.2:3000" })
+          .authMode,
+      ).toBe("unavailable");
     });
   });
 
   it("requires the public Cognito settings together", () => {
-    const base = { EXPO_PUBLIC_TALI_ENV: "staging", EXPO_PUBLIC_API_BASE_URL: "https://api.example.com" };
+    const base = { EXPO_PUBLIC_TALI_ENV: "test", EXPO_PUBLIC_API_BASE_URL: "https://api.example.com" };
     expect(() => loadMobilePublicConfig({ ...base, EXPO_PUBLIC_COGNITO_REGION: "eu-west-1" })).toThrow(/together/);
     expect(
       loadMobilePublicConfig({

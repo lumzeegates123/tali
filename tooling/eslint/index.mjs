@@ -53,21 +53,23 @@ const VENDOR_SDK_BANS = [
   {
     regex: specifiers(["aws-amplify", "@aws-amplify/", "amazon-cognito-identity-js"]),
     message:
-      "Cognito client code lives only in apps/web/src/lib/auth/cognito (ADR-003); mobile Cognito waits for ADR-007.",
+      "Cognito client code lives only in apps/web/src/lib/auth/cognito and apps/mobile/src/auth/cognito/amplify-cognito-auth.ts (ADR-003, ADR-007).",
   },
 ];
 
 /**
- * The web Cognito module uses the public aws-amplify package through its
- * documented modular entry points only; never @aws-amplify/* internals or
+ * The web and mobile Cognito modules use the public aws-amplify package
+ * through its documented modular entry points only; never @aws-amplify/*
+ * internals (including @aws-amplify/react-native) or
  * amazon-cognito-identity-js (REFRESH_TOKEN_AUTH).
  */
-const WEB_COGNITO_VENDOR_BANS = [
+const CLIENT_COGNITO_VENDOR_BANS = [
   ...VENDOR_SDK_BANS.filter((rule) => !rule.message.startsWith("Cognito client code")),
   {
-    regex: "^(@aws-amplify/.+|amazon-cognito-identity-js(/.*)?|aws-amplify/(?!(auth|auth/cognito|utils)$).+)$",
+    regex:
+      "^(@aws-amplify/.+|amazon-cognito-identity-js(/.*)?|aws-amplify/(?!(auth|auth/cognito|utils|adapter-core)$).+)$",
     message:
-      "Use only aws-amplify, aws-amplify/auth, aws-amplify/auth/cognito and aws-amplify/utils (Build 1 Slice 6 dependency audit).",
+      "Use only aws-amplify, aws-amplify/auth, aws-amplify/auth/cognito, aws-amplify/adapter-core and aws-amplify/utils (Build 1 Slice 6 dependency audit).",
   },
 ];
 
@@ -204,6 +206,20 @@ const CLIENT_BANS = [
   {
     regex: specifiers(["@prisma/", "prisma", "pg", "postgres"]),
     message: "Clients never access a database; they call the Tali API.",
+  },
+];
+
+/** Installed only for Amplify's own use on React Native (ADR-007 section 6.2); Tali code never imports them. */
+/** @type {PatternRule[]} */
+const MOBILE_AMPLIFY_PEER_BANS = [
+  {
+    regex: specifiers([
+      "@react-native-async-storage/",
+      "react-native-get-random-values",
+      "@react-native-community/netinfo",
+    ]),
+    message:
+      "AsyncStorage, the random-values polyfill and NetInfo are Amplify's own dependencies: Tali never imports them and never persists anything in AsyncStorage (ADR-007 section 6.2).",
   },
 ];
 
@@ -515,7 +531,36 @@ export function createConfig({ tsconfigRootDir }) {
     {
       files: ["apps/web/src/lib/auth/cognito/**/*.{ts,tsx}"],
       rules: {
-        "no-restricted-imports": restrictedImports([...CLIENT_BANS, ...CLIENT_RUNTIME_BANS], WEB_COGNITO_VENDOR_BANS),
+        "no-restricted-imports": restrictedImports(
+          [...CLIENT_BANS, ...CLIENT_RUNTIME_BANS],
+          CLIENT_COGNITO_VENDOR_BANS,
+        ),
+      },
+    },
+    {
+      files: ["apps/mobile/**/*.{ts,tsx,mjs,js}"],
+      rules: {
+        "no-restricted-imports": restrictedImports([...CLIENT_BANS, ...MOBILE_AMPLIFY_PEER_BANS]),
+      },
+    },
+    {
+      files: ["apps/mobile/src/**/*.{ts,tsx}", "apps/mobile/app/**/*.{ts,tsx}"],
+      rules: {
+        "no-restricted-imports": restrictedImports([
+          ...CLIENT_BANS,
+          ...CLIENT_RUNTIME_BANS,
+          ...MOBILE_AMPLIFY_PEER_BANS,
+        ]),
+      },
+    },
+    {
+      // The single initialization boundary of ADR-007 section 6.3, and the one test that spies on its order.
+      files: ["apps/mobile/src/auth/cognito/amplify-cognito-auth.ts", "apps/mobile/test/amplify-init-order.test.ts"],
+      rules: {
+        "no-restricted-imports": restrictedImports(
+          [...CLIENT_BANS, ...CLIENT_RUNTIME_BANS, ...MOBILE_AMPLIFY_PEER_BANS],
+          CLIENT_COGNITO_VENDOR_BANS,
+        ),
       },
     },
     {

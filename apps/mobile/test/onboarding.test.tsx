@@ -1,5 +1,5 @@
 import type * as NodeCrypto from "node:crypto";
-import type { PublicConfig } from "@tali/config/public";
+import type { MobilePublicConfig } from "@tali/config/public";
 import { act, fireEvent, render, screen } from "@testing-library/react-native";
 import { IDEMPOTENCY_KEY_HEADER } from "../src/api/tali-api-client";
 import { createSessionStore, SessionProvider } from "../src/auth/session-context";
@@ -30,7 +30,7 @@ jest.mock("expo-crypto", () => ({
 // Each flow drives several screens through the React Native renderer, which exceeds Jest's 5 s default on slow CI hosts.
 jest.setTimeout(30_000);
 
-const LOCAL: PublicConfig = { env: "local", apiBaseUrl: "http://10.0.2.2:3000" };
+const LOCAL: MobilePublicConfig = { env: "local", apiBaseUrl: "http://10.0.2.2:3000", authMode: "local" };
 const originalFetch = globalThis.fetch;
 
 beforeAll(() => {
@@ -41,7 +41,7 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
-async function renderWith(api: FakeTaliApi, config: PublicConfig = LOCAL): Promise<SessionStore> {
+async function renderWith(api: FakeTaliApi, config: MobilePublicConfig = LOCAL): Promise<SessionStore> {
   globalThis.fetch = api.fetch;
   const store = createSessionStore(config);
   await render(
@@ -68,7 +68,7 @@ describe("mobile signed-out view", () => {
     "offers no sign-in and calls nothing when TALI_ENV=%s",
     async (env) => {
       const api = registeredUserApi();
-      await renderWith(api, { env, apiBaseUrl: "https://api.example.test" });
+      await renderWith(api, { env, apiBaseUrl: "https://api.example.test", authMode: "unavailable" });
       expect(screen.getByTestId("sign-in-unavailable")).toBeTruthy();
       expect(screen.queryByLabelText("Local subject")).toBeNull();
       expect(api.requests).toHaveLength(0);
@@ -200,7 +200,7 @@ describe("mobile CreateBusiness submission safety", () => {
   });
 });
 
-describe("mobile session is memory only", () => {
+describe("a local development session is memory only", () => {
   it("a new session (an app restart) starts signed out", async () => {
     const api = registeredUserApi();
     globalThis.fetch = api.fetch;

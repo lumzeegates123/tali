@@ -1,6 +1,7 @@
 import type * as NodeCrypto from "node:crypto";
 import { isUuidV7 } from "@tali/domain/kernel";
-import { IDEMPOTENCY_KEY_HEADER, TaliApiClient } from "../src/api/tali-api-client";
+import { type AccessToken, IDEMPOTENCY_KEY_HEADER, TaliApiClient } from "../src/api/tali-api-client";
+import type { AccessTokenResult, AuthSession } from "../src/auth/auth-session";
 import { SessionStore } from "../src/auth/session-store";
 import { installSecureRandom } from "../src/ids/secure-random";
 import { newUuidV7 } from "../src/ids/uuidv7";
@@ -368,5 +369,101 @@ describe("session store: sign-out and memory-only state", () => {
     await store.createBusiness(CREATE);
     const keys = api.to("POST /v1/businesses").map((request) => request.headers.get(IDEMPOTENCY_KEY_HEADER));
     expect(keys[0]).not.toBe(keys[1]);
+  });
+});
+
+describe("session store: identity-provider sessions (Cognito, ADR-007)", () => {
+  /** A scripted AuthSession: each accessToken() call takes the next answer, repeating the last. */
+  function scriptedSession(...answers: AccessTokenResult[]) {
+    const ends: { everywhere: boolean }[] = [];
+    let calls = 0;
+    const session: AuthSession = {
+      accessToken: () => {
+        const answer = answers[Math.min(calls, answers.length - 1)];
+        calls += 1;
+        return Promise.resolve(answer ?? { ok: false, reason: "ended" });
+      },
+      end: (options) => {
+        ends.push(options);
+        return Promise.resolve();
+      },
+    };
+    return { session, ends, calls: () => calls };
+  }
+  const COGNITO_TOKEN = "cognito-access-token.header.signature" as AccessToken;
+  const ok: AccessTokenResult = { ok: true, token: COGNITO_TOKEN };
+
+  it("asks the session for a token per call and never keeps it in the snapshot", async () => {
+    const api = registeredUserApi();
+    const store = storeFor(api);
+    const auth = scriptedSession(ok);
+    await store.beginSession(auth.session);
+    expect(store.getSnapshot().phase).toBe("choosingBusiness");
+    expect(api.to("GET /v1/me")[0]?.headers.get("authorization")).toBe(`Bearer ${COGNITO_TOKEN}`);
+    expect(auth.calls()).toBe(2);
+    expect(JSON.stringify(store.getSnapshot())).not.toContain(COGNITO_TOKEN);
+    expect(api.to("POST /__local/sign-in")).toEqual([]);
+  });
+
+  it("an unreachable identity provider is retryable and keeps the session", async () => {
+    const api = registeredUserApi();
+    const store = storeFor(api);
+    const auth = scriptedSession({ ok: false, reason: "unavailable" }, ok);
+    await store.beginSession(auth.session);
+    expect(store.getSnapshot()).toMatchObject({
+      phase: "error",
+      error: { action: "checkUser", failure: { kind: "unavailable" } },
+    });
+    expect(auth.ends).toEqual([]);
+    expect(api.requests).toEqual([]);
+    await store.retry();
+    expect(store.getSnapshot().phase).toBe("choosingBusiness");
+  });
+
+  it("an ended session signs out with the session-ended notice and ends the auth session", async () => {
+    const api = registeredUserApi();
+    const store = storeFor(api);
+    const auth = scriptedSession(ok, ok, { ok: false, reason: "ended" });
+    await store.beginSession(auth.session);
+    store.selectBusiness(BUSINESS_A.id);
+    const result = await store.loadBusinessOverview(BUSINESS_A.id);
+    expect(result.ok).toBe(false);
+    expect(store.getSnapshot()).toMatchObject({ phase: "signedOut", notice: "sessionEnded", user: undefined });
+    expect(auth.ends).toEqual([{ everywhere: false }]);
+  });
+
+  it("a 401 from the API ends the auth session too", async () => {
+    const api = registeredUserApi().on("GET /v1/me/businesses", apiError(401, "UNAUTHENTICATED"));
+    const store = storeFor(api);
+    const auth = scriptedSession(ok);
+    await store.beginSession(auth.session);
+    expect(store.getSnapshot()).toMatchObject({ phase: "signedOut", notice: "sessionEnded" });
+    expect(auth.ends).toEqual([{ everywhere: false }]);
+  });
+
+  it("sign-out passes 'everywhere' to the auth session and does not wait for it", async () => {
+    const api = registeredUserApi();
+    const store = storeFor(api);
+    const ends: { everywhere: boolean }[] = [];
+    await store.beginSession({
+      accessToken: () => Promise.resolve(ok),
+      end: (options) => {
+        ends.push(options);
+        return new Promise(() => undefined);
+      },
+    });
+    store.signOut({ everywhere: true });
+    expect(store.getSnapshot()).toMatchObject({ phase: "signedOut", notice: "signedOut" });
+    expect(ends).toEqual([{ everywhere: true }]);
+  });
+
+  it("ignores, and ends, a second session while one is active (staff switching goes through sign-out)", async () => {
+    const api = registeredUserApi();
+    const store = storeFor(api);
+    await store.beginSession(scriptedSession(ok).session);
+    const intruder = scriptedSession(ok);
+    await store.beginSession(intruder.session);
+    expect(intruder.ends).toEqual([{ everywhere: false }]);
+    expect(intruder.calls()).toBe(0);
   });
 });

@@ -1,8 +1,8 @@
-import type { ConfigurationIssue, EnvSource, PublicConfig } from "@tali/config/public";
+import type { ConfigurationIssue, EnvSource, MobilePublicConfig } from "@tali/config/public";
 import { ConfigurationError, loadMobilePublicConfig } from "@tali/config/public";
 
 export type MobileConfigResult =
-  | { readonly ok: true; readonly config: PublicConfig }
+  | { readonly ok: true; readonly config: MobilePublicConfig }
   | { readonly ok: false; readonly issues: readonly ConfigurationIssue[] };
 
 /**
@@ -13,6 +13,7 @@ export function publicEnvironment(): EnvSource {
   return {
     EXPO_PUBLIC_TALI_ENV: process.env.EXPO_PUBLIC_TALI_ENV,
     EXPO_PUBLIC_API_BASE_URL: process.env.EXPO_PUBLIC_API_BASE_URL,
+    EXPO_PUBLIC_AUTH_MODE: process.env.EXPO_PUBLIC_AUTH_MODE,
     EXPO_PUBLIC_COGNITO_REGION: process.env.EXPO_PUBLIC_COGNITO_REGION,
     EXPO_PUBLIC_COGNITO_USER_POOL_ID: process.env.EXPO_PUBLIC_COGNITO_USER_POOL_ID,
     EXPO_PUBLIC_COGNITO_CLIENT_ID: process.env.EXPO_PUBLIC_COGNITO_CLIENT_ID,

@@ -1,4 +1,4 @@
-import type { ConfigurationIssue, PublicConfig } from "@tali/config/public";
+import type { ConfigurationIssue, MobilePublicConfig, PublicConfig } from "@tali/config/public";
 import type { ReactNode } from "react";
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 import type { MobileConfigResult } from "../config/mobile-config";
@@ -34,7 +34,7 @@ export function AppShell({
   children,
 }: {
   readonly result: MobileConfigResult;
-  readonly children?: (config: PublicConfig) => ReactNode;
+  readonly children?: (config: MobilePublicConfig) => ReactNode;
 }) {
   return (
     <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">

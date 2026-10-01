@@ -80,6 +80,11 @@ export interface WebPublicConfig extends PublicConfig {
   readonly authMode: AuthMode;
 }
 
+/** The mobile client's configuration: the public configuration plus its resolved sign-in mode. */
+export interface MobilePublicConfig extends PublicConfig {
+  readonly authMode: AuthMode;
+}
+
 interface LoadOptions {
   /** Deployed builds of this client must use Cognito sign-in. */
   readonly requireCognitoWhenDeployed: boolean;
@@ -158,11 +163,11 @@ export function loadWebPublicConfig(env: EnvSource): WebPublicConfig {
 
 /**
  * Mobile public configuration from EXPO_PUBLIC_* variables (inlined by Expo the
- * same way). Mobile Cognito sign-in is blocked on ADR-007, so a deployed mobile
- * build is not yet required to configure it.
+ * same way). Deployed mobile builds must use Cognito (ADR-007).
  */
-export function loadMobilePublicConfig(env: EnvSource): PublicConfig {
-  return Object.freeze(
-    loadPublicConfig("mobile public", MOBILE_PUBLIC_PREFIX, env, { requireCognitoWhenDeployed: false }).config,
-  );
+export function loadMobilePublicConfig(env: EnvSource): MobilePublicConfig {
+  const { config, authMode } = loadPublicConfig("mobile public", MOBILE_PUBLIC_PREFIX, env, {
+    requireCognitoWhenDeployed: true,
+  });
+  return Object.freeze({ ...config, authMode });
 }
