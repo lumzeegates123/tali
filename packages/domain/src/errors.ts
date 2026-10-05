@@ -11,7 +11,9 @@ export type DomainErrorCode =
   /** The change would leave the business without an ACTIVE OWNER. */
   | "LAST_ACTIVE_OWNER"
   /** Granting or removing OWNER by an actor that is not an ACTIVE OWNER. */
-  | "OWNER_REQUIRED";
+  | "OWNER_REQUIRED"
+  /** The caller's expectedVersion is not the record's current version (ADR-008 section 9). */
+  | "VERSION_CONFLICT";
 
 export class DomainError extends Error {
   readonly code: DomainErrorCode;

@@ -1,4 +1,5 @@
 import { businessAuditActions } from "../modules/business/index.js";
+import { catalogAuditActions } from "../modules/catalog/index.js";
 import { deviceAuditActions } from "../modules/device/index.js";
 import { identityAuditActions } from "../modules/identity/index.js";
 import { locationAuditActions } from "../modules/location/index.js";
@@ -10,4 +11,5 @@ export const taliAuditRegistry = defineAuditRegistry([
   ...locationAuditActions,
   ...businessAuditActions,
   ...deviceAuditActions,
+  ...catalogAuditActions,
 ]);

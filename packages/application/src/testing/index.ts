@@ -2,6 +2,8 @@
  * @tali/application/testing: in-memory fakes of the application ports, for
  * tests and local composition only (ADR-002 section 11).
  */
+export type { CatalogHarness } from "./catalog-harness.js";
+export { createCatalogHarness } from "./catalog-harness.js";
 export { FailureInjection } from "./failure-injection.js";
 export { FakeFingerprintHasher } from "./fake-fingerprint-hasher.js";
 export { FakeIdentityProvider } from "./fake-identity-provider.js";
@@ -9,6 +11,7 @@ export { FakeOneTimeSecretGenerator, FakeSecretHasher } from "./fake-one-time-se
 export { FixedClock } from "./fixed-clock.js";
 export { InMemoryAuditWriter } from "./in-memory-audit-writer.js";
 export { InMemoryBusinessIdempotencyStore } from "./in-memory-business-idempotency-store.js";
+export { InMemoryCatalogStore } from "./in-memory-catalog-store.js";
 export { InMemoryObjectStorage } from "./in-memory-object-storage.js";
 export { InMemoryQueue } from "./in-memory-queue.js";
 export { InMemoryTenancyStore } from "./in-memory-tenancy-store.js";

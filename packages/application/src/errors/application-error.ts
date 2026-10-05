@@ -1,7 +1,8 @@
 /**
  * Foundational application errors. Transports map `code` to a response (for
  * example the HTTP error envelope); messages must not leak other tenants' data.
- * Build 1 codes follow ADR-005 section 13.1 (and ADR-004 section 11).
+ * Build 1 codes follow ADR-005 section 13.1 (and ADR-004 section 11);
+ * VERSION_CONFLICT is added by ADR-008 section 20.
  */
 export type ApplicationErrorCode =
   | "VALIDATION_FAILED"
@@ -17,7 +18,8 @@ export type ApplicationErrorCode =
   | "IDEMPOTENCY_KEY_REQUIRED"
   | "IDEMPOTENCY_KEY_REUSED"
   | "IDEMPOTENCY_IN_PROGRESS"
-  | "CONCURRENT_MODIFICATION";
+  | "CONCURRENT_MODIFICATION"
+  | "VERSION_CONFLICT";
 
 /** Whether a client may retry the same request unchanged (ADR-004 section 11; ADR-005 section 13.1). */
 const RETRYABLE: Readonly<Record<ApplicationErrorCode, boolean>> = {
@@ -35,6 +37,7 @@ const RETRYABLE: Readonly<Record<ApplicationErrorCode, boolean>> = {
   IDEMPOTENCY_KEY_REUSED: false,
   IDEMPOTENCY_IN_PROGRESS: true,
   CONCURRENT_MODIFICATION: true,
+  VERSION_CONFLICT: false,
 };
 
 export interface ValidationIssue {
@@ -159,5 +162,16 @@ export class IdempotencyInProgressError extends ApplicationError {
 export class ConcurrentModificationError extends ApplicationError {
   constructor(message = "The resource was modified concurrently; retry the request", options?: { cause?: unknown }) {
     super("CONCURRENT_MODIFICATION", message, options);
+  }
+}
+
+/**
+ * The caller's expectedVersion is not the record's current version: someone
+ * else changed it since the caller read it (ADR-008 sections 9 and 20). Not
+ * retryable unchanged; the client re-reads and decides again.
+ */
+export class VersionConflictError extends ApplicationError {
+  constructor(message = "The record has changed since it was read; reload and try again") {
+    super("VERSION_CONFLICT", message);
   }
 }

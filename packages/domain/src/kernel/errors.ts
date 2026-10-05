@@ -9,7 +9,13 @@ export type KernelErrorCode =
   | "INVALID_ALLOCATION"
   | "INVALID_UUID"
   | "INVALID_BUSINESS_DATE"
-  | "INVALID_TIME_ZONE";
+  | "INVALID_TIME_ZONE"
+  | "INVALID_UNIT_CODE"
+  | "INVALID_UNIT_DEFINITION"
+  | "UNIT_MISMATCH"
+  | "INVALID_QUANTITY"
+  | "QUANTITY_OUT_OF_RANGE"
+  | "QUANTITY_NOT_SERIALIZABLE";
 
 /** Raised when a kernel value-object invariant or arithmetic precondition is violated. */
 export class KernelError extends Error {

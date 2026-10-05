@@ -179,7 +179,7 @@ describe("audit actions and registry", () => {
     expect(registry.has(defineAuditAction({ ...action, fields: { flag: auditField.boolean() } }))).toBe(false);
   });
 
-  it("registers exactly the Build 1 actions (plan 003 section 12)", () => {
+  it("registers exactly the Build 1 actions (plan 003 section 12) and the Build 2 catalog actions", () => {
     expect(taliAuditRegistry.actions.map((a) => [a.name, a.stream]).sort()).toEqual([
       ["business.created", "business"],
       ["business.renamed", "business"],
@@ -194,16 +194,124 @@ describe("audit actions and registry", () => {
       ["membership.reactivated", "business"],
       ["membership.role_changed", "business"],
       ["membership.suspended", "business"],
+      ["product.archived", "business"],
+      ["product.created", "business"],
+      ["product.price_set", "business"],
+      ["product.reactivated", "business"],
+      ["product.updated", "business"],
+      ["product_category.archived", "business"],
+      ["product_category.created", "business"],
+      ["product_category.updated", "business"],
+      ["product_pack.added", "business"],
+      ["product_pack.retired", "business"],
       ["user.registered", "platform"],
     ]);
   });
 
-  it("has no registered field whose name looks sensitive, and no free-text display names", () => {
+  it("registers no inventory action in Build 2 Slice 1", () => {
+    expect(taliAuditRegistry.actions.filter((a) => a.name.startsWith("inventory."))).toEqual([]);
+  });
+
+  /**
+   * Catalog names are business data that ADR-008 section 16 requires in the
+   * payload (product, category and pack names). People's names, subjects,
+   * emails and phone numbers are never recorded.
+   */
+  const CATALOG_NAME_FIELDS = new Set([
+    "product.created.name",
+    "product.updated.fromName",
+    "product.updated.toName",
+    "product.updated.nameChanged",
+    "product_category.created.name",
+    "product_category.updated.fromName",
+    "product_category.updated.toName",
+    "product_pack.added.name",
+  ]);
+
+  it("has no registered field whose name looks sensitive, and no personal display names", () => {
     for (const registered of taliAuditRegistry.actions) {
       for (const name of Object.keys(registered.fields)) {
-        expect(SENSITIVE_FIELD_NAME.test(name), `${registered.name}.${name}`).toBe(false);
-        expect(name.toLowerCase(), `${registered.name}.${name}`).not.toMatch(/name|subject|email|phone/);
+        const qualified = `${registered.name}.${name}`;
+        expect(SENSITIVE_FIELD_NAME.test(name), qualified).toBe(false);
+        if (CATALOG_NAME_FIELDS.has(qualified)) continue;
+        expect(name.toLowerCase(), qualified).not.toMatch(/name|subject|email|phone/);
       }
     }
+  });
+
+  it("allows catalog name fields only on catalog entity types", () => {
+    for (const registered of taliAuditRegistry.actions) {
+      for (const name of Object.keys(registered.fields)) {
+        if (!CATALOG_NAME_FIELDS.has(`${registered.name}.${name}`)) continue;
+        expect(["product", "product_category", "product_pack"]).toContain(registered.entityType);
+      }
+    }
+  });
+});
+
+describe("integer-string audit field (ADR-008 section 16)", () => {
+  const unsigned = { value: auditField.integerString({ maxLength: 19, allowNegative: false }) };
+  const signed = { value: auditField.integerString({ maxLength: 17, allowNegative: true }) };
+
+  it.each(["0", "7", "1500", "9223372036854775807"])("accepts the canonical non-negative string %s", (value) => {
+    expect(validateAuditPayload(unsigned, { value })["value"]).toBe(value);
+  });
+
+  it.each(["0", "-1", "-1000000000000000", "1000000000000000"])("accepts the canonical signed string %s", (value) => {
+    expect(validateAuditPayload(signed, { value })["value"]).toBe(value);
+  });
+
+  it.each([
+    ["a negative where not allowed", unsigned, "-1"],
+    ["negative zero", signed, "-0"],
+    ["negative zero (unsigned)", unsigned, "-0"],
+    ["a plus sign", signed, "+1"],
+    ["a leading zero", unsigned, "01"],
+    ["a negative leading zero", signed, "-01"],
+    ["a decimal", unsigned, "1.5"],
+    ["an exponent", unsigned, "1e3"],
+    ["whitespace", unsigned, " 1"],
+    ["an empty string", unsigned, ""],
+    ["non-ASCII digits", unsigned, "١"],
+    ["excessive length", unsigned, "1".repeat(20)],
+    ["excessive signed length", signed, `-${"1".repeat(17)}`],
+  ] as const)("rejects %s", (_label, definition, value) => {
+    expect(() => validateAuditPayload(definition, { value })).toThrow(AuditPayloadError);
+  });
+
+  it.each([1500, 1500n, null, true])("never coerces the non-string %s", (value) => {
+    expect(() => validateAuditPayload(unsigned, { value })).toThrow(AuditPayloadError);
+  });
+
+  it("rejects unknown fields beside it", () => {
+    expect(() => validateAuditPayload(unsigned, { value: "1", other: "2" })).toThrow(/not declared/);
+  });
+
+  it("rejects invalid definitions", () => {
+    expect(() => auditField.integerString({ maxLength: 0, allowNegative: false })).toThrow(AuditPayloadError);
+    expect(() => auditField.integerString({ maxLength: 41, allowNegative: false })).toThrow(AuditPayloadError);
+    expect(() => auditField.integerString({ maxLength: 1, allowNegative: true })).toThrow(AuditPayloadError);
+    expect(() => auditField.integerString({ maxLength: 1.5, allowNegative: false })).toThrow(AuditPayloadError);
+  });
+
+  it("counts its declared worst case toward the 8 KiB limit", () => {
+    const at40 = auditField.integerString({ maxLength: 40, allowNegative: true });
+    // Braces (2) + per field: 6-character name + quotes, colon and comma (4) + 40 characters + quotes (42) = 52.
+    // 2 + 157 * 52 = 8166 fits; 2 + 158 * 52 = 8218 does not.
+    const named = (count: number) =>
+      Object.fromEntries(Array.from({ length: count }, (_, i) => [`f${String(i).padStart(5, "0")}`, at40]));
+    expect(() => {
+      validateAuditFields(named(157));
+    }).not.toThrow();
+    const exceeds = named(158);
+    expect(() => {
+      validateAuditFields(exceeds);
+    }).toThrow(/8192/);
+  });
+
+  it("is optional like any other kind", () => {
+    const definition = { value: auditField.optional(auditField.integerString({ maxLength: 3, allowNegative: false })) };
+    expect(validateAuditPayload(definition, {})).toEqual({});
+    expect(validateAuditPayload(definition, { value: "100" })["value"]).toBe("100");
   });
 });

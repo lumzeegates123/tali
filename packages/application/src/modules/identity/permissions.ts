@@ -19,8 +19,15 @@ export const identityPermissions = definePermissionCatalogue([
   "device:revoke",
 ]);
 
+/**
+ * The Build 2 catalog permissions (ADR-008 section 15). The inventory
+ * permissions of that section arrive with the inventory use cases.
+ */
+export const catalogPermissions = definePermissionCatalogue(["product:read", "product:manage", "product:price"]);
+
 const p = identityPermissions.permissions;
-const everyRole = [p["business:read"], p["location:read"], p["device:register"]];
+const c = catalogPermissions.permissions;
+const everyRole = [p["business:read"], p["location:read"], p["device:register"], c["product:read"]];
 
 /** The static, code-versioned role mapping (ADR-005 section 8). Permissions are never stored per membership. */
 export const rolePermissions: Readonly<Record<MembershipRole, readonly Permission[]>> = Object.freeze({
@@ -32,10 +39,12 @@ export const rolePermissions: Readonly<Record<MembershipRole, readonly Permissio
     p["member:manage"],
     p["device:read"],
     p["device:revoke"],
+    c["product:manage"],
+    c["product:price"],
   ]),
-  MANAGER: Object.freeze([...everyRole, p["member:read"], p["device:read"]]),
+  MANAGER: Object.freeze([...everyRole, p["member:read"], p["device:read"], c["product:manage"], c["product:price"]]),
   CASHIER: Object.freeze([...everyRole]),
-  STOCK_KEEPER: Object.freeze([...everyRole]),
+  STOCK_KEEPER: Object.freeze([...everyRole, c["product:manage"]]),
   ACCOUNTANT: Object.freeze([...everyRole]),
 });
 

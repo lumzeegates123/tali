@@ -17,6 +17,9 @@ const FIELD_NAME = /^[a-z][a-zA-Z0-9]{0,63}$/;
 const ENUM_VALUE = /^[A-Za-z0-9_.:-]{1,64}$/;
 const INSTANT = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$/;
 const MAX_STRING_LENGTH = 1000;
+const MAX_INTEGER_STRING_LENGTH = 40;
+const NON_NEGATIVE_INTEGER_STRING = /^(0|[1-9][0-9]*)$/;
+const SIGNED_INTEGER_STRING = /^(0|-?[1-9][0-9]*)$/;
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 
 interface FieldBase {
@@ -29,6 +32,7 @@ export type AuditField =
   | (FieldBase & { readonly kind: "boolean" })
   | (FieldBase & { readonly kind: "enum"; readonly values: readonly string[] })
   | (FieldBase & { readonly kind: "integer"; readonly min: number; readonly max: number })
+  | (FieldBase & { readonly kind: "integer-string"; readonly maxLength: number; readonly allowNegative: boolean })
   | (FieldBase & { readonly kind: "instant" });
 
 export type AuditFields = Readonly<Record<string, AuditField>>;
@@ -78,10 +82,35 @@ export const auditField = {
     }
     return { kind: "integer", min, max, optional: false };
   },
+  /**
+   * A canonical base-10 integer string, for bigint quantities and minor-unit
+   * amounts beyond the safe-integer range (ADR-008 section 16). At most
+   * `maxLength` characters including any "-" sign; negatives only when allowed.
+   * No "+", no leading zeros, no "-0", no decimals or exponents.
+   */
+  integerString: (options: {
+    readonly maxLength: number;
+    readonly allowNegative: boolean;
+  }): RequiredField<{
+    readonly kind: "integer-string";
+    readonly maxLength: number;
+    readonly allowNegative: boolean;
+  }> => {
+    const { maxLength, allowNegative } = options;
+    if (!Number.isSafeInteger(maxLength) || maxLength < 1 || maxLength > MAX_INTEGER_STRING_LENGTH) {
+      definitionError(`integer string maxLength must be 1 to ${MAX_INTEGER_STRING_LENGTH}`);
+    }
+    if (typeof allowNegative !== "boolean") definitionError("integer string allowNegative must be a boolean");
+    if (allowNegative && maxLength < 2) definitionError("a signed integer string needs maxLength of at least 2");
+    return { kind: "integer-string", maxLength, allowNegative, optional: false };
+  },
   /** An ISO 8601 UTC instant with milliseconds and a Z suffix. */
   instant: (): RequiredField<{ readonly kind: "instant" }> => ({ kind: "instant", optional: false }),
   /** Marks a field as optional: it may be absent (never null). */
-  optional: <F extends AuditField>(field: F): F & { readonly optional: true } => ({ ...field, optional: true }),
+  optional: <F extends AuditField>(field: F): Omit<F, "optional"> & { readonly optional: true } => ({
+    ...field,
+    optional: true,
+  }),
 } as const;
 
 type ValueOf<F> = F extends { readonly kind: "enum"; readonly values: readonly (infer V)[] }
@@ -119,6 +148,9 @@ function worstCaseValueBytes(field: AuditField): number {
       return Math.max(...field.values.map((value) => value.length)) + 2;
     case "integer":
       return Math.max(String(field.min).length, String(field.max).length);
+    case "integer-string":
+      // ASCII digits and "-" only; plus quotes.
+      return field.maxLength + 2;
     case "instant":
       return 26;
   }
@@ -182,6 +214,14 @@ function checkValue(name: string, field: AuditField, value: unknown): AuditPaylo
         value <= field.max
         ? value
         : reject(`must be an integer from ${field.min} to ${field.max}`);
+    case "integer-string":
+      return typeof value === "string" &&
+        value.length <= field.maxLength &&
+        (field.allowNegative ? SIGNED_INTEGER_STRING : NON_NEGATIVE_INTEGER_STRING).test(value)
+        ? value
+        : reject(
+            `must be a canonical ${field.allowNegative ? "" : "non-negative "}integer string of at most ${field.maxLength} characters`,
+          );
     case "instant":
       return typeof value === "string" && isValidInstant(value) ? value : reject("must be an ISO 8601 UTC instant");
   }
