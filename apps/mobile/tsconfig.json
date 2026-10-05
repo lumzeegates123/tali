@@ -3,5 +3,5 @@
   "compilerOptions": {
     "types": ["jest", "node"]
   },
-  "include": ["app", "src", "test", "app.config.ts", "expo-env.d.ts", ".expo/types/**/*.ts"]
+  "include": ["app", "src", "test", "app.config.ts"]
 }

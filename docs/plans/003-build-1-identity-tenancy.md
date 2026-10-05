@@ -1,8 +1,9 @@
 # Tali Build 1: identity, tenancy, roles and devices (plan)
 
-Status: **APPROVED IN PRINCIPLE (2026-09-29). Slices 0, 1, 2, 3, 4 and 5 complete. Slice 6: IN PROGRESS (server
-adapter, web Cognito client and mobile Cognito client (ADR-007) implemented and verified in automated tests; the
-mobile client is NOT yet verified on the reference Android device, which blocks Slice 6 completion).**
+Status: **APPROVED IN PRINCIPLE (2026-09-29). Slices 0, 1, 2, 3, 4 and 5 complete. Slice 6: COMPLETE (2026-10-05;
+server adapter, web Cognito client and mobile Cognito client (ADR-007) verified in automated tests, and the mobile
+client verified on the reference Android device with the debug APK). Build 1 Identity & Tenancy: COMPLETE
+(2026-10-05).**
 `docs/decisions/ADR-004-mutation-protocol.md` and `docs/decisions/ADR-005-identity-tenancy-authorization.md` are
 **ACCEPTED (2026-09-29)**. Slice 1 found a conflict between ADR-004 section 8.3 (Zod audit schemas) and ADR-002
 section 6 (application depends only on domain). `docs/decisions/ADR-006-audit-payload-schema-boundary.md` resolves it
@@ -12,7 +13,7 @@ report in `docs/audits/build-1-slice-1.md`. **Slice 2 is complete (2026-09-29)**
 `docs/audits/build-1-slice-3.md` (dependency added: `jose` 6.2.12 in `packages/integrations`). **Slice 4 is complete
 (2026-09-30)**; its report is in `docs/audits/build-1-slice-4.md` (no dependencies added; currency is shown as the
 approved pilot value because no currency-list endpoint exists). **Slice 5 is complete (2026-09-30)**; its report is
-in `docs/audits/build-1-slice-5.md` (dependency added: `expo-secure-store` 57.0.4 in `apps/mobile`). `docs/decisions/ADR-003-aws-foundation-topology.md` is **ACCEPTED (2026-09-30)**. The Cognito slice (Slice 6) was **UNBLOCKED** by that acceptance and is now **IN PROGRESS (2026-09-30)**: see the slice table and `docs/audits/build-1-slice-6.md`. Acceptance unblocks only the adapter work, whose tests use local JWKS fixtures; it does not mean AWS infrastructure, CDK, Cognito user pools or deployment workflows exist, that Amplify Hosting is confirmed, or that the production Region has legal approval (ADR-003 section 40). Where this
+in `docs/audits/build-1-slice-5.md` (dependency added: `expo-secure-store` 57.0.4 in `apps/mobile`). `docs/decisions/ADR-003-aws-foundation-topology.md` is **ACCEPTED (2026-09-30)**. The Cognito slice (Slice 6) was **UNBLOCKED** by that acceptance and is **COMPLETE (2026-10-05)**: see the slice table and `docs/audits/build-1-slice-6.md`. Acceptance unblocks only the adapter work, whose tests use local JWKS fixtures; it does not mean AWS infrastructure, CDK, Cognito user pools or deployment workflows exist, that Amplify Hosting is confirmed, or that the production Region has legal approval (ADR-003 section 40). Where this
 plan and an ADR differ, the ADR is authoritative (`AGENTS.md` section 4).
 
 Scope: implementation step 2 of `docs/product/mvp-scope.md` (identity / tenancy). There is no inventory, sales,
@@ -28,7 +29,7 @@ payments, accounting, purchasing, AI or offline sync in this build.
 | 3 | Auth guard and `BusinessContext` resolver, P0 endpoints, `LocalIdentityProvider` in `packages/integrations` (JWT library dependency to review), API security end-to-end tests | Complete (2026-09-29; `docs/audits/build-1-slice-3.md`) |
 | 4 | Web and mobile onboarding flows for the P0 use cases | Complete (2026-09-30; `docs/audits/build-1-slice-4.md`) |
 | 5 | P1 invitations, member management and device registration and revocation, with security tests | Complete (2026-09-30; `docs/audits/build-1-slice-5.md`) |
-| 6 | Cognito JWT verification adapter with JWKS fixtures, no AWS in CI; web and mobile Cognito clients | **IN PROGRESS** (`docs/audits/build-1-slice-6.md`). Server adapter (`CognitoIdentityProvider`, JWKS cache, config, composition, API end-to-end tests): implemented. Web Cognito client (`aws-amplify` 6.22.1, SRP, memory-only tokens, refresh rotation, revoke/global sign-out): implemented. Mobile Cognito client (ADR-007: complete Amplify session in SecureStore through a Tali opaque chunked adapter installed before `Amplify.configure`, nothing in AsyncStorage, SRP, restore after restart, rotation, revoke/global sign-out): implemented and verified in automated tests. **Reference Android device verification: outstanding (no device available); Slice 6 is not complete.** iOS: JavaScript export only, not native-verified. |
+| 6 | Cognito JWT verification adapter with JWKS fixtures, no AWS in CI; web and mobile Cognito clients | **Complete (2026-10-05; `docs/audits/build-1-slice-6.md`)**. Server adapter (`CognitoIdentityProvider`, JWKS cache, config, composition, API end-to-end tests): implemented. Web Cognito client (`aws-amplify` 6.22.1, SRP, memory-only tokens, refresh rotation, revoke/global sign-out): implemented. Mobile Cognito client (ADR-007: complete Amplify session in SecureStore through a Tali opaque chunked adapter installed before `Amplify.configure`, nothing in AsyncStorage, SRP, restore after restart, rotation, revoke/global sign-out): implemented and verified in automated tests. **Reference Android device: every ADR-007 hardware gate passed on the repaired debug APK** (release build not rebuilt; not a release-readiness claim). iOS: JavaScript export only, not native-verified. |
 
 ## 0. Conflicts and findings
 
@@ -314,8 +315,9 @@ Each slice is a separate PR. Slice 0 contains documents only and ends at a human
   - `disabledUser`: a DISABLED user, created through controlled test setup (no administrative mutation exists for it);
   - `unregistered`: a verified identity with no Tali user.
 - **Add `authTime`** to `VerifiedIdentity` in [packages/application/src/ports/identity-provider.ts](../../packages/application/src/ports/identity-provider.ts), as plan 001 anticipated, for later step-up authentication.
-- **Cognito adapter (slice 6; in progress: server adapter, web client and mobile client implemented; mobile
-  reference-device verification outstanding; contract in ADR-003 section 15; report in `docs/audits/build-1-slice-6.md`):**
+- **Cognito adapter (slice 6; complete 2026-10-05: server adapter, web client and mobile client implemented and
+  verified, including on the reference Android device; contract in ADR-003 section 15; report in
+  `docs/audits/build-1-slice-6.md`):**
   - lives in `packages/integrations/src/aws/cognito`;
   - verification uses a cached JWKS that refreshes when it sees an unknown key ID (`kid`), allows only RS256, and checks the issuer (`https://cognito-idp.{region}.amazonaws.com/{poolId}`), `token_use=access`, that `client_id` is in `COGNITO_CLIENT_IDS`, and `exp`/`iat` with a small clock-skew allowance;
   - the Cognito `sub` becomes `provider_subject`;
