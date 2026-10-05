@@ -9,12 +9,14 @@
     "start": "next start --port 3001",
     "typecheck": "next typegen && tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
-    "e2e": "playwright test"
+    "e2e": "playwright test && playwright test --config playwright.cognito.config.ts",
+    "e2e:cognito": "playwright test --config playwright.cognito.config.ts"
   },
   "dependencies": {
     "@tali/config": "workspace:*",
     "@tali/domain": "workspace:*",
     "@tali/shared": "workspace:*",
+    "aws-amplify": "6.22.1",
     "next": "16.3.6",
     "react": "19.2.3",
     "react-dom": "19.2.3",

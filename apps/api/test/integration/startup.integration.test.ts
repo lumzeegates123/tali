@@ -51,17 +51,31 @@ describe("API process startup", () => {
     expect(result.stderr).toMatch(/IDENTITY_PROVIDER/);
   });
 
-  it("fails loudly for an identity provider that is not implemented yet", async () => {
-    const result = await runApi({
+  it("refuses a deployed environment whose Cognito configuration is incomplete or invalid", async () => {
+    const deployed = {
       ...TEST_ENV,
+      TALI_ENV: "production",
       IDENTITY_PROVIDER: "cognito",
       COGNITO_REGION: "eu-west-1",
       COGNITO_USER_POOL_ID: "eu-west-1_Synthetic1",
-      COGNITO_CLIENT_IDS: "synthetic-client-id",
-    });
-    expect(result.code).toBe(1);
-    expect(result.stderr).toMatch(/API failed to start/);
-    expect(result.stderr).toMatch(/not implemented yet \(blocked on ADR-003\)/);
+      COGNITO_CLIENT_IDS: "syntheticwebclient",
+      OBJECT_STORAGE_PROVIDER: "s3",
+      S3_REGION: "eu-west-1",
+      S3_BUCKET: "tali-synthetic-bucket",
+      QUEUE_PROVIDER: "sqs",
+      SQS_REGION: "eu-west-1",
+      SQS_QUEUE_URL: "https://sqs.eu-west-1.amazonaws.com/000000000000/tali-synthetic",
+    };
+    for (const [override, key] of [
+      [{ COGNITO_USER_POOL_ID: "" }, /COGNITO_USER_POOL_ID/],
+      [{ COGNITO_CLIENT_IDS: "" }, /COGNITO_CLIENT_IDS/],
+      [{ COGNITO_USER_POOL_ID: "eu-west-2_Synthetic1" }, /COGNITO_USER_POOL_ID/],
+    ] as const) {
+      const result = await runApi({ ...deployed, ...override });
+      expect(result.code).toBe(1);
+      expect(result.stderr).toMatch(key);
+      expect(result.stdout).not.toMatch(/listening/);
+    }
   });
 
   // Readiness-based: wait (bounded) for the listening log line and a live HTTP

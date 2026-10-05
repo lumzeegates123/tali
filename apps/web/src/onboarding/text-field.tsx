@@ -8,6 +8,7 @@ export function TextField({
   error,
   disabled = false,
   autoComplete = "off",
+  type = "text",
 }: {
   readonly id: string;
   readonly label: string;
@@ -17,6 +18,7 @@ export function TextField({
   readonly error?: string | undefined;
   readonly disabled?: boolean;
   readonly autoComplete?: string;
+  readonly type?: "text" | "email" | "password";
 }) {
   const hintId = `${id}-hint`;
   const errorId = `${id}-error`;
@@ -34,7 +36,7 @@ export function TextField({
       <input
         id={id}
         name={id}
-        type="text"
+        type={type}
         value={value}
         autoComplete={autoComplete}
         spellCheck={false}

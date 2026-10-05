@@ -1,9 +1,11 @@
 "use client";
 
-import type { PublicConfig } from "@tali/config/public";
-import { useEffect, useRef, useState } from "react";
+import type { WebPublicConfig } from "@tali/config/public";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { TaliApiClient } from "../lib/api-client/tali-api-client";
-import { isLocalSignInAvailable } from "../lib/auth/local-sign-in";
+import type { CognitoAuth } from "../lib/auth/cognito-auth";
+import { lazyCognitoAuth } from "../lib/auth/cognito-auth";
+import { isCognitoSignInAvailable, isLocalSignInAvailable } from "../lib/auth/local-sign-in";
 import { SessionProvider, useSession, useSessionStore } from "../lib/auth/session-context";
 import type { SessionSnapshot } from "../lib/auth/session-store";
 import { SessionStore } from "../lib/auth/session-store";
@@ -12,31 +14,49 @@ import { takeInvitationToken } from "../lib/invitations/invitation-link";
 import { AcceptInvitationPanel } from "./accept-invitation-panel";
 import { BusinessOverviewScreen } from "./business-overview";
 import { BusinessPicker } from "./business-picker";
+import { CognitoSignIn } from "./cognito-sign-in";
 import { FailureAlert } from "./failure-alert";
 import { LocalSignInForm } from "./local-sign-in-form";
 import { RegistrationForm } from "./registration-form";
 import { LoadingState, MoveFocusContext, ScreenHeading } from "./screen-heading";
 
-function createSessionStore(config: PublicConfig): SessionStore {
+/** How a signed-out user signs in on this build. */
+type SignInMethod = { readonly kind: "local" } | { readonly kind: "cognito"; readonly auth: CognitoAuth };
+
+const SignInMethodContext = createContext<SignInMethod>({ kind: "local" });
+
+function createSessionStore(config: WebPublicConfig): SessionStore {
   const api = new TaliApiClient({ baseUrl: config.apiBaseUrl, createCorrelationId: () => crypto.randomUUID() });
   return new SessionStore({ api, newIdempotencyKey: newUuidV7 });
 }
 
+function signInMethodFor(config: WebPublicConfig, cognito: CognitoAuth | undefined): SignInMethod | undefined {
+  if (isLocalSignInAvailable(config)) return { kind: "local" };
+  if (isCognitoSignInAvailable(config) && config.cognito !== undefined) {
+    return { kind: "cognito", auth: cognito ?? lazyCognitoAuth(config.cognito) };
+  }
+  return undefined;
+}
+
 /**
- * Build 1 onboarding: local sign-in, registration, business picker or
- * creation, the business overview, and accepting an invitation link. All
- * state is in memory (a reload starts signed out); the API authorizes
- * everything.
+ * Build 1 onboarding: sign-in (local development, or Cognito in the app's
+ * own UI), registration, business picker or creation, the business overview,
+ * and accepting an invitation link. All state is in memory (a reload starts
+ * signed out); the API authorizes everything.
  */
 export function OnboardingApp({
   config,
   invitationLink = false,
+  cognito,
 }: {
-  readonly config: PublicConfig;
+  readonly config: WebPublicConfig;
   /** Rendered by the invitation page: the URL fragment may carry an invitation token. */
   readonly invitationLink?: boolean;
+  /** Tests only: a Cognito implementation to use instead of Amplify. */
+  readonly cognito?: CognitoAuth;
 }) {
   const [store] = useState(() => createSessionStore(config));
+  const [method] = useState(() => signInMethodFor(config, cognito));
   const [linkIncomplete, setLinkIncomplete] = useState(false);
   const linkRead = useRef(false);
   useEffect(() => {
@@ -51,7 +71,7 @@ export function OnboardingApp({
       This invitation link is incomplete. Ask for the full link, or a new invitation.
     </p>
   ) : null;
-  if (!isLocalSignInAvailable(config)) {
+  if (method === undefined) {
     return (
       <section aria-labelledby="sign-in-heading" className="onboarding">
         <h2 id="sign-in-heading">Sign in</h2>
@@ -60,10 +80,12 @@ export function OnboardingApp({
     );
   }
   return (
-    <SessionProvider store={store}>
-      {incompleteNotice}
-      <OnboardingScreens />
-    </SessionProvider>
+    <SignInMethodContext.Provider value={method}>
+      <SessionProvider store={store}>
+        {incompleteNotice}
+        <OnboardingScreens />
+      </SessionProvider>
+    </SignInMethodContext.Provider>
   );
 }
 
@@ -90,9 +112,11 @@ function OnboardingScreens() {
 
 function SessionBar({ session }: { readonly session: SessionSnapshot }) {
   const store = useSessionStore();
+  const method = useContext(SignInMethodContext);
+  const anonymous = method.kind === "local" ? "Local development session" : "Signed in";
   return (
     <nav aria-label="Session" className="session-bar">
-      <p>{session.user === undefined ? "Local development session" : `Signed in as ${session.user.displayName}`}</p>
+      <p>{session.user === undefined ? anonymous : `Signed in as ${session.user.displayName}`}</p>
       <button
         type="button"
         className="secondary"
@@ -102,15 +126,27 @@ function SessionBar({ session }: { readonly session: SessionSnapshot }) {
       >
         Sign out
       </button>
+      {method.kind === "cognito" ? (
+        <button
+          type="button"
+          className="secondary"
+          onClick={() => {
+            store.signOut({ everywhere: true });
+          }}
+        >
+          Sign out on all devices
+        </button>
+      ) : null}
     </nav>
   );
 }
 
 function Screen({ session }: { readonly session: SessionSnapshot }) {
   const store = useSessionStore();
+  const method = useContext(SignInMethodContext);
   switch (session.phase) {
     case "signedOut":
-      return <LocalSignInForm />;
+      return method.kind === "local" ? <LocalSignInForm /> : <CognitoSignIn auth={method.auth} />;
     case "signingIn":
       return (
         <section aria-labelledby="signing-in-heading" className="onboarding">

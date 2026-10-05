@@ -1,4 +1,4 @@
-import type { PublicConfig } from "@tali/config/public";
+import type { WebPublicConfig } from "@tali/config/public";
 import { isUuidV7 } from "@tali/domain/kernel";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -19,7 +19,7 @@ import {
   settle,
 } from "./support/fake-tali-api";
 
-const LOCAL: PublicConfig = { env: "local", apiBaseUrl: "http://api.test" };
+const LOCAL: WebPublicConfig = { env: "local", apiBaseUrl: "http://api.test", authMode: "local" };
 /** Synthetic, low-entropy stand-in for a one-time invitation token. */
 const INVITATION_TOKEN = `tali_inv_${"x".repeat(43)}`;
 const INVITATION = {

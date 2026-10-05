@@ -2,7 +2,14 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { canaryEnvironment, canaryValue, CANARY_PREFIX, forbiddenNeedles } from "./policy.mjs";
+import {
+  canaryEnvironment,
+  canaryValue,
+  CANARY_PREFIX,
+  forbiddenNeedles,
+  forbiddenValueNeedles,
+  THIRD_PARTY_IDENTIFIERS,
+} from "./policy.mjs";
 import { listFiles, scanFiles } from "./scan.mjs";
 
 const dirs: string[] = [];
@@ -55,6 +62,60 @@ describe("client-bundle scan", () => {
       "chunk.js": 'const e={NEXT_PUBLIC_API_BASE_URL:"http://127.0.0.1:3910",EXPO_PUBLIC_TALI_ENV:"test"};',
     });
     expect(scanFiles(listFiles(dir), forbiddenNeedles(), dir)).toEqual([]);
+  });
+
+  it("ignores only aws-amplify's own LOG_LEVEL properties, never a Tali server variable", () => {
+    const amplify = fixture({
+      "chunk.js": "m.LOG_LEVEL&&(n=m.LOG_LEVEL),window.LOG_LEVEL&&(n=window.LOG_LEVEL);m.BIND_ALL_LOG_LEVELS=!1;",
+    });
+    expect(scanFiles(listFiles(amplify), forbiddenNeedles(), amplify, THIRD_PARTY_IDENTIFIERS)).toEqual([]);
+
+    for (const leak of [
+      'const k="LOG_LEVEL";',
+      "const c={LOG_LEVEL:1};",
+      "const l=process.env.LOG_LEVEL;",
+      `m.LOG_LEVEL="${canaryValue("LOG_LEVEL")}";`,
+    ]) {
+      const dir = fixture({ "chunk.js": leak });
+      expect(scanFiles(listFiles(dir), forbiddenNeedles(), dir, THIRD_PARTY_IDENTIFIERS)).not.toEqual([]);
+      // Next to the masked Amplify forms, in the same file, the leak is still found.
+      const mixed = fixture({ "chunk.js": `m.LOG_LEVEL&&(n=m.LOG_LEVEL);${leak}m.BIND_ALL_LOG_LEVELS=!1;` });
+      expect(scanFiles(listFiles(mixed), forbiddenNeedles(), mixed, THIRD_PARTY_IDENTIFIERS)).not.toEqual([]);
+    }
+  });
+
+  it("ignores only aws-amplify's Cognito service-name exports, never a Tali SERVICE_NAME", () => {
+    const amplify = fixture({
+      "chunk.js":
+        "e.COGNITO_IDP_SERVICE_NAME=void 0;e.COGNITO_IDENTITY_SERVICE_NAME='cognito-identity';{service:E.COGNITO_IDP_SERVICE_NAME}",
+    });
+    expect(scanFiles(listFiles(amplify), forbiddenNeedles(), amplify, THIRD_PARTY_IDENTIFIERS)).toEqual([]);
+
+    for (const leak of [
+      'const k="SERVICE_NAME";',
+      "const c={SERVICE_NAME:1};",
+      "const l=process.env.SERVICE_NAME;",
+      "e.SERVICE_NAME=1;",
+      "e.COGNITO_IDP_SERVICE_NAMES=1;",
+      `e.COGNITO_IDP_SERVICE_NAME="${canaryValue("SERVICE_NAME")}";`,
+    ]) {
+      const dir = fixture({ "chunk.js": leak });
+      expect(scanFiles(listFiles(dir), forbiddenNeedles(), dir, THIRD_PARTY_IDENTIFIERS)).not.toEqual([]);
+      const mixed = fixture({
+        "chunk.js": `e.COGNITO_IDP_SERVICE_NAME=void 0;${leak}e.COGNITO_IDENTITY_SERVICE_NAME=1;`,
+      });
+      expect(scanFiles(listFiles(mixed), forbiddenNeedles(), mixed, THIRD_PARTY_IDENTIFIERS)).not.toEqual([]);
+    }
+  });
+
+  it("scans bytecode for values only, so name masks never apply to shared Hermes string bytes", () => {
+    const values = forbiddenValueNeedles().map((needle) => needle.label);
+    expect(values).toEqual(expect.arrayContaining(["canary value", "placeholder secret local-only-app"]));
+    expect(values.some((label) => label.startsWith("server variable name"))).toBe(false);
+    const dir = fixture({ "entry.hbc": `BIND_ALL_LOG_LEVELS${canaryValue("LOG_LEVEL")}` });
+    expect(scanFiles(listFiles(dir), forbiddenValueNeedles(), dir).map((finding) => finding.needle)).toEqual([
+      "canary value",
+    ]);
   });
 
   it("injects a canary into every forbidden server variable", () => {

@@ -4,6 +4,7 @@ import type { Clock, IdentityProvider, IdGenerator } from "@tali/application";
 import { FakeIdentityProvider, FixedClock } from "@tali/application/testing";
 import { loadServerConfig, type ServerConfig } from "@tali/config/server";
 import type { Database } from "@tali/database";
+import type { JwksFetch } from "@tali/integrations/aws/cognito";
 import { testDatabaseUrls } from "@tali/database/testing";
 import { createApiApplication } from "../../src/bootstrap.js";
 import { createApiRuntime, type ApiRuntime } from "../../src/composition/api-runtime.js";
@@ -37,6 +38,8 @@ export async function startApi(
     readonly composeIdentity?: boolean;
     readonly clock?: Clock;
     readonly ids?: IdGenerator;
+    /** With composeIdentity and IDENTITY_PROVIDER=cognito: the synthetic pool's JWKS. */
+    readonly cognitoJwksFetch?: JwksFetch;
   } = {},
 ): Promise<ApiHarness> {
   const config = options.config ?? loadServerConfig({ ...TEST_ENV, ...options.env });
@@ -53,6 +56,7 @@ export async function startApi(
     ...(options.database === undefined ? {} : { database: options.database }),
     ...(options.clock === undefined ? {} : { clock: options.clock }),
     ...(options.ids === undefined ? {} : { ids: options.ids }),
+    ...(options.cognitoJwksFetch === undefined ? {} : { cognitoJwksFetch: options.cognitoJwksFetch }),
   });
   const app = await createApiApplication(runtime);
   await app.init();

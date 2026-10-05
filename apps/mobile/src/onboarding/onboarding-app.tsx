@@ -1,22 +1,49 @@
-import type { PublicConfig } from "@tali/config/public";
+import type { MobilePublicConfig } from "@tali/config/public";
+import { useEffect, useRef, useState } from "react";
 import { Text, View } from "react-native";
-import { isLocalSignInAvailable } from "../auth/local-sign-in";
+import type { CognitoAuth } from "../auth/cognito-auth";
+import { lazyCognitoAuth } from "../auth/cognito-auth";
+import { isCognitoSignInAvailable, isLocalSignInAvailable } from "../auth/local-sign-in";
 import { useSession, useSessionStore } from "../auth/session-context";
 import type { SessionSnapshot } from "../auth/session-store";
 import { BusinessOverviewScreen, BusinessPickerScreen } from "./business-screens";
+import { CognitoSignIn } from "./cognito-sign-in";
 import { LocalSignInScreen, RegistrationScreen } from "./sign-in-screens";
 import { AcceptInvitationPanel } from "./team-screens";
 import { Button, FailureNotice, Heading, Loading, styles } from "./ui";
 
+/** How a signed-out user signs in on this build. */
+type SignInMethod = { readonly kind: "local" } | { readonly kind: "cognito"; readonly auth: CognitoAuth };
+
+/** The stored Cognito session (ADR-007) at app start: being read, unreachable, or settled. */
+type Restoration = "restoring" | "unavailable" | "settled";
+
+function signInMethodFor(config: MobilePublicConfig, cognito: CognitoAuth | undefined): SignInMethod | undefined {
+  if (isLocalSignInAvailable(config)) return { kind: "local" };
+  if (isCognitoSignInAvailable(config) && config.cognito !== undefined) {
+    return { kind: "cognito", auth: cognito ?? lazyCognitoAuth(config.cognito) };
+  }
+  return undefined;
+}
+
 /**
- * Build 1 Android onboarding: local sign-in, registration, business picker
- * or creation, joining a business by invitation, the business overview and
- * this device's registration. The session is in memory only (an app restart
- * starts signed out); only device registrations are kept, in the keystore.
- * The API authorizes everything.
+ * Build 1 Android onboarding: sign-in (local development, or Cognito in the
+ * app's own UI), registration, business picker or creation, joining a
+ * business by invitation, the business overview and this device's
+ * registration. A Cognito session is kept in the platform keystore (ADR-007) and
+ * restored at start; a local development session is memory only. Device
+ * registrations are kept in the keystore. The API authorizes everything.
  */
-export function OnboardingApp({ config }: { readonly config: PublicConfig }) {
-  if (!isLocalSignInAvailable(config)) {
+export function OnboardingApp({
+  config,
+  cognito,
+}: {
+  readonly config: MobilePublicConfig;
+  /** Tests only: a Cognito implementation to use instead of Amplify. */
+  readonly cognito?: CognitoAuth;
+}) {
+  const [method] = useState(() => signInMethodFor(config, cognito));
+  if (method === undefined) {
     return (
       <View style={styles.screen}>
         <Heading>Sign in</Heading>
@@ -24,25 +51,80 @@ export function OnboardingApp({ config }: { readonly config: PublicConfig }) {
       </View>
     );
   }
-  return <OnboardingScreens />;
+  return <OnboardingScreens method={method} />;
 }
 
-function OnboardingScreens() {
+function OnboardingScreens({ method }: { readonly method: SignInMethod }) {
   const session = useSession();
+  const store = useSessionStore();
+  const [restoration, setRestoration] = useState<Restoration>(method.kind === "cognito" ? "restoring" : "settled");
+  const started = useRef(false);
+
+  async function restore(auth: CognitoAuth) {
+    setRestoration("restoring");
+    const result = await auth.restore().catch(() => ({ status: "unavailable" }) as const);
+    if (result.status === "signedIn") {
+      setRestoration("settled");
+      await store.beginSession(result.session);
+      return;
+    }
+    setRestoration(result.status === "unavailable" ? "unavailable" : "settled");
+  }
+
+  useEffect(() => {
+    if (method.kind !== "cognito" || started.current) return;
+    started.current = true;
+    if (store.getSnapshot().phase !== "signedOut") {
+      setRestoration("settled");
+      return;
+    }
+    void restore(method.auth);
+    // Runs once per mount: restoration happens at app start, not on every render.
+  }, []);
+
+  if (session.phase === "signedOut" && method.kind === "cognito" && restoration !== "settled") {
+    return restoration === "restoring" ? (
+      <View style={styles.screen}>
+        <Heading>Sign in</Heading>
+        <Loading label="Restoring your session…" />
+      </View>
+    ) : (
+      <View style={styles.screen}>
+        <Heading>Sign in</Heading>
+        <Text style={styles.alert} accessibilityRole="alert" testID="restore-unavailable">
+          Tali could not reach the sign-in service to restore your session. Check your connection and try again.
+        </Text>
+        <Button label="Try again" onPress={() => void restore(method.auth)} />
+        <Button
+          label="Sign out"
+          onPress={() => {
+            void method.auth.forgetStoredSession().finally(() => {
+              setRestoration("settled");
+            });
+          }}
+          secondary
+        />
+      </View>
+    );
+  }
   return (
     <View>
-      {session.phase === "signedOut" ? null : <SessionBar session={session} />}
-      <Screen session={session} />
+      {session.phase === "signedOut" ? null : <SessionBar session={session} method={method} />}
+      <Screen session={session} method={method} />
     </View>
   );
 }
 
-function SessionBar({ session }: { readonly session: SessionSnapshot }) {
+function SessionBar({ session, method }: { readonly session: SessionSnapshot; readonly method: SignInMethod }) {
   const store = useSessionStore();
   return (
-    <View style={[styles.row, { justifyContent: "space-between", paddingVertical: 8 }]}>
+    <View style={[styles.row, { justifyContent: "space-between", flexWrap: "wrap", paddingVertical: 8 }]}>
       <Text>
-        {session.user === undefined ? "Local development session" : `Signed in as ${session.user.displayName}`}
+        {session.user === undefined
+          ? method.kind === "local"
+            ? "Local development session"
+            : "Signed in"
+          : `Signed in as ${session.user.displayName}`}
       </Text>
       <Button
         label="Sign out"
@@ -51,15 +133,24 @@ function SessionBar({ session }: { readonly session: SessionSnapshot }) {
         }}
         secondary
       />
+      {method.kind === "cognito" ? (
+        <Button
+          label="Sign out on all devices"
+          onPress={() => {
+            store.signOut({ everywhere: true });
+          }}
+          secondary
+        />
+      ) : null}
     </View>
   );
 }
 
-function Screen({ session }: { readonly session: SessionSnapshot }) {
+function Screen({ session, method }: { readonly session: SessionSnapshot; readonly method: SignInMethod }) {
   const store = useSessionStore();
   switch (session.phase) {
     case "signedOut":
-      return <LocalSignInScreen />;
+      return method.kind === "local" ? <LocalSignInScreen /> : <CognitoSignIn auth={method.auth} />;
     case "signingIn":
       return (
         <View style={styles.screen}>

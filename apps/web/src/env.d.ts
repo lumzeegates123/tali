@@ -4,6 +4,7 @@ declare namespace NodeJS {
   interface ProcessEnv {
     readonly NEXT_PUBLIC_TALI_ENV?: string;
     readonly NEXT_PUBLIC_API_BASE_URL?: string;
+    readonly NEXT_PUBLIC_AUTH_MODE?: string;
     readonly NEXT_PUBLIC_COGNITO_REGION?: string;
     readonly NEXT_PUBLIC_COGNITO_USER_POOL_ID?: string;
     readonly NEXT_PUBLIC_COGNITO_CLIENT_ID?: string;

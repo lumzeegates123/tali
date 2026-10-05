@@ -20,14 +20,16 @@ import {
   type DeviceRegistration,
   noDeviceCredentialStore,
 } from "../devices/device-credential-store";
+import { type AuthSession, staticAuthSession } from "./auth-session";
 
 /**
- * Build 1 client session (plan 003 section 7): the access token, the current
- * user, the loaded businesses and the selected business live in this object's
- * memory only, so an app restart intentionally loses the session. The one
- * exception is a device registration (Slice 5): its device ID and credential
- * are kept per business in the device credential store (the platform
- * keystore) and survive sign-out and restarts. The Tali API stays
+ * Build 1 client session (plan 003 section 7): the current user, the loaded
+ * businesses and the selected business live in this object's memory only.
+ * Access tokens come from the auth session per call and are never kept here.
+ * A Cognito auth session persists on its own (ADR-007, `tali.cognito.v1.*`);
+ * a local development session does not. A device registration (Slice 5) is
+ * kept per business in the device credential store (the platform keystore)
+ * and survives sign-out and restarts. The Tali API stays
  * authoritative: the store never decides permissions, tenancy or idempotency
  * outcomes; it only reacts to the API's responses.
  */
@@ -172,6 +174,23 @@ function isApiError(failure: ApiFailure, code: string): boolean {
   return failure.kind === "api-error" && failure.code === code;
 }
 
+/** A session that can no longer produce an access token is handled exactly like a 401 from the API. */
+const SESSION_ENDED: { readonly ok: false; readonly failure: ApiFailure } = Object.freeze({
+  ok: false,
+  failure: Object.freeze({
+    kind: "api-error",
+    status: 401,
+    code: "UNAUTHENTICATED",
+    message: "Session ended",
+    correlationId: undefined,
+    fields: Object.freeze([]),
+  }),
+});
+const PROVIDER_UNAVAILABLE: { readonly ok: false; readonly failure: ApiFailure } = Object.freeze({
+  ok: false,
+  failure: Object.freeze({ kind: "unavailable", reason: "network" }),
+});
+
 function sameCommand(left: CreateBusinessRequest, right: CreateBusinessRequest): boolean {
   return left.name === right.name && left.currencyCode === right.currencyCode && left.timeZone === right.timeZone;
 }
@@ -181,7 +200,7 @@ export class SessionStore {
   readonly #newIdempotencyKey: () => string;
   readonly #listeners = new Set<() => void>();
   #snapshot: SessionSnapshot = SIGNED_OUT;
-  #token: AccessToken | undefined;
+  #auth: AuthSession | undefined;
   /** Incremented whenever the session is replaced or cleared; late responses from an older session are dropped. */
   #epoch = 0;
   #createAttempt: CreateAttempt | undefined;
@@ -222,26 +241,44 @@ export class SessionStore {
       this.#set({ ...SIGNED_OUT, error: { action: "signIn", failure: result.failure } });
       return;
     }
-    this.#token = result.value.accessToken as AccessToken;
+    this.#auth = staticAuthSession(result.value.accessToken as AccessToken);
+    await this.#checkUser(epoch);
+  }
+
+  /**
+   * Starts a session the identity provider has already authenticated (Cognito
+   * SRP sign-in in this app's UI, or a session restored from this device),
+   * then `GET /v1/me`. Ignored, and the given session ended, unless signed out.
+   */
+  async beginSession(auth: AuthSession): Promise<void> {
+    if (this.#snapshot.phase !== "signedOut" || this.#snapshot.pending !== undefined) {
+      void auth.end({ everywhere: false });
+      return;
+    }
+    const epoch = this.#reset();
+    this.#auth = auth;
     await this.#checkUser(epoch);
   }
 
   /** Repeats the step that failed (checking the user or loading businesses) with the same session. */
   async retry(): Promise<void> {
     const { phase, error } = this.#snapshot;
-    if (phase !== "error" || error === undefined || this.#token === undefined) return;
+    if (phase !== "error" || error === undefined || this.#auth === undefined) return;
     if (error.action === "checkUser") await this.#checkUser(this.#epoch);
     if (error.action === "loadBusinesses") await this.#loadBusinesses(this.#epoch, undefined);
   }
 
   async register(displayName: string): Promise<void> {
-    const token = this.#token;
-    if (token === undefined || this.#snapshot.phase !== "needsRegistration" || this.#snapshot.pending !== undefined) {
+    if (
+      this.#auth === undefined ||
+      this.#snapshot.phase !== "needsRegistration" ||
+      this.#snapshot.pending !== undefined
+    ) {
       return;
     }
     const epoch = this.#epoch;
     this.#patch({ pending: "register", error: undefined });
-    const result = await this.#api.registerCurrentUser(token, displayName);
+    const result = await this.#withToken((token) => this.#api.registerCurrentUser(token, displayName));
     if (epoch !== this.#epoch) return;
     if (!result.ok) {
       if (this.#applySessionEffects(result.failure)) return;
@@ -253,14 +290,20 @@ export class SessionStore {
   }
 
   async loadMoreBusinesses(): Promise<void> {
-    const token = this.#token;
     const { phase, businessesNextCursor, pending } = this.#snapshot;
-    if (token === undefined || phase !== "choosingBusiness" || businessesNextCursor === null || pending !== undefined) {
+    if (
+      this.#auth === undefined ||
+      phase !== "choosingBusiness" ||
+      businessesNextCursor === null ||
+      pending !== undefined
+    ) {
       return;
     }
     const epoch = this.#epoch;
     this.#patch({ pending: "loadMoreBusinesses", error: undefined });
-    const result = await this.#api.listMyBusinesses(token, { limit: BUSINESS_PAGE_SIZE, after: businessesNextCursor });
+    const result = await this.#withToken((token) =>
+      this.#api.listMyBusinesses(token, { limit: BUSINESS_PAGE_SIZE, after: businessesNextCursor }),
+    );
     if (epoch !== this.#epoch) return;
     if (!result.ok) {
       if (this.#applySessionEffects(result.failure)) return;
@@ -276,7 +319,7 @@ export class SessionStore {
 
   /** Selects one of the businesses the API returned; any other ID is ignored. */
   selectBusiness(businessId: string): void {
-    if (this.#token === undefined) return;
+    if (this.#auth === undefined) return;
     if (!this.#snapshot.businesses.some((item) => item.business.id === businessId)) return;
     this.#patch({ phase: "businessSelected", selectedBusinessId: businessId, error: undefined, notice: undefined });
     if (this.#deviceSupported) this.#deviceLoad = this.#loadDevice(this.#epoch, businessId);
@@ -296,8 +339,7 @@ export class SessionStore {
    * A submission while another is in flight is ignored.
    */
   async createBusiness(input: CreateBusinessRequest): Promise<CreateBusinessOutcome> {
-    const token = this.#token;
-    if (token === undefined || this.#createInFlight || this.#snapshot.phase !== "choosingBusiness") {
+    if (this.#auth === undefined || this.#createInFlight || this.#snapshot.phase !== "choosingBusiness") {
       return { status: "ignored" };
     }
     const parsed = CreateBusinessRequestSchema.safeParse({
@@ -323,7 +365,7 @@ export class SessionStore {
     this.#patch({ pending: "createBusiness", error: undefined });
     let result;
     try {
-      result = await this.#api.createBusiness(token, attempt.command, attempt.key);
+      result = await this.#withToken((token) => this.#api.createBusiness(token, attempt.command, attempt.key));
     } finally {
       this.#createInFlight = false;
     }
@@ -341,7 +383,9 @@ export class SessionStore {
       business: result.value.business,
       membership: { id: result.value.membership.id, role: result.value.membership.role },
     };
-    const refreshed = await this.#api.listMyBusinesses(token, { limit: BUSINESS_PAGE_SIZE });
+    const refreshed = await this.#withToken((token) =>
+      this.#api.listMyBusinesses(token, { limit: BUSINESS_PAGE_SIZE }),
+    );
     if (epoch !== this.#epoch) return { status: "ignored" };
     const base = refreshed.ok ? refreshed.value.items : this.#snapshot.businesses;
     const businesses = base.some((item) => item.business.id === created.business.id) ? base : [...base, created];
@@ -399,10 +443,9 @@ export class SessionStore {
    * kept anywhere else.
    */
   async registerDevice(label: string): Promise<RegisterDeviceOutcome> {
-    const token = this.#token;
     const businessId = this.#snapshot.selectedBusinessId;
     const { device, pending } = this.#snapshot;
-    if (!this.#deviceSupported || token === undefined || businessId === undefined || pending !== undefined) {
+    if (!this.#deviceSupported || this.#auth === undefined || businessId === undefined || pending !== undefined) {
       return { status: "ignored" };
     }
     if (device !== "unregistered" && device !== "untrusted") return { status: "ignored" };
@@ -416,7 +459,9 @@ export class SessionStore {
     this.#registerAttempt = attempt;
     const epoch = this.#epoch;
     this.#patch({ pending: "registerDevice" });
-    const result = await this.#api.registerDevice(token, businessId, attempt.label, attempt.key);
+    const result = await this.#withToken((token) =>
+      this.#api.registerDevice(token, businessId, attempt.label, attempt.key),
+    );
     if (epoch !== this.#epoch) return { status: "ignored" };
     if (!result.ok) {
       if (isApiError(result.failure, "IDEMPOTENCY_KEY_REUSED")) this.#registerAttempt = undefined;
@@ -448,15 +493,14 @@ export class SessionStore {
    * business appears in the picker. The token is not kept after the call.
    */
   async acceptInvitation(input: string): Promise<AcceptInvitationOutcome> {
-    const token = this.#token;
     const { phase, pending } = this.#snapshot;
-    if (token === undefined || pending !== undefined) return { status: "ignored" };
+    if (this.#auth === undefined || pending !== undefined) return { status: "ignored" };
     if (phase !== "choosingBusiness" && phase !== "businessSelected") return { status: "ignored" };
     const invitationToken = parseInvitationInput(input);
     if (invitationToken === undefined) return { status: "invalid" };
     const epoch = this.#epoch;
     this.#patch({ pending: "acceptInvitation", error: undefined, notice: undefined });
-    const result = await this.#api.acceptInvitation(token, invitationToken);
+    const result = await this.#withToken((token) => this.#api.acceptInvitation(token, invitationToken));
     if (epoch !== this.#epoch) return { status: "ignored" };
     if (!result.ok) {
       if (this.#applySessionEffects(result.failure)) return { status: "failed", failure: result.failure };
@@ -469,14 +513,25 @@ export class SessionStore {
   }
 
   /**
-   * Clears the token, user, businesses, selection and any pending idempotency
-   * key. Device registrations stay in the device credential store: they
-   * belong to the device and business, and are used again only after a
-   * member of that business signs in.
+   * Clears the auth session, user, businesses, selection and any pending
+   * idempotency key. The auth session revokes its refresh token (or signs out
+   * on all devices when `everywhere`) and clears its stored state without
+   * blocking this call. Device registrations stay in the device credential
+   * store: they belong to the device and business, and are used again only
+   * after a member of that business signs in.
    */
-  signOut(): void {
-    this.#reset();
+  signOut(options: { readonly everywhere: boolean } = { everywhere: false }): void {
+    this.#reset(options);
     this.#set({ ...SIGNED_OUT, notice: "signedOut" });
+  }
+
+  /** Runs one API call with a current access token; the token is never kept by the store. */
+  async #withToken<T>(call: (token: AccessToken) => Promise<ApiResult<T>>): Promise<ApiResult<T>> {
+    const auth = this.#auth;
+    if (auth === undefined) return SESSION_ENDED;
+    const current = await auth.accessToken();
+    if (!current.ok) return current.reason === "ended" ? SESSION_ENDED : PROVIDER_UNAVAILABLE;
+    return call(current.token);
   }
 
   async #loadDevice(epoch: number, businessId: string): Promise<void> {
@@ -511,10 +566,9 @@ export class SessionStore {
   }
 
   async #checkUser(epoch: number): Promise<void> {
-    const token = this.#token;
-    if (token === undefined) return;
+    if (this.#auth === undefined) return;
     this.#set({ ...SIGNED_OUT, phase: "signingIn", pending: "checkUser" });
-    const result = await this.#api.getCurrentUser(token);
+    const result = await this.#withToken((token) => this.#api.getCurrentUser(token));
     if (epoch !== this.#epoch) return;
     if (!result.ok) {
       if (this.#applySessionEffects(result.failure)) return;
@@ -526,8 +580,7 @@ export class SessionStore {
   }
 
   async #loadBusinesses(epoch: number, notice: SessionNotice | undefined): Promise<void> {
-    const token = this.#token;
-    if (token === undefined) return;
+    if (this.#auth === undefined) return;
     this.#patch({
       phase: "loadingBusinesses",
       pending: undefined,
@@ -537,7 +590,7 @@ export class SessionStore {
       businessesNextCursor: null,
       selectedBusinessId: undefined,
     });
-    const result = await this.#api.listMyBusinesses(token, { limit: BUSINESS_PAGE_SIZE });
+    const result = await this.#withToken((token) => this.#api.listMyBusinesses(token, { limit: BUSINESS_PAGE_SIZE }));
     if (epoch !== this.#epoch) return;
     if (!result.ok) {
       if (this.#applySessionEffects(result.failure)) return;
@@ -560,13 +613,18 @@ export class SessionStore {
     businessId: string,
     read: (token: AccessToken, device: DeviceHeaders | undefined) => Promise<ApiResult<T> | "missing-default-location">,
   ): Promise<ResourceResult<T>> {
-    const token = this.#token;
-    if (token === undefined) return { ok: false, failure: { kind: "unavailable", reason: "network" } };
+    const auth = this.#auth;
+    if (auth === undefined) return { ok: false, failure: { kind: "unavailable", reason: "network" } };
     const epoch = this.#epoch;
     if (this.#deviceLoad !== undefined) await this.#deviceLoad;
     if (epoch !== this.#epoch) return { ok: false, failure: { kind: "unavailable", reason: "network" } };
     const device = this.#device?.businessId === businessId ? this.#device.registration : undefined;
-    const result = await read(token, device);
+    const current = await auth.accessToken();
+    const result = current.ok
+      ? await read(current.token, device)
+      : current.reason === "ended"
+        ? SESSION_ENDED
+        : PROVIDER_UNAVAILABLE;
     if (result === "missing-default-location") return { ok: false, failure: { kind: result } };
     if (result.ok) return { ok: true, value: result.value };
     if (device !== undefined && isApiError(result.failure, "DEVICE_NOT_TRUSTED")) {
@@ -607,8 +665,11 @@ export class SessionStore {
     return false;
   }
 
-  #reset(): number {
-    this.#token = undefined;
+  /** Ends any current auth session (revocation is best-effort and never awaited) and invalidates late responses. */
+  #reset(options: { readonly everywhere: boolean } = { everywhere: false }): number {
+    const ended = this.#auth;
+    this.#auth = undefined;
+    if (ended !== undefined) void ended.end(options);
     this.#createAttempt = undefined;
     this.#createInFlight = false;
     this.#registerAttempt = undefined;

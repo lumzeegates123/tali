@@ -1,5 +1,5 @@
 import type * as NodeCrypto from "node:crypto";
-import type { PublicConfig } from "@tali/config/public";
+import type { MobilePublicConfig } from "@tali/config/public";
 import { DEVICE_CREDENTIAL_HEADER, DEVICE_ID_HEADER } from "@tali/shared";
 import { fireEvent, render, screen } from "@testing-library/react-native";
 import { IDEMPOTENCY_KEY_HEADER, TaliApiClient } from "../src/api/tali-api-client";
@@ -56,7 +56,7 @@ jest.mock("expo-secure-store", () => ({
 
 jest.setTimeout(30_000);
 
-const LOCAL: PublicConfig = { env: "local", apiBaseUrl: "http://10.0.2.2:3000" };
+const LOCAL: MobilePublicConfig = { env: "local", apiBaseUrl: "http://10.0.2.2:3000", authMode: "local" };
 /** Synthetic, low-entropy stand-ins for one-time secrets. */
 const CREDENTIAL = `tali_dev_${"y".repeat(43)}`;
 const INVITATION_TOKEN = `tali_inv_${"x".repeat(43)}`;

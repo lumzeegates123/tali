@@ -62,6 +62,9 @@ export function Field({
   hint,
   error,
   editable = true,
+  secret = false,
+  autoComplete,
+  keyboardType,
 }: {
   readonly label: string;
   readonly value: string;
@@ -69,6 +72,10 @@ export function Field({
   readonly hint?: string;
   readonly error?: string | undefined;
   readonly editable?: boolean;
+  /** A password: masked, and excluded from keyboard learning and suggestions. */
+  readonly secret?: boolean;
+  readonly autoComplete?: "email" | "password" | "new-password" | "one-time-code";
+  readonly keyboardType?: "email-address" | "number-pad";
 }) {
   return (
     <View style={styles.field}>
@@ -83,6 +90,9 @@ export function Field({
         editable={editable}
         autoCapitalize="none"
         autoCorrect={false}
+        secureTextEntry={secret}
+        {...(autoComplete === undefined ? {} : { autoComplete })}
+        {...(keyboardType === undefined ? {} : { keyboardType })}
         style={[styles.input, error === undefined ? null : styles.invalid]}
       />
       {error === undefined ? null : (

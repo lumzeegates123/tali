@@ -5,6 +5,14 @@
   "type": "module",
   "sideEffects": false,
   "exports": {
+    "./aws/cognito": {
+      "types": "./dist/aws/cognito/index.d.ts",
+      "default": "./dist/aws/cognito/index.js"
+    },
+    "./aws/cognito/testing": {
+      "types": "./dist/aws/cognito/testing.d.ts",
+      "default": "./dist/aws/cognito/testing.js"
+    },
     "./local": {
       "types": "./dist/local/index.d.ts",
       "default": "./dist/local/index.js"
