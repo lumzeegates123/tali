@@ -2,7 +2,8 @@
 
 Status: **APPROVED** product decisions (approved 2026-09-27; amended 2026-09-27 after the governance audit;
 amended 2026-09-27 to record the AWS infrastructure direction; amended 2026-09-29 to record the initial private-pilot
-role vocabulary).
+role vocabulary; amended 2026-10-05 to record the inventory quantity, unit and pack decision of ADR-008 and narrow
+open decision 9).
 Sections below are APPROVED unless marked otherwise. The "Open decisions" section is **not** approved and must
 not be treated as decided. Changes to this scope must be recorded here (with date and reason), or in an ADR when
 they affect architecture. Precedence between documents is defined in `AGENTS.md` section 4.
@@ -150,6 +151,21 @@ is an immutable UUID. The receipt number format is decided in the sync ADR.
 - **Ordered, received, invoiced and paid quantities remain distinct** and are never collapsed into one field
   (see `docs/architecture/data-principles.md` section 8).
 
+### Inventory quantities, units and packs
+
+Approved 2026-10-05 by reference to `docs/decisions/ADR-008-catalog-quantity-inventory.md` (ACCEPTED 2026-10-05),
+sections 3.4 and 4. This resolves only the inventory portion of former open decision 9:
+
+- **Exact `Quantity` representation:** integer minor quantities with a unit code (scaled integers, never floats).
+- **Stock unit semantics:** each product variant has one stock unit, the smallest practical unit the merchant
+  transacts individually; stock is held and counted in it.
+- **`ProductPack` integer conversions:** a named pack (for example a carton) converts to a whole number of stock
+  units; there is no other unit conversion.
+- **Pack data entry for receiving and counting:** packs may be used to enter quantities when receiving and counting
+  stock (and for other inventory data entry), and are converted exactly to stock units.
+
+Commercial pack semantics for sales and purchasing are **not** decided here; they remain open decision 9.
+
 ### Ledger from the first sale
 
 - The **ledger posting foundation** (chart of accounts, deterministic posting rules, balanced journal entries)
@@ -287,10 +303,17 @@ if restock with cost ships before sales, the posting foundation is built first.
 3. Which roles may operate offline by default, and limits (e.g. maximum offline sale value, maximum offline duration).
 4. Whether offline credit sales or offline customer payments are ever permitted (currently: not in initial offline goals).
 5. Default chart of accounts, posting rules and tax configuration for the pilot (requires accounting review).
-6. Inventory valuation method (requires accounting review and ADR).
+6. Inventory valuation method (requires accounting review and ADR). _Cross-reference (2026-10-05): still open;
+   `docs/decisions/ADR-008-catalog-quantity-inventory.md` (ACCEPTED 2026-10-05) keeps Build 2 quantity-only and
+   leaves this to a future ledger/valuation ADR._
 7. Discount rules: who may apply discounts, maximums, and how discounts interact with tax.
 8. Daily close details: who performs it, whether a day can be reopened, and how late-synced offline records are handled after close.
-9. Unit-of-measure and pack model (e.g. carton vs single unit) for restock, purchasing and sale.
+9. Commercial pack semantics for sales and purchasing: selling by pack; pack-level selling prices; purchasing and
+   commercial cost by pack; transaction-line pack selection and snapshots; and any other sales or purchasing pack
+   semantics. _Narrowed 2026-10-05: the inventory portion of the original decision (unit-of-measure and pack model for
+   restock, purchasing and sale) is approved by reference to
+   `docs/decisions/ADR-008-catalog-quantity-inventory.md` (ACCEPTED 2026-10-05); see "Inventory quantities, units and
+   packs" above. Only the commercial pack semantics listed here remain open._
 10. Which payment provider is integrated first.
 11. The narrow WhatsApp flows for the pilot (e.g. record sale, record expense, daily summary, customer balance).
 12. How a single WhatsApp identity selects the active Tali business when the same user belongs to multiple businesses.
