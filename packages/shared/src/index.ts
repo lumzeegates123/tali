@@ -8,6 +8,63 @@ export type { LivenessResponse, ReadinessResponse } from "./contracts/http/healt
 export { DependencyStatusSchema, LivenessResponseSchema, ReadinessResponseSchema } from "./contracts/http/health.js";
 export type { MoneyWire } from "./contracts/http/money.js";
 export { CurrencyCodeWireSchema, MinorUnitsStringSchema, MoneyWireSchema } from "./contracts/http/money.js";
+export type { QuantityWire } from "./contracts/http/quantity.js";
+export { QuantityMinorStringSchema, QuantityWireSchema, UnitCodeWireSchema } from "./contracts/http/quantity.js";
+export type {
+  AddPackRequest,
+  ArchiveCategoryRequest,
+  ArchiveProductRequest,
+  CategoriesResponse,
+  CategoryListParams,
+  CategoryResponse,
+  CreateCategoryRequest,
+  CreateProductRequest,
+  PackListParams,
+  PackResponse,
+  PacksResponse,
+  PriceHistoryEntryResponse,
+  PriceHistoryResponse,
+  ProductListParams,
+  ProductResponse,
+  ProductsResponse,
+  ReactivateProductRequest,
+  SetSellingPriceRequest,
+  UnitResponse,
+  UnitsResponse,
+  UpdateCategoryRequest,
+  UpdateProductRequest,
+} from "./contracts/http/catalog.js";
+export {
+  AddPackRequestSchema,
+  ArchiveCategoryRequestSchema,
+  ArchiveProductRequestSchema,
+  CatalogStatusWireSchema,
+  CategoriesResponseSchema,
+  CategoryListQuerySchema,
+  CategoryPathSchema,
+  CategoryResponseSchema,
+  CreateCategoryRequestSchema,
+  CreateProductRequestSchema,
+  PackFactorMinorWireSchema,
+  PackListQuerySchema,
+  PackPathSchema,
+  PackResponseSchema,
+  PacksResponseSchema,
+  PackStatusWireSchema,
+  PriceHistoryEntryResponseSchema,
+  PriceHistoryResponseSchema,
+  ProductListQuerySchema,
+  ProductPathSchema,
+  ProductResponseSchema,
+  ProductsResponseSchema,
+  ReactivateProductRequestSchema,
+  SetSellingPriceRequestSchema,
+  UnitKindWireSchema,
+  UnitResponseSchema,
+  UnitsResponseSchema,
+  UpdateCategoryRequestSchema,
+  UpdateProductRequestSchema,
+} from "./contracts/http/catalog.js";
 export type { LocalSignInRequest, LocalSignInResponse } from "./contracts/http/local-sign-in.js";
 export { LocalSignInRequestSchema, LocalSignInResponseSchema } from "./contracts/http/local-sign-in.js";
 export type {

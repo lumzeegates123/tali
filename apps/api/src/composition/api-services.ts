@@ -1,57 +1,92 @@
 import {
   type AcceptInvitation,
+  type AddPack,
+  type ArchiveCategory,
+  type ArchiveProduct,
   AuditRecorder,
   type BusinessContextResolver,
   type ChangeMemberRole,
   type Clock,
   type CreateBusiness,
+  type CreateCategory,
   type CreateInvitation,
+  type CreateProduct,
   createAcceptInvitation,
+  createAddPack,
+  createArchiveCategory,
+  createArchiveProduct,
   createBusinessContextResolver,
   createChangeMemberRole,
   createCreateBusiness,
+  createCreateCategory,
   createCreateInvitation,
+  createCreateProduct,
   createDefaultLocationCreation,
   createDefaultLocationResolver,
   createDeviceVerifier,
   createGetBusiness,
+  createGetCategory,
   createGetCurrentUser,
+  createGetProduct,
+  createListCategories,
   createListDevices,
   createListLocations,
   createListMembers,
   createListMyBusinesses,
+  createListProductPacks,
+  createListProductPriceHistory,
+  createListProducts,
+  createListUnitsOfMeasure,
   createReactivateMember,
+  createReactivateProduct,
   createRegisterCurrentUser,
   createRegisterDevice,
+  createRetirePack,
   createRevokeDevice,
   createRevokeInvitation,
+  createSetSellingPrice,
   createSuspendMember,
   createUpdateBusinessName,
+  createUpdateCategory,
+  createUpdateProduct,
   createUserContextResolver,
   type DefaultLocationResolver,
   type DeviceVerifier,
   type FingerprintHasher,
   type GetBusiness,
+  type GetCategory,
   type GetCurrentUser,
+  type GetProduct,
   type IdGenerator,
   KeyedIdempotency,
+  type ListCategories,
   type ListDevices,
   type ListLocations,
   type ListMembers,
   type ListMyBusinesses,
+  type ListProductPacks,
+  type ListProductPriceHistory,
+  type ListProducts,
+  type ListUnitsOfMeasure,
   type OneTimeSecretGenerator,
   type ReactivateMember,
+  type ReactivateProduct,
   type RegisterCurrentUser,
   type RegisterDevice,
+  type RetirePack,
   type RevokeDevice,
   type RevokeInvitation,
   type SecretHasher,
+  type SetSellingPrice,
   type SuspendMember,
   taliAuditRegistry,
   type UpdateBusinessName,
+  type UpdateCategory,
+  type UpdateProduct,
   type UserContextResolver,
 } from "@tali/application";
 import type { Database } from "@tali/database";
+import { PreInventoryStateReader } from "./pre-inventory-state-reader.js";
 
 /**
  * The application-facing services the HTTP layer may call: context resolvers,
@@ -80,14 +115,32 @@ export interface ApiServices {
   readonly registerDevice: RegisterDevice;
   readonly listDevices: ListDevices;
   readonly revokeDevice: RevokeDevice;
+  readonly createProduct: CreateProduct;
+  readonly updateProduct: UpdateProduct;
+  readonly archiveProduct: ArchiveProduct;
+  readonly reactivateProduct: ReactivateProduct;
+  readonly setSellingPrice: SetSellingPrice;
+  readonly createCategory: CreateCategory;
+  readonly updateCategory: UpdateCategory;
+  readonly archiveCategory: ArchiveCategory;
+  readonly addPack: AddPack;
+  readonly retirePack: RetirePack;
+  readonly getProduct: GetProduct;
+  readonly listProducts: ListProducts;
+  readonly getCategory: GetCategory;
+  readonly listCategories: ListCategories;
+  readonly listProductPacks: ListProductPacks;
+  readonly listProductPriceHistory: ListProductPriceHistory;
+  readonly listUnitsOfMeasure: ListUnitsOfMeasure;
 }
 
 /**
- * Composes the Build 1 use cases over the PostgreSQL adapters: one unit of
+ * Composes the Build 1 and Build 2 catalog use cases over the PostgreSQL adapters: one unit of
  * work, the PostgreSQL audit writer and idempotency stores, the SHA-256
  * fingerprint hasher, the UUIDv7 generator and the node:crypto one-time
  * secret adapters. Transaction semantics are exactly those of the unit of
- * work; nothing here opens transactions.
+ * work; nothing here opens transactions. Until Slice 5, UpdateProduct's
+ * inventory guard reads the temporary PreInventoryStateReader.
  */
 export function composeApiServices(dependencies: {
   readonly database: Database;
@@ -110,6 +163,11 @@ export function composeApiServices(dependencies: {
     auditWriter,
     userIdempotency,
     businessIdempotency,
+    products,
+    productCategories: categories,
+    productPacks: packs,
+    productPriceHistory: prices,
+    units,
   } = database.repositories;
   const audit = new AuditRecorder({ registry: taliAuditRegistry, writer: auditWriter, clock, ids });
   const userContexts = createUserContextResolver({ unitOfWork, users });
@@ -181,5 +239,63 @@ export function composeApiServices(dependencies: {
     }),
     listDevices: createListDevices({ unitOfWork, devices }),
     revokeDevice: createRevokeDevice({ unitOfWork, memberships, devices, audit, clock }),
+    createProduct: createCreateProduct({
+      unitOfWork,
+      memberships,
+      products,
+      categories,
+      prices,
+      units,
+      idempotency: businessScoped,
+      hasher,
+      audit,
+      ids,
+      clock,
+    }),
+    updateProduct: createUpdateProduct({
+      unitOfWork,
+      memberships,
+      products,
+      categories,
+      packs,
+      units,
+      inventory: new PreInventoryStateReader(),
+      audit,
+      clock,
+    }),
+    archiveProduct: createArchiveProduct({ unitOfWork, memberships, products, audit, clock }),
+    reactivateProduct: createReactivateProduct({ unitOfWork, memberships, products, audit, clock }),
+    setSellingPrice: createSetSellingPrice({ unitOfWork, memberships, products, prices, audit, ids, clock }),
+    createCategory: createCreateCategory({
+      unitOfWork,
+      memberships,
+      categories,
+      idempotency: businessScoped,
+      hasher,
+      audit,
+      ids,
+      clock,
+    }),
+    updateCategory: createUpdateCategory({ unitOfWork, memberships, categories, audit, clock }),
+    archiveCategory: createArchiveCategory({ unitOfWork, memberships, categories, audit, clock }),
+    addPack: createAddPack({
+      unitOfWork,
+      memberships,
+      products,
+      packs,
+      idempotency: businessScoped,
+      hasher,
+      audit,
+      ids,
+      clock,
+    }),
+    retirePack: createRetirePack({ unitOfWork, memberships, packs, audit, clock }),
+    getProduct: createGetProduct({ unitOfWork, products }),
+    listProducts: createListProducts({ unitOfWork, products }),
+    getCategory: createGetCategory({ unitOfWork, categories }),
+    listCategories: createListCategories({ unitOfWork, categories }),
+    listProductPacks: createListProductPacks({ unitOfWork, products, packs }),
+    listProductPriceHistory: createListProductPriceHistory({ unitOfWork, products, prices }),
+    listUnitsOfMeasure: createListUnitsOfMeasure({ unitOfWork, units }),
   });
 }

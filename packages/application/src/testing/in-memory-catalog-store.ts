@@ -27,6 +27,7 @@ import {
 import type { TransactionScope } from "../ports/unit-of-work.js";
 import { FailureInjection } from "./failure-injection.js";
 import type { InMemoryTenancyStore } from "./in-memory-tenancy-store.js";
+import { page } from "./in-memory-tenancy-store.js";
 import type { InMemoryUnitOfWork, RollbackParticipant } from "./in-memory-unit-of-work.js";
 
 const NO_INVENTORY: VariantInventoryState = Object.freeze({ hasMovements: false, hasNonZeroBalance: false });
@@ -166,6 +167,26 @@ export class InMemoryCatalogStore implements RollbackParticipant {
       const item = this.#products.get(productId);
       return item?.product.businessId === businessId ? item : undefined;
     },
+    findById: async (scope, businessId, productId) => {
+      this.#enter(scope, "products.findById");
+      const item = this.#products.get(productId);
+      return item?.product.businessId === businessId ? item : undefined;
+    },
+    list: async (scope, businessId, query, request) => {
+      this.#enter(scope, "products.list");
+      const search = query.search;
+      const needle = search?.nameContains.toLowerCase();
+      const matches = [...this.#products.values()].filter(({ product, variant }) => {
+        if (product.businessId !== businessId || product.status !== query.status) return false;
+        if (search === undefined || needle === undefined) return true;
+        return (
+          product.name.toLowerCase().includes(needle) ||
+          (search.skuKey !== undefined && variant.sku?.normalized === search.skuKey) ||
+          (search.barcodeKey !== undefined && variant.barcode?.normalized === search.barcodeKey)
+        );
+      });
+      return page(matches, (item) => item.product.id, request);
+    },
     update: async (scope, previous, next) => {
       this.#enter(scope, "products.update");
       assertCatalogProductTransition(previous, next);
@@ -212,6 +233,11 @@ export class InMemoryCatalogStore implements RollbackParticipant {
       }
       this.#prices.push(entry);
     },
+    listForVariant: async (scope, businessId, variantId, request) => {
+      this.#enter(scope, "prices.listForVariant");
+      const rows = this.#prices.filter((row) => row.businessId === businessId && row.variantId === variantId);
+      return page(rows, (row) => row.id, request);
+    },
   };
 
   readonly categoryRepository: ProductCategoryRepository = {
@@ -225,6 +251,16 @@ export class InMemoryCatalogStore implements RollbackParticipant {
       this.#enter(scope, "categories.findByIdForUpdate");
       const category = this.#categories.get(categoryId);
       return category?.businessId === businessId ? category : undefined;
+    },
+    findById: async (scope, businessId, categoryId) => {
+      this.#enter(scope, "categories.findById");
+      const category = this.#categories.get(categoryId);
+      return category?.businessId === businessId ? category : undefined;
+    },
+    list: async (scope, businessId, status, request) => {
+      this.#enter(scope, "categories.list");
+      const rows = [...this.#categories.values()].filter((c) => c.businessId === businessId && c.status === status);
+      return page(rows, (c) => c.id, request);
     },
     update: async (scope, previous, next) => {
       this.#enter(scope, "categories.update");
@@ -287,6 +323,13 @@ export class InMemoryCatalogStore implements RollbackParticipant {
       }
       this.#packs.set(next.id, next);
     },
+    listForVariant: async (scope, businessId, variantId, status, request) => {
+      this.#enter(scope, "packs.listForVariant");
+      const rows = [...this.#packs.values()].filter(
+        (p) => p.businessId === businessId && p.variantId === variantId && p.status === status,
+      );
+      return page(rows, (p) => p.id, request);
+    },
     hasActivePacks: async (scope, businessId, variantId) => {
       this.#enter(scope, "packs.hasActivePacks");
       return [...this.#packs.values()].some(
@@ -305,6 +348,10 @@ export class InMemoryCatalogStore implements RollbackParticipant {
     findByCode: async (scope, code) => {
       this.#enter(scope, "units.findByCode");
       return this.#units.get(code);
+    },
+    listAll: async (scope) => {
+      this.#enter(scope, "units.listAll");
+      return [...this.#units.values()].sort((a, b) => (a.code < b.code ? -1 : a.code > b.code ? 1 : 0));
     },
   };
 

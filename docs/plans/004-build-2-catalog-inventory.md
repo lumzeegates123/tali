@@ -3,7 +3,10 @@
 Status: **PLAN APPROVED WITH CHANGES (2026-10-05); the changes are incorporated here. Slice 0 (decisions)
 COMPLETE (2026-10-05).** The design is recorded in `docs/decisions/ADR-008-catalog-quantity-inventory.md`,
 **ACCEPTED (2026-10-05)** by the human maintainer. **Slice 1 (catalog domain and application) COMPLETE
-(2026-10-05)**, with all gates passed, pending human review (`docs/audits/build-2-slice-1.md`). Where this plan and an ADR differ, the ADR is authoritative (`AGENTS.md` section 4).
+(2026-10-05)**, with all gates passed, pending human review (`docs/audits/build-2-slice-1.md`). **Slice 2 (catalog
+schema and repositories) COMPLETE (2026-10-05)** (`docs/audits/build-2-slice-2.md`). **Slice 3 (catalog API and
+shared contracts) COMPLETE (2026-10-05)**, with all gates passed, pending human review
+(`docs/audits/build-2-slice-3.md`). Where this plan and an ADR differ, the ADR is authoritative (`AGENTS.md` section 4).
 
 Scope: implementation steps 3 (product catalog) and 4 (inventory) of `docs/product/mvp-scope.md`, quantity-only.
 
@@ -22,8 +25,8 @@ Not in Build 2:
 | ----- | --------------------------------------------------------------------------------------------- | ------------------------------ |
 | 0     | ADR-008 (accepted), this plan, ADR index row, mvp-scope approved decision and narrowed open decision 9 | **COMPLETE** (2026-10-05; ADR-008 accepted) |
 | 1     | Catalog domain and application: `Quantity`, units, Product/Variant/Category/Pack, identifiers, price history, use cases, permissions, audit actions | **COMPLETE** (2026-10-05; `docs/audits/build-2-slice-1.md`) |
-| 2     | Catalog schema, migration, `verify-schema` expectations and repositories                      | Not started                    |
-| 3     | Catalog API and shared contracts                                                              | Not started                    |
+| 2     | Catalog schema, migration, `verify-schema` expectations and repositories                      | **COMPLETE** (2026-10-05; `docs/audits/build-2-slice-2.md`) |
+| 3     | Catalog API and shared contracts                                                              | **COMPLETE** (2026-10-05; `docs/audits/build-2-slice-3.md`) |
 | 4     | Catalog clients (web and mobile)                                                              | Not started                    |
 | 5     | Inventory core: movements, balances, opening, goods receipts, adjustments, write-offs, reversals, low-stock thresholds and the derived low-stock state (domain, application, schema, repositories) | Not started (needs S1 to S3 stable) |
 | 6     | Stocktake (domain, application, schema) and the inventory API, including threshold endpoints  | Not started                    |
@@ -35,8 +38,8 @@ Not in Build 2:
 ```mermaid
 flowchart TD
   S0["S0 Decisions: ADR-008 and plan 004 (COMPLETE)"] --> S1["S1 Catalog domain and application (COMPLETE)"]
-  S1 --> S2["S2 Catalog schema and repositories"]
-  S2 --> S3["S3 Catalog API"]
+  S1 --> S2["S2 Catalog schema and repositories (COMPLETE)"]
+  S2 --> S3["S3 Catalog API (COMPLETE)"]
   S3 --> S4["S4 Catalog clients"]
   S3 --> S5["S5 Inventory core"]
   S5 --> S6["S6 Inventory and stocktake API"]
@@ -232,7 +235,13 @@ process-startup or resource failure in which no assertion failed, and it is docu
   - cross-tenant FK rejection.
 - Stop: a constraint ADR-008 requires cannot be expressed, until the ADR is amended or the design changes.
 
-### S3. Catalog API
+### S3. Catalog API: COMPLETE (2026-10-05)
+
+- Outcome: all gates passed (`pnpm verify` and `pnpm test:integration` exit 0, gitleaks clean); audit in
+  `docs/audits/build-2-slice-3.md`, pending human review. No schema change, no new dependency. The API composition
+  uses the temporary `PreInventoryStateReader` (no I/O, UpdateProduct only), with gate tests that fail if any
+  inventory table, module or route appears.
+  SLICE 5 MUST DELETE OR REPLACE PreInventoryStateReader with the real movement/balance-backed implementation.
 
 - Content:
   - shared Zod contracts (`catalog.ts`, `quantity.ts`);

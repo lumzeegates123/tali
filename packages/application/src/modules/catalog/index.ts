@@ -30,15 +30,37 @@ export type { AddPack, AddPackOutcome, PackChangeResult, RetirePack } from "./pa
 export { ADD_PACK_COMMAND_SCHEMA_VERSION, ADD_PACK_OPERATION, createAddPack, createRetirePack } from "./packs.js";
 export type {
   ProductCategoryRepository,
+  ProductListQuery,
   ProductPackRepository,
   ProductPriceHistoryRepository,
   ProductRepository,
+  ProductSearch,
   UnitReferenceRepository,
   VariantInventoryStateReader,
 } from "./ports.js";
 export { assertCatalogProductTransition, assertCategoryTransition, assertPackTransition } from "./ports.js";
 export type { SetSellingPrice, SetSellingPriceInput } from "./prices.js";
 export { createSetSellingPrice } from "./prices.js";
+export type {
+  GetCategory,
+  GetProduct,
+  ListCategories,
+  ListProductPacks,
+  ListProductPriceHistory,
+  ListProducts,
+  ListUnitsOfMeasure,
+} from "./queries.js";
+export {
+  createGetCategory,
+  createGetProduct,
+  createListCategories,
+  createListProductPacks,
+  createListProductPriceHistory,
+  createListProducts,
+  createListUnitsOfMeasure,
+  PRODUCT_SEARCH_MAX_LENGTH,
+  parseProductSearch,
+} from "./queries.js";
 export type {
   ArchiveProduct,
   CatalogProductChangeResult,

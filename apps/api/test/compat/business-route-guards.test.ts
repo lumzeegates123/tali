@@ -106,14 +106,25 @@ describe.each(["test", "local"] as const)("business route guards (TALI_ENV=%s)",
     expect(fromMetadata).toEqual(registeredRoutes(app).sort());
   });
 
-  it("finds the Build 1 business-scoped routes", () => {
+  it("finds the Build 1 and Build 2 catalog business-scoped routes", () => {
     const business = routes.filter((route) => route.path.startsWith(BUSINESS_PREFIX));
     expect(business.map((route) => `${route.method} ${route.path}`).sort()).toEqual([
       "GET /v1/businesses/:businessId",
+      "GET /v1/businesses/:businessId/catalog/units",
+      "GET /v1/businesses/:businessId/categories",
+      "GET /v1/businesses/:businessId/categories/:categoryId",
       "GET /v1/businesses/:businessId/devices",
       "GET /v1/businesses/:businessId/locations",
       "GET /v1/businesses/:businessId/members",
+      "GET /v1/businesses/:businessId/products",
+      "GET /v1/businesses/:businessId/products/:productId",
+      "GET /v1/businesses/:businessId/products/:productId/packs",
+      "GET /v1/businesses/:businessId/products/:productId/prices",
       "PATCH /v1/businesses/:businessId",
+      "PATCH /v1/businesses/:businessId/categories/:categoryId",
+      "PATCH /v1/businesses/:businessId/products/:productId",
+      "POST /v1/businesses/:businessId/categories",
+      "POST /v1/businesses/:businessId/categories/:categoryId/archive",
       "POST /v1/businesses/:businessId/devices",
       "POST /v1/businesses/:businessId/devices/:deviceId/revoke",
       "POST /v1/businesses/:businessId/invitations",
@@ -121,7 +132,17 @@ describe.each(["test", "local"] as const)("business route guards (TALI_ENV=%s)",
       "POST /v1/businesses/:businessId/members/:membershipId/reactivate",
       "POST /v1/businesses/:businessId/members/:membershipId/role",
       "POST /v1/businesses/:businessId/members/:membershipId/suspend",
+      "POST /v1/businesses/:businessId/packs/:packId/retire",
+      "POST /v1/businesses/:businessId/products",
+      "POST /v1/businesses/:businessId/products/:productId/archive",
+      "POST /v1/businesses/:businessId/products/:productId/packs",
+      "POST /v1/businesses/:businessId/products/:productId/reactivate",
+      "PUT /v1/businesses/:businessId/products/:productId/price",
     ]);
+  });
+
+  it("mounts no inventory route: no stock, movement, balance or stocktake path", () => {
+    expect(routes.filter((route) => /inventor|stock|movement|balance|count/i.test(route.path))).toEqual([]);
   });
 
   it("serves invitation acceptance as a user-level route with no business or device guard", () => {

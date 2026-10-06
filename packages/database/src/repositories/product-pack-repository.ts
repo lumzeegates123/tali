@@ -5,6 +5,7 @@ import { parseBusinessId, parseProductPackId, parseProductVariantId, restorePack
 import type { ProductPack as ProductPackRow } from "../generated/prisma/client.js";
 import { translatingUniqueViolations } from "../errors/unique-violations.js";
 import { transactionClient } from "../unit-of-work/transaction-scope.js";
+import { keysetArgs, toPage } from "./pagination.js";
 
 export const PACK_CONFLICTS: Readonly<Record<string, string>> = Object.freeze({
   product_packs_active_name_unique: "An active pack with this name already exists",
@@ -64,6 +65,16 @@ export function createProductPackRepository(): ProductPackRepository {
         data: { status: next.status, updatedAt: next.updatedAt },
       });
       if (count !== 1) throw new ConcurrentModificationError();
+    },
+
+    async listForVariant(scope, businessId, variantId, status, request) {
+      const page = keysetArgs(request);
+      const rows = await transactionClient(scope).productPack.findMany({
+        where: { businessId, variantId, status, ...page.where },
+        orderBy: page.orderBy,
+        take: page.take,
+      });
+      return toPage(rows, request, (row) => row.id, toPack);
     },
 
     async hasActivePacks(scope, businessId, variantId) {

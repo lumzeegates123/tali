@@ -9,6 +9,13 @@ import type {
   ArchiveProduct,
   CreateCategory,
   CreateProduct,
+  GetCategory,
+  GetProduct,
+  ListCategories,
+  ListProductPacks,
+  ListProductPriceHistory,
+  ListProducts,
+  ListUnitsOfMeasure,
   ReactivateProduct,
   RetirePack,
   SetSellingPrice,
@@ -21,6 +28,13 @@ import {
   createArchiveProduct,
   createCreateCategory,
   createCreateProduct,
+  createGetCategory,
+  createGetProduct,
+  createListCategories,
+  createListProductPacks,
+  createListProductPriceHistory,
+  createListProducts,
+  createListUnitsOfMeasure,
   createReactivateProduct,
   createRetirePack,
   createSetSellingPrice,
@@ -31,7 +45,7 @@ import { InMemoryCatalogStore } from "./in-memory-catalog-store.js";
 import type { TenancyHarness } from "./tenancy-harness.js";
 import { createTenancyHarness } from "./tenancy-harness.js";
 
-/** Every Build 2 Slice 1 catalog use case composed over the tenancy harness's fakes. */
+/** Every catalog mutation (Slice 1) and read (Slice 3) use case composed over the tenancy harness's fakes. */
 export interface CatalogHarness {
   readonly tenancy: TenancyHarness;
   readonly catalog: InMemoryCatalogStore;
@@ -45,6 +59,13 @@ export interface CatalogHarness {
   readonly archiveCategory: ArchiveCategory;
   readonly addPack: AddPack;
   readonly retirePack: RetirePack;
+  readonly getProduct: GetProduct;
+  readonly listProducts: ListProducts;
+  readonly getCategory: GetCategory;
+  readonly listCategories: ListCategories;
+  readonly listProductPacks: ListProductPacks;
+  readonly listProductPriceHistory: ListProductPriceHistory;
+  readonly listUnitsOfMeasure: ListUnitsOfMeasure;
   /** A business in `currencyCode` with one ACTIVE member per role, and the resolved context of each. */
   businessWithRoles(name: string, currencyCode?: string): Promise<Readonly<Record<MembershipRole, BusinessContext>>>;
 }
@@ -110,6 +131,13 @@ export function createCatalogHarness(options: {
     archiveCategory: createArchiveCategory({ unitOfWork, memberships, categories, audit, clock }),
     addPack: createAddPack({ unitOfWork, memberships, products, packs, idempotency, hasher, audit, ids, clock }),
     retirePack: createRetirePack({ unitOfWork, memberships, packs, audit, clock }),
+    getProduct: createGetProduct({ unitOfWork, products }),
+    listProducts: createListProducts({ unitOfWork, products }),
+    getCategory: createGetCategory({ unitOfWork, categories }),
+    listCategories: createListCategories({ unitOfWork, categories }),
+    listProductPacks: createListProductPacks({ unitOfWork, products, packs }),
+    listProductPriceHistory: createListProductPriceHistory({ unitOfWork, products, prices }),
+    listUnitsOfMeasure: createListUnitsOfMeasure({ unitOfWork, units }),
     async businessWithRoles(name, currencyCode) {
       sequence += 1;
       const owner = await tenancy.registeredUser(`${name}-owner-${sequence}`);

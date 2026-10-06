@@ -311,3 +311,54 @@ export async function readTenancySnapshot(env: Env = process.env): Promise<Tenan
     };
   });
 }
+
+/** Plain catalog rows for assertions (no Prisma types; money and factors as text), across every tenant. */
+export interface CatalogSnapshot {
+  readonly products: readonly { id: string; businessId: string; name: string; status: string; version: number }[];
+  readonly variants: readonly {
+    id: string;
+    businessId: string;
+    productId: string;
+    isDefault: boolean;
+    status: string;
+    priceMinorText: string | null;
+    priceVersion: number;
+  }[];
+  readonly categories: readonly { id: string; businessId: string; name: string; status: string }[];
+  readonly packs: readonly { id: string; businessId: string; variantId: string; factorText: string; status: string }[];
+  readonly prices: readonly {
+    id: string;
+    businessId: string;
+    variantId: string;
+    amountText: string;
+    version: number;
+  }[];
+}
+
+export async function readCatalogSnapshot(env: Env = process.env): Promise<CatalogSnapshot> {
+  return withFixtureSession(env, async (client) => {
+    const rows = async <Row>(sql: string): Promise<Row[]> => (await client.query(sql)).rows as Row[];
+    return {
+      products: await rows(
+        `SELECT id, business_id AS "businessId", name, status, version FROM public.products ORDER BY id`,
+      ),
+      variants: await rows(
+        `SELECT id, business_id AS "businessId", product_id AS "productId", is_default AS "isDefault", status,
+                current_price_minor::text AS "priceMinorText", price_version AS "priceVersion"
+         FROM public.product_variants ORDER BY id`,
+      ),
+      categories: await rows(
+        `SELECT id, business_id AS "businessId", name, status FROM public.product_categories ORDER BY id`,
+      ),
+      packs: await rows(
+        `SELECT id, business_id AS "businessId", variant_id AS "variantId", factor_minor::text AS "factorText", status
+         FROM public.product_packs ORDER BY id`,
+      ),
+      prices: await rows(
+        `SELECT id, business_id AS "businessId", variant_id AS "variantId", amount_minor::text AS "amountText",
+                price_version AS version
+         FROM public.product_variant_prices ORDER BY id`,
+      ),
+    };
+  });
+}
