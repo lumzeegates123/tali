@@ -61,7 +61,7 @@ export interface ListProductPacks {
   ): Promise<Page<ProductPack>>;
 }
 
-/** `product:read`. A product's selling-price history, oldest first. */
+/** `product:read`. A product's selling-price history in stable keyset order. */
 export interface ListProductPriceHistory {
   execute(
     context: BusinessContext,

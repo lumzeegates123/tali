@@ -124,7 +124,7 @@ describe("catalog reads", () => {
     }
   });
 
-  it("lists the price history oldest first", async () => {
+  it("lists the price history in stable keyset order", async () => {
     const { h, mine, product } = await setup();
     const item = await product();
     for (const [version, amountMinor] of [

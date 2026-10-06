@@ -108,8 +108,8 @@ idempotency key.
 | ProductPriceHistoryRepository       | `listForVariant(scope, businessId, variantId, page)` (still no update or delete)           |
 | UnitReferenceRepository             | `listAll(scope)` ordered by code, re-validated through `defineUnit`                        |
 
-Lists use the existing keyset pagination (`keysetArgs`, `toPage`): ordered by ID (UUIDv7, so creation order), with
-an opaque `nextCursor`. Every row is restored through the Slice 1 domain (`restoreCatalogProduct`, `Money.ofMinor`).
+Lists use the existing keyset pagination (`keysetArgs`, `toPage`): a stable ascending-ID order with an opaque
+`nextCursor`. ID order is pagination order only, never business time. Every row is restored through the Slice 1 domain (`restoreCatalogProduct`, `Money.ofMinor`).
 
 ## Search
 
@@ -246,7 +246,10 @@ with the existing `TEST_DATABASE_URL` and `TEST_MIGRATION_DATABASE_URL` override
   is fixed and small (nine units). `limit` and other query keys are rejected.
 - **GetCategory** is an additional read use case, backing `GET categories/:categoryId`.
 - **Mutation responses** return the resource body directly (for example a `ProductResponse`), not wrapped.
-- **Price history order** is ascending by ID (UUIDv7, so the order prices were set).
+- **Price history order.** ProductVariantPrice rows are listed with the existing stable ascending-ID keyset
+  pagination. ID order is pagination order, not business time. `priceVersion` is the authoritative monotonic
+  per-variant price sequence, and `effectiveAt` carries the recorded price-change instant. Slice 3 does not
+  introduce a specialized price-history cursor.
 - **Shared query type names** are `ProductListParams`, `CategoryListParams` and `PackListParams`, to avoid clashing
   with the application's `ProductListQuery`.
 - **`page()` exported** from the in-memory tenancy store (test support only), so the in-memory catalog store pages

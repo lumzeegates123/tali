@@ -88,7 +88,10 @@ export interface ProductRepository {
  */
 export interface ProductPriceHistoryRepository {
   append(scope: TransactionScope, entry: ProductVariantPrice): Promise<void>;
-  /** The variant's price history in ascending ID order (UUIDv7 IDs follow creation order). */
+  /**
+   * The variant's price history in stable ascending ID order. This is pagination order, not authoritative
+   * business-time chronology: `priceVersion` is the per-variant sequence and `effectiveAt` the recorded instant.
+   */
   listForVariant(
     scope: TransactionScope,
     businessId: BusinessId,

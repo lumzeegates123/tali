@@ -298,7 +298,7 @@ describe("catalog reads (PostgreSQL)", () => {
   });
 
   describe("price history", () => {
-    it("lists one variant's prices oldest first in integer minor units, scoped to the business", async () => {
+    it("lists one variant's prices in stable ascending ID order in integer minor units, scoped to the business", async () => {
       const item = await saved(a, { priceMinor: 100n });
       const priced = setSellingPrice({
         item,
