@@ -22,11 +22,16 @@ import { withFixtureSession } from "./fixture-session.js";
 type Env = FixtureEnv;
 
 /**
- * The Build 1 tables that tests write through the application. Reset between
- * tests in the disposable test database only; `currencies` is reference data
- * and is never truncated.
+ * The tenant-owned tables that tests write through the application. Reset
+ * between tests in the disposable test database only; `currencies` and
+ * `units_of_measure` are reference data and are never truncated.
  */
 export const TENANCY_TABLES = [
+  "product_variant_prices",
+  "product_packs",
+  "product_variants",
+  "products",
+  "product_categories",
   "business_idempotency_records",
   "user_idempotency_records",
   "business_audit_records",

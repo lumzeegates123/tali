@@ -203,7 +203,16 @@ process-startup or resource failure in which no assertion failed, and it is docu
   - the registry redaction test covers the new actions.
 - Stop: if the audit field kind needs an ADR-006 change, stop and raise it.
 
-### S2. Catalog schema and repositories
+### S2. Catalog schema and repositories: COMPLETE (2026-10-05)
+
+- Outcome: all gates passed (`pnpm verify` and `pnpm test:integration` exit 0, verify-schema and drift clean,
+  gitleaks clean); audit in `docs/audits/build-2-slice-2.md`. Review correction applied:
+  `product_variants_default_only CHECK (is_default = true)` with the partial default index, so a Build 2 product has
+  at most one variant row and it is the default (ADR-008 section 3.2). Interpretations approved by the human review.
+  `DatabaseRepositories` has no production `VariantInventoryStateReader`. Approved for S3: the API composition may use
+  a visibly temporary `PreInventoryStateReader` (outside `packages/database`) returning no movements and a zero
+  balance, truthful only while no inventory tables exist. S5 MUST delete or replace it with the inventory-backed
+  reader.
 
 - Content:
   - migration for `units_of_measure` (seed), `product_categories`, `products`, `product_variants`, `product_packs` and

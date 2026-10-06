@@ -8,7 +8,12 @@ import {
   type InvitationRepository,
   type LocationRepository,
   type MembershipRepository,
+  type ProductCategoryRepository,
+  type ProductPackRepository,
+  type ProductPriceHistoryRepository,
+  type ProductRepository,
   type UnitOfWork,
+  type UnitReferenceRepository,
   type UserIdempotencyStore,
   type UserRepository,
 } from "@tali/application";
@@ -20,6 +25,11 @@ import { createDeviceRepository } from "./repositories/device-repository.js";
 import { createInvitationRepository } from "./repositories/invitation-repository.js";
 import { createLocationRepository } from "./repositories/location-repository.js";
 import { createMembershipRepository } from "./repositories/membership-repository.js";
+import { createProductCategoryRepository } from "./repositories/product-category-repository.js";
+import { createProductPackRepository } from "./repositories/product-pack-repository.js";
+import { createProductPriceHistoryRepository } from "./repositories/product-price-history-repository.js";
+import { createProductRepository } from "./repositories/product-repository.js";
+import { createUnitReferenceRepository } from "./repositories/unit-reference-repository.js";
 import { createUserIdempotencyStore } from "./repositories/user-idempotency-store.js";
 import { createUserRepository } from "./repositories/user-repository.js";
 import { PrismaUnitOfWork } from "./unit-of-work/prisma-unit-of-work.js";
@@ -36,7 +46,11 @@ export interface DatabaseOptions {
   readonly lockTimeoutMs?: number;
 }
 
-/** The Build 1 repository adapters, as application ports. They work only with this database's unit of work. */
+/**
+ * The repository adapters, as application ports. They work only with this
+ * database's unit of work. There is deliberately no VariantInventoryStateReader:
+ * the inventory module provides it (ADR-008 section 3.2; Plan 004 S3 and S5).
+ */
 export interface DatabaseRepositories {
   readonly users: UserRepository;
   readonly businesses: BusinessRepository;
@@ -48,6 +62,11 @@ export interface DatabaseRepositories {
   readonly auditWriter: AuditWriter;
   readonly userIdempotency: UserIdempotencyStore;
   readonly businessIdempotency: BusinessIdempotencyStore;
+  readonly products: ProductRepository;
+  readonly productCategories: ProductCategoryRepository;
+  readonly productPacks: ProductPackRepository;
+  readonly productPriceHistory: ProductPriceHistoryRepository;
+  readonly units: UnitReferenceRepository;
 }
 
 /**
@@ -74,6 +93,11 @@ export function createRepositories(): DatabaseRepositories {
     auditWriter: createAuditWriter(),
     userIdempotency: createUserIdempotencyStore(),
     businessIdempotency: createBusinessIdempotencyStore(),
+    products: createProductRepository(),
+    productCategories: createProductCategoryRepository(),
+    productPacks: createProductPackRepository(),
+    productPriceHistory: createProductPriceHistoryRepository(),
+    units: createUnitReferenceRepository(),
   });
 }
 
