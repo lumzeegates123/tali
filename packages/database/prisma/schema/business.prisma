@@ -23,6 +23,17 @@ model Business {
   invitations        BusinessInvitation[]
   devices            Device[]
 
+  productCategories    ProductCategory[]
+  products             Product[]
+  productVariants      ProductVariant[]
+  productPacks         ProductPack[]
+  productVariantPrices ProductVariantPrice[]
+  pricedVariants       ProductVariant[]      @relation("VariantPriceCurrency")
+  pricedHistory        ProductVariantPrice[] @relation("PriceHistoryCurrency")
+
+  // Target of the catalog's composite currency foreign keys (ADR-008 section
+  // 3.4): a stored price is always in its business's currency.
+  @@unique([id, currencyCode])
   @@map("businesses")
 }
 
@@ -40,11 +51,13 @@ model BusinessMembership {
   user     User     @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   actedAuditRecords   BusinessAuditRecord[]
-  createdInvitations  BusinessInvitation[] @relation("InvitationCreatedBy")
-  acceptedInvitations BusinessInvitation[] @relation("InvitationAcceptedBy")
-  revokedInvitations  BusinessInvitation[] @relation("InvitationRevokedBy")
-  registeredDevices   Device[]             @relation("DeviceRegisteredBy")
-  revokedDevices      Device[]             @relation("DeviceRevokedBy")
+  createdInvitations  BusinessInvitation[]  @relation("InvitationCreatedBy")
+  acceptedInvitations BusinessInvitation[]  @relation("InvitationAcceptedBy")
+  revokedInvitations  BusinessInvitation[]  @relation("InvitationRevokedBy")
+  registeredDevices   Device[]              @relation("DeviceRegisteredBy")
+  revokedDevices      Device[]              @relation("DeviceRevokedBy")
+  createdProducts     Product[]             @relation("ProductCreatedBy")
+  setPrices           ProductVariantPrice[] @relation("PriceSetBy")
 
   @@unique([businessId, id])
   @@unique([businessId, userId])

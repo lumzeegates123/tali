@@ -253,10 +253,13 @@ const PROTECTED_MODEL_DELEGATES = [
   "platformAuditRecord",
   "userIdempotencyRecord",
   "businessIdempotencyRecord",
+  "unitOfMeasure",
+  "productVariantPrice",
 ];
 /**
  * Models that are updated through audited status changes but never
- * hard-deleted (ADR-005 section 20); the application role has no DELETE grant.
+ * hard-deleted (ADR-005 section 20; ADR-008 section 14); the application role
+ * has no DELETE grant.
  * @type {string[]}
  */
 const NO_DELETE_MODEL_DELEGATES = [
@@ -266,6 +269,10 @@ const NO_DELETE_MODEL_DELEGATES = [
   "businessMembership",
   "businessInvitation",
   "device",
+  "productCategory",
+  "product",
+  "productVariant",
+  "productPack",
 ];
 const BANNED_PROTECTED_MUTATIONS = [
   ...(PROTECTED_MODEL_DELEGATES.length === 0
@@ -281,7 +288,7 @@ const BANNED_PROTECTED_MUTATIONS = [
     : [
         {
           selector: `CallExpression[callee.property.name=/^(delete|deleteMany)$/][callee.object.property.name=/^(${NO_DELETE_MODEL_DELEGATES.join("|")})$/]`,
-          message: "Build 1 records are never hard-deleted. Change their status through an audited use case.",
+          message: "These records are never hard-deleted. Change their status through an audited use case.",
         },
       ]),
 ];

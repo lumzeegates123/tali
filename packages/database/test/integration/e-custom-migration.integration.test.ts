@@ -12,6 +12,7 @@ const COMMITTED_MIGRATIONS = [
   "20260929212026_build1_identity_tenancy",
   "20260929213019_build1_timestamp_consistency",
   "20260930165547_build1_invitations_devices",
+  "20261005120000_build2_catalog",
 ];
 
 const BUILD_1_TABLES = [
@@ -29,12 +30,22 @@ const BUILD_1_TABLES = [
   "public.users",
 ];
 
+/** Build 2 Slice 2 adds the catalog only; no inventory table exists before Slice 4. */
+const BUILD_2_CATALOG_TABLES = [
+  "public.product_categories",
+  "public.product_packs",
+  "public.product_variant_prices",
+  "public.product_variants",
+  "public.products",
+  "public.units_of_measure",
+];
+
 /**
  * Criterion E and the migration chain. The global setup has already run
  * `migrate deploy` against this database from empty: the spike migration, the
  * approved cleanup migration that removes the temporary foundation_spike
- * schema, the two Build 1 identity and tenancy migrations, and the Slice 5
- * invitations and devices migration.
+ * schema, the two Build 1 identity and tenancy migrations, the Slice 5
+ * invitations and devices migration, and the Build 2 catalog migration.
  */
 describe("E. migration chain", () => {
   const { owner } = useFixtureHarness();
@@ -85,12 +96,14 @@ describe("E. migration chain", () => {
     expect(objects.rows).toEqual([]);
   });
 
-  it("the migration chain creates exactly the Build 1 tables (and Prisma's migration table)", async () => {
+  it("the migration chain creates exactly the Build 1 and catalog tables (and Prisma's migration table)", async () => {
     const { rows } = await owner.query<{ name: string }>(
       `SELECT schemaname || '.' || tablename AS name FROM pg_tables
        WHERE schemaname NOT IN ('pg_catalog', 'information_schema', 'test_fixtures') ORDER BY (schemaname || '.' || tablename) COLLATE "C"`,
     );
-    expect(rows.map((row) => row.name)).toEqual(["public._prisma_migrations", ...BUILD_1_TABLES].sort());
+    expect(rows.map((row) => row.name)).toEqual(
+      ["public._prisma_migrations", ...BUILD_1_TABLES, ...BUILD_2_CATALOG_TABLES].sort(),
+    );
   });
 
   it("the migrations seed NGN as the only reference currency (test currencies are fixtures)", async () => {

@@ -15,7 +15,8 @@ const migrationsDir = fileURLToPath(new URL("../prisma/migrations", import.meta.
  * Tables the application role may never UPDATE or DELETE, including tables
  * that no longer exist, so the scan keeps covering every migration that
  * touched them. Audit and keyed-idempotency records are insert-only
- * (ADR-004 sections 4.2 and 8.1).
+ * (ADR-004 sections 4.2 and 8.1). Unit reference data is read-only and price
+ * history is insert-only (ADR-008 sections 3.4 and 4.2).
  */
 const PROTECTED_TABLES = [
   "foundation_spike.protected_entry",
@@ -23,11 +24,13 @@ const PROTECTED_TABLES = [
   "public.platform_audit_records",
   "public.user_idempotency_records",
   "public.business_idempotency_records",
+  "public.units_of_measure",
+  "public.product_variant_prices",
 ];
 
 /**
- * Build 1 tables that are never hard-deleted (ADR-005 section 20): no
- * migration may drop, truncate or delete from them, or grant DELETE,
+ * Tables that are never hard-deleted (ADR-005 section 20; ADR-008 section 14):
+ * no migration may drop, truncate or delete from them, or grant DELETE,
  * TRUNCATE or ALL on them. UPDATE grants are checked by
  * EXPECTED_APP_PRIVILEGES.
  */
@@ -40,6 +43,10 @@ const NO_DELETE_TABLES = [
   "public.business_memberships",
   "public.business_invitations",
   "public.devices",
+  "public.product_categories",
+  "public.products",
+  "public.product_variants",
+  "public.product_packs",
 ];
 
 /**
@@ -64,8 +71,9 @@ const TEST_ONLY_SCHEMAS = ["test_fixtures"];
 
 /**
  * Exact table privileges expected for the application role (Build 1 Slice 2
- * and Slice 5 migrations). No table grants DELETE or TRUNCATE; audit and
- * idempotency tables are insert-only; currencies are read-only.
+ * and Slice 5, Build 2 Slice 2 migrations). No table grants DELETE or
+ * TRUNCATE; audit, idempotency and price-history tables are insert-only;
+ * currencies and units of measure are read-only.
  */
 const EXPECTED_APP_PRIVILEGES = {
   "public.currencies": ["SELECT"],
@@ -80,6 +88,12 @@ const EXPECTED_APP_PRIVILEGES = {
   "public.business_idempotency_records": ["INSERT", "SELECT"],
   "public.business_invitations": ["INSERT", "SELECT", "UPDATE"],
   "public.devices": ["INSERT", "SELECT", "UPDATE"],
+  "public.units_of_measure": ["SELECT"],
+  "public.product_categories": ["INSERT", "SELECT", "UPDATE"],
+  "public.products": ["INSERT", "SELECT", "UPDATE"],
+  "public.product_variants": ["INSERT", "SELECT", "UPDATE"],
+  "public.product_packs": ["INSERT", "SELECT", "UPDATE"],
+  "public.product_variant_prices": ["INSERT", "SELECT"],
 };
 
 const ENVELOPE_SOURCE_CHANNELS =
@@ -359,14 +373,169 @@ const EXPECTED_CHECKS = [
     name: "devices_revoked_after_registered",
     definition: "CHECK (((revoked_at IS NULL) OR (revoked_at >= registered_at)))",
   },
+  {
+    table: "units_of_measure",
+    name: "units_of_measure_code_format",
+    definition: "CHECK (((code)::text ~ '^[A-Z]{1,16}$'::text))",
+  },
+  {
+    table: "units_of_measure",
+    name: "units_of_measure_kind_valid",
+    definition: "CHECK ((kind = ANY (ARRAY['COUNT'::text, 'MASS'::text, 'VOLUME'::text])))",
+  },
+  {
+    table: "units_of_measure",
+    name: "units_of_measure_scale_range",
+    definition: "CHECK (((scale >= 0) AND (scale <= 3)))",
+  },
+  {
+    table: "product_categories",
+    name: "product_categories_name_length",
+    definition: "CHECK (((char_length(name) >= 1) AND (char_length(name) <= 60)))",
+  },
+  { table: "product_categories", name: "product_categories_name_trimmed", definition: "CHECK ((name = btrim(name)))" },
+  {
+    table: "product_categories",
+    name: "product_categories_normalized_name_length",
+    definition: "CHECK (((char_length(normalized_name) >= 1) AND (char_length(normalized_name) <= 120)))",
+  },
+  {
+    table: "products",
+    name: "products_name_length",
+    definition: "CHECK (((char_length(name) >= 1) AND (char_length(name) <= 120)))",
+  },
+  { table: "products", name: "products_name_trimmed", definition: "CHECK ((name = btrim(name)))" },
+  {
+    table: "products",
+    name: "products_description_valid",
+    definition:
+      "CHECK (((description IS NULL) OR (((char_length(description) >= 1) AND (char_length(description) <= 500)) AND (description ~ '[^[:space:]]'::text))))",
+  },
+  ...["product_categories", "products", "product_variants"].flatMap((table) => [
+    {
+      table,
+      name: `${table}_status_valid`,
+      definition: "CHECK ((status = ANY (ARRAY['ACTIVE'::text, 'ARCHIVED'::text])))",
+    },
+    { table, name: `${table}_version_positive`, definition: "CHECK ((version >= 1))" },
+  ]),
+  {
+    table: "product_variants",
+    name: "product_variants_default_only",
+    definition: "CHECK ((is_default = true))",
+  },
+  {
+    table: "product_variants",
+    name: "product_variants_price_version_non_negative",
+    definition: "CHECK ((price_version >= 0))",
+  },
+  {
+    table: "product_variants",
+    name: "product_variants_sku_pair",
+    definition: "CHECK (((sku IS NULL) = (sku_normalized IS NULL)))",
+  },
+  {
+    table: "product_variants",
+    name: "product_variants_sku_valid",
+    definition:
+      "CHECK (((sku IS NULL) OR (((char_length(sku) >= 1) AND (char_length(sku) <= 64)) AND (sku = btrim(sku)))))",
+  },
+  {
+    table: "product_variants",
+    name: "product_variants_sku_normalized_format",
+    definition: "CHECK (((sku_normalized IS NULL) OR (sku_normalized ~ '^[A-Z0-9 ._/-]{1,64}$'::text)))",
+  },
+  {
+    table: "product_variants",
+    name: "product_variants_barcode_pair",
+    definition: "CHECK (((barcode IS NULL) = (barcode_normalized IS NULL)))",
+  },
+  {
+    table: "product_variants",
+    name: "product_variants_barcode_format",
+    definition: "CHECK (((barcode IS NULL) OR (barcode ~ '^[0-9A-Za-z-]{1,64}$'::text)))",
+  },
+  {
+    table: "product_variants",
+    name: "product_variants_barcode_normalized_format",
+    definition: "CHECK (((barcode_normalized IS NULL) OR (barcode_normalized ~ '^[0-9A-Za-z-]{1,64}$'::text)))",
+  },
+  {
+    table: "product_variants",
+    name: "product_variants_price_shape",
+    definition:
+      "CHECK ((((current_price_minor IS NULL) AND (current_price_currency IS NULL) AND (price_version = 0)) OR ((current_price_minor IS NOT NULL) AND (current_price_currency IS NOT NULL) AND (current_price_minor > 0) AND (price_version >= 1))))",
+  },
+  {
+    table: "product_packs",
+    name: "product_packs_name_length",
+    definition: "CHECK (((char_length(name) >= 1) AND (char_length(name) <= 40)))",
+  },
+  { table: "product_packs", name: "product_packs_name_trimmed", definition: "CHECK ((name = btrim(name)))" },
+  {
+    table: "product_packs",
+    name: "product_packs_factor_range",
+    definition: "CHECK (((factor_minor >= 2) AND (factor_minor <= 1000000000)))",
+  },
+  {
+    table: "product_packs",
+    name: "product_packs_status_valid",
+    definition: "CHECK ((status = ANY (ARRAY['ACTIVE'::text, 'RETIRED'::text])))",
+  },
+  ...["product_categories", "products", "product_variants", "product_packs"].map((table) => ({
+    table,
+    name: `${table}_updated_after_created`,
+    definition: "CHECK ((updated_at >= created_at))",
+  })),
+  {
+    table: "product_variant_prices",
+    name: "product_variant_prices_amount_positive",
+    definition: "CHECK ((amount_minor > 0))",
+  },
+  {
+    table: "product_variant_prices",
+    name: "product_variant_prices_price_version_positive",
+    definition: "CHECK ((price_version >= 1))",
+  },
+  {
+    table: "product_variant_prices",
+    name: "product_variant_prices_reason_valid",
+    definition:
+      "CHECK (((reason IS NULL) OR (((char_length(reason) >= 1) AND (char_length(reason) <= 500)) AND (reason ~ '[^[:space:]]'::text))))",
+  },
 ];
 
-/** @type {{ schema: string; name: string; predicate: string }[]} */
+/** @type {{ schema: string; name: string; columns: string; predicate: string }[]} */
 const EXPECTED_PARTIAL_UNIQUE_INDEXES = [
   {
     schema: "public",
     name: "business_locations_one_active_default",
+    columns: "business_id",
     predicate: "(is_default AND (status = 'ACTIVE'::text))",
+  },
+  {
+    schema: "public",
+    name: "product_variants_one_default_per_product",
+    columns: "business_id,product_id",
+    predicate: "is_default",
+  },
+  {
+    schema: "public",
+    name: "product_variants_active_barcode_unique",
+    columns: "business_id,barcode_normalized",
+    predicate: "((status = 'ACTIVE'::text) AND (barcode_normalized IS NOT NULL))",
+  },
+  {
+    schema: "public",
+    name: "product_categories_active_name_unique",
+    columns: "business_id,normalized_name",
+    predicate: "(status = 'ACTIVE'::text)",
+  },
+  {
+    schema: "public",
+    name: "product_packs_active_name_unique",
+    columns: "business_id,variant_id,name",
+    predicate: "(status = 'ACTIVE'::text)",
   },
 ];
 
@@ -402,24 +571,74 @@ const EXPECTED_TENANT_FOREIGN_KEYS = [
     ["business_invitations", "revoked_by_membership_id"],
     ["devices", "registered_by_membership_id"],
     ["devices", "revoked_by_membership_id"],
+    ["products", "created_by_membership_id"],
+    ["product_variant_prices", "set_by_membership_id"],
   ].map(([table, column]) => ({
     table,
     name: `${table}_business_id_${column}_fkey`,
     definition: `FOREIGN KEY (business_id, ${column}) REFERENCES business_memberships(business_id, id) ON UPDATE RESTRICT ON DELETE RESTRICT`,
   })),
+  ...[
+    ["products", "category_id", "product_categories"],
+    ["product_variants", "product_id", "products"],
+    ["product_packs", "variant_id", "product_variants"],
+    ["product_variant_prices", "variant_id", "product_variants"],
+  ].map(([table, column, target]) => ({
+    table,
+    name: `${table}_business_id_${column}_fkey`,
+    definition: `FOREIGN KEY (business_id, ${column}) REFERENCES ${target}(business_id, id) ON UPDATE RESTRICT ON DELETE RESTRICT`,
+  })),
+  // A stored price is in its own business's currency (ADR-008 section 3.4).
+  ...[
+    ["product_variants", "current_price_currency"],
+    ["product_variant_prices", "currency"],
+  ].map(([table, column]) => ({
+    table,
+    name: `${table}_business_id_${column}_fkey`,
+    definition: `FOREIGN KEY (business_id, ${column}) REFERENCES businesses(id, currency_code) ON UPDATE RESTRICT ON DELETE RESTRICT`,
+  })),
 ];
 
 /**
- * Globally unique one-time-secret digests: acceptance finds an invitation by
- * its token digest alone, so the digest must identify at most one row.
+ * Total unique indexes that carry a rule. Globally unique one-time-secret
+ * digests: acceptance finds an invitation by its token digest alone. A SKU is
+ * unique per business across every status, and a price version per variant
+ * (ADR-008 sections 3.4 and 5.1). (businesses.id, currency_code) is the
+ * target of the price-currency foreign keys; (business_id, id, variant_id)
+ * on packs lets later references pin a pack to its variant.
  * @type {{ schema: string; name: string; columns: string }[]}
  */
 const EXPECTED_UNIQUE_INDEXES = [
   { schema: "public", name: "business_invitations_token_hash_key", columns: "token_hash" },
+  { schema: "public", name: "businesses_id_currency_code_key", columns: "id,currency_code" },
+  {
+    schema: "public",
+    name: "product_variants_business_id_sku_normalized_key",
+    columns: "business_id,sku_normalized",
+  },
+  { schema: "public", name: "product_packs_business_id_id_variant_id_key", columns: "business_id,id,variant_id" },
+  {
+    schema: "public",
+    name: "product_variant_prices_business_id_variant_id_price_version_key",
+    columns: "business_id,variant_id,price_version",
+  },
 ];
 
 /** Reference rows every migrated database must contain (ADR-005 section 5: the pilot currency). */
 const EXPECTED_CURRENCIES = [{ code: "NGN", minorUnitDigits: 2 }];
+
+/** The exact unit reference rows (ADR-008 section 4.2): no more, no fewer, unchanged. */
+const EXPECTED_UNITS = [
+  { code: "BOTTLE", kind: "COUNT", scale: 0 },
+  { code: "G", kind: "MASS", scale: 0 },
+  { code: "KG", kind: "MASS", scale: 3 },
+  { code: "L", kind: "VOLUME", scale: 3 },
+  { code: "ML", kind: "VOLUME", scale: 0 },
+  { code: "PACK", kind: "COUNT", scale: 0 },
+  { code: "PIECE", kind: "COUNT", scale: 0 },
+  { code: "SACHET", kind: "COUNT", scale: 0 },
+  { code: "TIN", kind: "COUNT", scale: 0 },
+];
 
 const failures = [];
 const fail = (message) => failures.push(message);
@@ -550,14 +769,30 @@ try {
     fail("table public.currencies is missing");
   }
 
+  if (await tableExists("public.units_of_measure")) {
+    const { rows } = await client.query(`SELECT code, kind, scale FROM public.units_of_measure ORDER BY code`);
+    if (JSON.stringify(rows) !== JSON.stringify(EXPECTED_UNITS)) {
+      fail(`unit reference rows differ from the expected set: ${JSON.stringify(rows)}`);
+    }
+  } else {
+    fail("table public.units_of_measure is missing");
+  }
+
   for (const index of EXPECTED_PARTIAL_UNIQUE_INDEXES) {
     const { rows } = await client.query(
-      `SELECT ix.indisunique AS unique, pg_get_expr(ix.indpred, ix.indrelid) AS predicate
+      `SELECT ix.indisunique AS unique, pg_get_expr(ix.indpred, ix.indrelid) AS predicate,
+              (SELECT string_agg(a.attname, ',' ORDER BY k.ord) FROM unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ord)
+               JOIN pg_attribute a ON a.attrelid = ix.indrelid AND a.attnum = k.attnum) AS columns
        FROM pg_index ix JOIN pg_class c ON c.oid = ix.indexrelid JOIN pg_namespace n ON n.oid = c.relnamespace
        WHERE n.nspname = $1 AND c.relname = $2`,
       [index.schema, index.name],
     );
-    if (rows.length !== 1 || !rows[0].unique || rows[0].predicate !== index.predicate) {
+    if (
+      rows.length !== 1 ||
+      !rows[0].unique ||
+      rows[0].predicate !== index.predicate ||
+      rows[0].columns !== index.columns
+    ) {
       fail(`partial unique index ${index.schema}.${index.name} missing or changed`);
     }
   }
@@ -640,5 +875,5 @@ if (failures.length > 0) {
   process.exit(1);
 }
 console.log(
-  `Schema verification passed (${migrationNames.length} migration(s), ${Object.keys(APPROVED_DESTRUCTIVE_MIGRATIONS).length} approved destructive migration(s), ${Object.keys(EXPECTED_APP_PRIVILEGES).length} table grant sets, ${EXPECTED_CHECKS.length} CHECK, ${EXPECTED_PARTIAL_UNIQUE_INDEXES.length} partial unique index, ${EXPECTED_UNIQUE_INDEXES.length} unique index, ${EXPECTED_TENANT_FOREIGN_KEYS.length} tenant foreign keys, ${EXPECTED_CURRENCIES.length} reference currency, removed schemas absent: ${REMOVED_SCHEMAS.join(", ")}, test-only schemas absent: ${TEST_ONLY_SCHEMAS.join(", ")}).`,
+  `Schema verification passed (${migrationNames.length} migration(s), ${Object.keys(APPROVED_DESTRUCTIVE_MIGRATIONS).length} approved destructive migration(s), ${Object.keys(EXPECTED_APP_PRIVILEGES).length} table grant sets, ${EXPECTED_CHECKS.length} CHECK, ${EXPECTED_PARTIAL_UNIQUE_INDEXES.length} partial unique index, ${EXPECTED_UNIQUE_INDEXES.length} unique index, ${EXPECTED_TENANT_FOREIGN_KEYS.length} tenant foreign keys, ${EXPECTED_CURRENCIES.length} reference currency, ${EXPECTED_UNITS.length} units of measure, removed schemas absent: ${REMOVED_SCHEMAS.join(", ")}, test-only schemas absent: ${TEST_ONLY_SCHEMAS.join(", ")}).`,
 );

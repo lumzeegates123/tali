@@ -1,0 +1,153 @@
+// Catalog module (ADR-008 sections 3, 4.2, 5, 9 and 14). Every table except
+// `units_of_measure` is tenant-owned: business_id NOT NULL, UNIQUE
+// (business_id, id) for composite references, and composite foreign keys so a
+// reference never crosses businesses. Status, length, syntax, price-shape and
+// version CHECKs, the partial unique indexes (default variant, active barcode,
+// active category name, active pack name) and the unit seed rows live in the
+// migration SQL. No row is ever deleted; the application role has no DELETE.
+
+// Global, read-only unit reference data (ADR-008 section 4.2). Units are
+// never converted into each other; the scale is the number of decimal places
+// a quantity in that unit carries.
+model UnitOfMeasure {
+  code  String @id @db.VarChar(16)
+  kind  String
+  scale Int    @db.SmallInt
+
+  variants ProductVariant[]
+
+  @@map("units_of_measure")
+}
+
+// Flat categories (no hierarchy). `normalized_name` is computed by the
+// application (ADR-008 section 3.3); the database never relies on a collation.
+model ProductCategory {
+  businessId     String   @map("business_id") @db.Uuid
+  id             String   @id @db.Uuid
+  name           String
+  normalizedName String   @map("normalized_name")
+  status         String
+  version        Int
+  createdAt      DateTime @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime @map("updated_at") @db.Timestamptz(3)
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  products Product[]
+
+  @@unique([businessId, id])
+  @@index([businessId, status])
+  @@map("product_categories")
+}
+
+// Products. The name is not unique. Product and default-variant status
+// equality is an application invariant (ADR-008 section 3.1).
+model Product {
+  businessId            String   @map("business_id") @db.Uuid
+  id                    String   @id @db.Uuid
+  name                  String
+  description           String?
+  categoryId            String?  @map("category_id") @db.Uuid
+  status                String
+  version               Int
+  createdByMembershipId String   @map("created_by_membership_id") @db.Uuid
+  createdAt             DateTime @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime @map("updated_at") @db.Timestamptz(3)
+
+  business  Business           @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  category  ProductCategory?   @relation(fields: [businessId, categoryId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  createdBy BusinessMembership @relation("ProductCreatedBy", fields: [businessId, createdByMembershipId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  variants ProductVariant[]
+
+  @@unique([businessId, id])
+  @@index([businessId, status])
+  @@index([businessId, name])
+  @@map("products")
+}
+
+// Variants. The MVP has exactly one default variant per product. The current
+// price is denormalized here and must be in the business currency (composite
+// FK to businesses (id, currency_code)); its history is product_variant_prices.
+// SKU is unique per business across every status; barcode uniqueness covers
+// ACTIVE variants only. Build 2 constrains is_default to TRUE in migration SQL
+// (product_variants_default_only); future multi-variant support may relax that
+// CHECK while keeping the one-default-per-product partial unique index.
+model ProductVariant {
+  businessId           String   @map("business_id") @db.Uuid
+  id                   String   @id @db.Uuid
+  productId            String   @map("product_id") @db.Uuid
+  isDefault            Boolean  @map("is_default")
+  status               String
+  sku                  String?
+  skuNormalized        String?  @map("sku_normalized")
+  barcode              String?
+  barcodeNormalized    String?  @map("barcode_normalized")
+  stockUnitCode        String   @map("stock_unit_code") @db.VarChar(16)
+  trackInventory       Boolean  @map("track_inventory")
+  currentPriceMinor    BigInt?  @map("current_price_minor")
+  currentPriceCurrency String?  @map("current_price_currency") @db.VarChar(3)
+  priceVersion         Int      @map("price_version")
+  version              Int
+  createdAt            DateTime @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime @map("updated_at") @db.Timestamptz(3)
+
+  business      Business      @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  product       Product       @relation(fields: [businessId, productId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  stockUnit     UnitOfMeasure @relation(fields: [stockUnitCode], references: [code], onDelete: Restrict, onUpdate: Restrict)
+  priceCurrency Business?     @relation("VariantPriceCurrency", fields: [businessId, currentPriceCurrency], references: [id, currencyCode], onDelete: Restrict, onUpdate: Restrict)
+
+  packs  ProductPack[]
+  prices ProductVariantPrice[]
+
+  @@unique([businessId, id])
+  @@unique([businessId, skuNormalized])
+  @@index([businessId, productId])
+  @@map("product_variants")
+}
+
+// Commercial packs: a named whole-number multiple of the variant's stock unit
+// (ADR-008 section 4.3). No barcode and no price. Packs are retired, never
+// edited or deleted.
+model ProductPack {
+  businessId  String   @map("business_id") @db.Uuid
+  id          String   @id @db.Uuid
+  variantId   String   @map("variant_id") @db.Uuid
+  name        String
+  factorMinor BigInt   @map("factor_minor")
+  status      String
+  createdAt   DateTime @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime @map("updated_at") @db.Timestamptz(3)
+
+  business Business       @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  variant  ProductVariant @relation(fields: [businessId, variantId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([businessId, id])
+  @@unique([businessId, id, variantId])
+  @@index([businessId, variantId])
+  @@map("product_packs")
+}
+
+// Append-only price history (ADR-008 section 3.4): INSERT and SELECT only for
+// the application role. The amount is in integer minor units of the business
+// currency.
+model ProductVariantPrice {
+  businessId        String   @map("business_id") @db.Uuid
+  id                String   @id @db.Uuid
+  variantId         String   @map("variant_id") @db.Uuid
+  amountMinor       BigInt   @map("amount_minor")
+  currency          String   @db.VarChar(3)
+  priceVersion      Int      @map("price_version")
+  effectiveAt       DateTime @map("effective_at") @db.Timestamptz(3)
+  setByMembershipId String   @map("set_by_membership_id") @db.Uuid
+  reason            String?
+
+  business      Business           @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  variant       ProductVariant     @relation(fields: [businessId, variantId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  priceCurrency Business           @relation("PriceHistoryCurrency", fields: [businessId, currency], references: [id, currencyCode], onDelete: Restrict, onUpdate: Restrict)
+  setBy         BusinessMembership @relation("PriceSetBy", fields: [businessId, setByMembershipId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([businessId, id])
+  @@unique([businessId, variantId, priceVersion])
+  @@map("product_variant_prices")
+}
