@@ -432,8 +432,8 @@ describe("catalog repositories (PostgreSQL)", () => {
   });
 
   describe("price history", () => {
-    it("is append-only: the adapter has no other method, and a duplicate version is ConflictError", async () => {
-      expect(Object.keys(repos.productPriceHistory)).toEqual(["append"]);
+    it("is append-only: the adapter only appends and lists, and a duplicate version is ConflictError", async () => {
+      expect(Object.keys(repos.productPriceHistory)).toEqual(["append", "listForVariant"]);
       const created = newProduct(a, { priceMinor: 500n });
       await run(async (scope) => {
         await repos.products.insert(scope, created.item);

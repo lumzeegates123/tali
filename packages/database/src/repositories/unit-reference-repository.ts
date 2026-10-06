@@ -12,5 +12,9 @@ export function createUnitReferenceRepository(): UnitReferenceRepository {
       const row = await transactionClient(scope).unitOfMeasure.findUnique({ where: { code } });
       return row === null ? undefined : defineUnit(row.code, row.kind as UnitKind, row.scale);
     },
+    async listAll(scope) {
+      const rows = await transactionClient(scope).unitOfMeasure.findMany({ orderBy: { code: "asc" } });
+      return rows.map((row) => defineUnit(row.code, row.kind as UnitKind, row.scale));
+    },
   };
 }

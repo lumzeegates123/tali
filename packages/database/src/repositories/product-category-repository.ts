@@ -5,6 +5,7 @@ import { parseBusinessId, parseProductCategoryId, restoreCategory } from "@tali/
 import type { ProductCategory as ProductCategoryRow } from "../generated/prisma/client.js";
 import { translatingUniqueViolations } from "../errors/unique-violations.js";
 import { transactionClient } from "../unit-of-work/transaction-scope.js";
+import { keysetArgs, toPage } from "./pagination.js";
 
 export const CATEGORY_CONFLICTS: Readonly<Record<string, string>> = Object.freeze({
   product_categories_active_name_unique: "An active category with this name already exists",
@@ -61,6 +62,23 @@ export function createProductCategoryRepository(): ProductCategoryRepository {
         where: { businessId_id: { businessId, id: categoryId } },
       });
       return row === null ? undefined : toCategory(row);
+    },
+
+    async findById(scope, businessId, categoryId) {
+      const row = await transactionClient(scope).productCategory.findUnique({
+        where: { businessId_id: { businessId, id: categoryId } },
+      });
+      return row === null ? undefined : toCategory(row);
+    },
+
+    async list(scope, businessId, status, request) {
+      const page = keysetArgs(request);
+      const rows = await transactionClient(scope).productCategory.findMany({
+        where: { businessId, status, ...page.where },
+        orderBy: page.orderBy,
+        take: page.take,
+      });
+      return toPage(rows, request, (row) => row.id, toCategory);
     },
 
     async update(scope, previous, next) {

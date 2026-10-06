@@ -45,7 +45,7 @@ import type { Page, PageRequest } from "../queries/pagination.js";
 import { FailureInjection } from "./failure-injection.js";
 import type { InMemoryUnitOfWork, RollbackParticipant } from "./in-memory-unit-of-work.js";
 
-function page<T>(items: readonly T[], idOf: (item: T) => string, request: PageRequest): Page<T> {
+export function page<T>(items: readonly T[], idOf: (item: T) => string, request: PageRequest): Page<T> {
   const ordered = [...items].sort((a, b) => (idOf(a) < idOf(b) ? -1 : idOf(a) > idOf(b) ? 1 : 0));
   const after = request.after;
   const remaining = after === undefined ? ordered : ordered.filter((item) => idOf(item) > after);

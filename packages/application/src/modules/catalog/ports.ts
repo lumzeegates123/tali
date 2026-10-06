@@ -2,8 +2,10 @@ import type {
   BarcodeKey,
   BusinessId,
   CatalogProduct,
+  CatalogStatus,
   CategoryNameKey,
   PackName,
+  PackStatus,
   ProductCategory,
   ProductCategoryId,
   ProductId,
@@ -17,6 +19,23 @@ import type {
   VariantInventoryState,
 } from "@tali/domain";
 import type { TransactionScope } from "../../ports/unit-of-work.js";
+import type { Page, PageRequest } from "../../queries/pagination.js";
+
+/**
+ * A product search within one business. A product matches when its name
+ * contains `nameContains` case-insensitively (taken literally: no wildcards),
+ * or its default variant's normalized SKU or barcode equals the given key.
+ */
+export interface ProductSearch {
+  readonly nameContains: string;
+  readonly skuKey?: SkuKey;
+  readonly barcodeKey?: BarcodeKey;
+}
+
+export interface ProductListQuery {
+  readonly status: CatalogStatus;
+  readonly search?: ProductSearch;
+}
 
 /**
  * Products with their default variant (tenant-owned; ADR-008 section 3).
@@ -33,6 +52,15 @@ export interface ProductRepository {
     businessId: BusinessId,
     productId: ProductId,
   ): Promise<CatalogProduct | undefined>;
+  /** The product of this business and its default variant, in any status, without locking. */
+  findById(scope: TransactionScope, businessId: BusinessId, productId: ProductId): Promise<CatalogProduct | undefined>;
+  /** This business's products in the given status, optionally searched, in ascending ID order. */
+  list(
+    scope: TransactionScope,
+    businessId: BusinessId,
+    query: ProductListQuery,
+    page: PageRequest,
+  ): Promise<Page<CatalogProduct>>;
   /**
    * Persists a change of `previous` to `next` (same IDs and business).
    * Throws ConcurrentModificationError when the stored product version is no
@@ -60,6 +88,13 @@ export interface ProductRepository {
  */
 export interface ProductPriceHistoryRepository {
   append(scope: TransactionScope, entry: ProductVariantPrice): Promise<void>;
+  /** The variant's price history in ascending ID order (UUIDv7 IDs follow creation order). */
+  listForVariant(
+    scope: TransactionScope,
+    businessId: BusinessId,
+    variantId: ProductVariantId,
+    page: PageRequest,
+  ): Promise<Page<ProductVariantPrice>>;
 }
 
 /** Flat product categories (tenant-owned; ADR-008 section 3.3). */
@@ -74,6 +109,19 @@ export interface ProductCategoryRepository {
     businessId: BusinessId,
     categoryId: ProductCategoryId,
   ): Promise<ProductCategory | undefined>;
+  /** The category of this business, in any status, without locking. */
+  findById(
+    scope: TransactionScope,
+    businessId: BusinessId,
+    categoryId: ProductCategoryId,
+  ): Promise<ProductCategory | undefined>;
+  /** This business's categories in the given status, in ascending ID order. */
+  list(
+    scope: TransactionScope,
+    businessId: BusinessId,
+    status: CatalogStatus,
+    page: PageRequest,
+  ): Promise<Page<ProductCategory>>;
   /** Throws ConcurrentModificationError when the stored version is no longer `previous.version`. */
   update(scope: TransactionScope, previous: ProductCategory, next: ProductCategory): Promise<void>;
   /** The ACTIVE category of this business with this case-insensitive name key. */
@@ -94,6 +142,14 @@ export interface ProductPackRepository {
   ): Promise<ProductPack | undefined>;
   /** Persists ACTIVE to RETIRED. Throws ConcurrentModificationError when the stored pack is no longer ACTIVE. */
   update(scope: TransactionScope, previous: ProductPack, next: ProductPack): Promise<void>;
+  /** The variant's packs in the given status, in ascending ID order. */
+  listForVariant(
+    scope: TransactionScope,
+    businessId: BusinessId,
+    variantId: ProductVariantId,
+    status: PackStatus,
+    page: PageRequest,
+  ): Promise<Page<ProductPack>>;
   /** True when the variant has at least one ACTIVE pack. */
   hasActivePacks(scope: TransactionScope, businessId: BusinessId, variantId: ProductVariantId): Promise<boolean>;
   /** The ACTIVE pack of this variant with exactly this normalized name. */
@@ -108,6 +164,8 @@ export interface ProductPackRepository {
 /** The approved unit reference data (global, read-only; ADR-008 section 4.2). */
 export interface UnitReferenceRepository {
   findByCode(scope: TransactionScope, code: UnitCode): Promise<UnitDefinition | undefined>;
+  /** Every approved unit, ordered by code. The set is small and fixed, so it is not paginated. */
+  listAll(scope: TransactionScope): Promise<readonly UnitDefinition[]>;
 }
 
 /**

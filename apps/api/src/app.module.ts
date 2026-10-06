@@ -10,6 +10,10 @@ import { BusinessDevicesController } from "./business/business-devices.controlle
 import { BusinessScopedController } from "./business/business-scoped.controller.js";
 import { BusinessTeamController } from "./business/business-team.controller.js";
 import { BusinessesController } from "./business/businesses.controller.js";
+import { CatalogUnitsController } from "./catalog/catalog-units.controller.js";
+import { CategoriesController } from "./catalog/categories.controller.js";
+import { PacksController } from "./catalog/packs.controller.js";
+import { ProductsController } from "./catalog/products.controller.js";
 import type { ApiRuntime } from "./composition/api-runtime.js";
 import {
   API_RUNTIME,
@@ -48,6 +52,10 @@ export class AppModule {
       BusinessScopedController,
       BusinessTeamController,
       BusinessDevicesController,
+      ProductsController,
+      CategoriesController,
+      PacksController,
+      CatalogUnitsController,
     ];
     const providers: Provider[] = [
       { provide: SERVER_CONFIG, useValue: runtime.config },

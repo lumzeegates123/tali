@@ -1,4 +1,4 @@
-import type { ProductRepository } from "@tali/application";
+import type { ProductRepository, ProductSearch } from "@tali/application";
 import { assertCatalogProductTransition, ConcurrentModificationError } from "@tali/application";
 import type { CatalogProduct, ProductVariant } from "@tali/domain";
 import {
@@ -14,6 +14,7 @@ import {
 import type { Product as ProductRow, ProductVariant as ProductVariantRow } from "../generated/prisma/client.js";
 import { translatingUniqueViolations } from "../errors/unique-violations.js";
 import { transactionClient } from "../unit-of-work/transaction-scope.js";
+import { keysetArgs, toPage } from "./pagination.js";
 
 /**
  * Unique constraints a concurrent request can win (ADR-008 section 5); the
@@ -124,6 +125,23 @@ function sameVariantState(a: ProductVariant, b: ProductVariant): boolean {
   });
 }
 
+/** LIKE treats `%`, `_` and the escape character as syntax; a search term is matched literally. */
+export function escapeLikePattern(term: string): string {
+  return term.replace(/[\\%_]/g, (character) => `\\${character}`);
+}
+
+function searchFilter(businessId: string, search: ProductSearch) {
+  return {
+    OR: [
+      { name: { contains: escapeLikePattern(search.nameContains), mode: "insensitive" as const } },
+      ...(search.skuKey === undefined ? [] : [{ variants: { some: { businessId, skuNormalized: search.skuKey } } }]),
+      ...(search.barcodeKey === undefined
+        ? []
+        : [{ variants: { some: { businessId, barcodeNormalized: search.barcodeKey } } }]),
+    ],
+  };
+}
+
 /**
  * Products with their default variant (tenant-owned; ADR-008 sections 3.1,
  * 3.2 and 5). Every lookup is by (business_id, ...): a record of another
@@ -172,6 +190,35 @@ export function createProductRepository(): ProductRepository {
         include: { variants: { orderBy: { id: "asc" } } },
       });
       return row === null ? undefined : toCatalogProduct(row, row.variants);
+    },
+
+    async findById(scope, businessId, productId) {
+      const row = await transactionClient(scope).product.findUnique({
+        where: { businessId_id: { businessId, id: productId } },
+        include: { variants: { orderBy: { id: "asc" } } },
+      });
+      return row === null ? undefined : toCatalogProduct(row, row.variants);
+    },
+
+    async list(scope, businessId, query, request) {
+      const page = keysetArgs(request);
+      const rows = await transactionClient(scope).product.findMany({
+        where: {
+          businessId,
+          status: query.status,
+          ...page.where,
+          ...(query.search === undefined ? {} : searchFilter(businessId, query.search)),
+        },
+        include: { variants: { orderBy: { id: "asc" } } },
+        orderBy: page.orderBy,
+        take: page.take,
+      });
+      return toPage(
+        rows,
+        request,
+        (row) => row.id,
+        (row) => toCatalogProduct(row, row.variants),
+      );
     },
 
     async update(scope, previous, next) {
