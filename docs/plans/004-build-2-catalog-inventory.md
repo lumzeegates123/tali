@@ -2,8 +2,8 @@
 
 Status: **PLAN APPROVED WITH CHANGES (2026-10-05); the changes are incorporated here. Slice 0 (decisions)
 COMPLETE (2026-10-05).** The design is recorded in `docs/decisions/ADR-008-catalog-quantity-inventory.md`,
-**ACCEPTED (2026-10-05)** by the human maintainer. **Build 2 implementation is authorized to proceed to Slice 1**;
-Slice 1 is not started. Where this plan and an ADR differ, the ADR is authoritative (`AGENTS.md` section 4).
+**ACCEPTED (2026-10-05)** by the human maintainer. **Slice 1 (catalog domain and application) COMPLETE
+(2026-10-05)**, with all gates passed, pending human review (`docs/audits/build-2-slice-1.md`). Where this plan and an ADR differ, the ADR is authoritative (`AGENTS.md` section 4).
 
 Scope: implementation steps 3 (product catalog) and 4 (inventory) of `docs/product/mvp-scope.md`, quantity-only.
 
@@ -21,7 +21,7 @@ Not in Build 2:
 | Slice | Content                                                                                       | Status                         |
 | ----- | --------------------------------------------------------------------------------------------- | ------------------------------ |
 | 0     | ADR-008 (accepted), this plan, ADR index row, mvp-scope approved decision and narrowed open decision 9 | **COMPLETE** (2026-10-05; ADR-008 accepted) |
-| 1     | Catalog domain and application: `Quantity`, units, Product/Variant/Category/Pack, identifiers, price history, use cases, permissions, audit actions | Not started (authorized; ADR-008 accepted) |
+| 1     | Catalog domain and application: `Quantity`, units, Product/Variant/Category/Pack, identifiers, price history, use cases, permissions, audit actions | **COMPLETE** (2026-10-05; `docs/audits/build-2-slice-1.md`) |
 | 2     | Catalog schema, migration, `verify-schema` expectations and repositories                      | Not started                    |
 | 3     | Catalog API and shared contracts                                                              | Not started                    |
 | 4     | Catalog clients (web and mobile)                                                              | Not started                    |
@@ -34,7 +34,7 @@ Not in Build 2:
 
 ```mermaid
 flowchart TD
-  S0["S0 Decisions: ADR-008 and plan 004 (COMPLETE)"] --> S1["S1 Catalog domain and application"]
+  S0["S0 Decisions: ADR-008 and plan 004 (COMPLETE)"] --> S1["S1 Catalog domain and application (COMPLETE)"]
   S1 --> S2["S2 Catalog schema and repositories"]
   S2 --> S3["S3 Catalog API"]
   S3 --> S4["S4 Catalog clients"]
@@ -178,7 +178,12 @@ process-startup or resource failure in which no assertion failed, and it is docu
   configuration version 0, and two concurrent initial creates produce exactly one winner; the stock-unit-change
   guard covers configured thresholds at every location of the business.
 
-### S1. Catalog domain and application
+### S1. Catalog domain and application: COMPLETE (2026-10-05)
+
+- Outcome: all gates passed (`pnpm verify` and `pnpm test:integration` exit 0, gitleaks clean); audit in
+  `docs/audits/build-2-slice-1.md`. Review correction applied: `expectedVersion` is checked before no-op detection
+  (ADR-008 section 9). Accepted by the human maintainer: stock-unit change blocked while ACTIVE packs exist;
+  RetirePack without `expectedVersion`; `VERSION_CONFLICT` mapped to 409 in the API error map.
 
 - Content:
   - the `Quantity` kernel value object and unit reference model;

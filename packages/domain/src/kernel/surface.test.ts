@@ -11,18 +11,25 @@ const APPROVED_RUNTIME_EXPORTS = [
   "BusinessDate",
   "KernelError",
   "MAX_MINOR_UNIT_DIGITS",
+  "MAX_QUANTITY_MINOR",
+  "MAX_UNIT_SCALE",
   "Money",
+  "Quantity",
   "RoundingMode",
+  "UNIT_KINDS",
   "absBigInt",
   "allocateByWeights",
   "allocateEvenly",
   "defineCurrency",
+  "defineUnit",
   "divideAndRound",
   "isCurrencyCode",
+  "isUnitCode",
   "isUuidV7",
   "parseCurrencyCode",
   "parseId",
   "parseTimeZoneId",
+  "parseUnitCode",
   "parseUuid",
   "uuidVersion",
 ];
@@ -39,8 +46,11 @@ describe("@tali/domain/kernel surface", () => {
     for (const name of Object.keys(kernel)) {
       expect(name).not.toMatch(FORBIDDEN_CONCEPTS);
     }
-    const moneyMethods = Object.getOwnPropertyNames(kernel.Money.prototype);
-    for (const method of moneyMethods) {
+    const valueObjectMethods = [
+      ...Object.getOwnPropertyNames(kernel.Money.prototype),
+      ...Object.getOwnPropertyNames(kernel.Quantity.prototype),
+    ];
+    for (const method of valueObjectMethods) {
       expect(method).not.toMatch(FORBIDDEN_CONCEPTS);
     }
   });

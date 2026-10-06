@@ -15,6 +15,7 @@ import {
   UserDisabledError,
   UserNotRegisteredError,
   ValidationError,
+  VersionConflictError,
 } from "@tali/application";
 import { ErrorEnvelopeSchema } from "@tali/shared";
 import { describe, expect, it } from "vitest";
@@ -60,6 +61,7 @@ describe("ErrorEnvelopeFilter", () => {
     [new IdempotencyKeyReusedError(), 409, "IDEMPOTENCY_KEY_REUSED"],
     [new IdempotencyInProgressError(), 409, "IDEMPOTENCY_IN_PROGRESS"],
     [new ConcurrentModificationError(), 409, "CONCURRENT_MODIFICATION"],
+    [new VersionConflictError(), 409, "VERSION_CONFLICT"],
   ] as const)("maps %s to %i %s", (error: ApplicationError, status, code) => {
     const result = run(error);
     expect(result.status).toBe(status);

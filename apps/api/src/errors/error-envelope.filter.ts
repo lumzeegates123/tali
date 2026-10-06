@@ -20,6 +20,7 @@ const APPLICATION_STATUS: Record<ApplicationErrorCode, number> = {
   IDEMPOTENCY_KEY_REUSED: HttpStatus.CONFLICT,
   IDEMPOTENCY_IN_PROGRESS: HttpStatus.CONFLICT,
   CONCURRENT_MODIFICATION: HttpStatus.CONFLICT,
+  VERSION_CONFLICT: HttpStatus.CONFLICT,
 };
 
 const HTTP_CODE: Readonly<Record<number, string>> = {

@@ -49,6 +49,7 @@ export {
   UserDisabledError,
   UserNotRegisteredError,
   ValidationError,
+  VersionConflictError,
 } from "./errors/application-error.js";
 export { toApplicationError, withDomainRules } from "./errors/domain-errors.js";
 export type { AuditActionDefinition, AuditEntityType, AuditRegistry, AuditStream } from "./audit/audit-action.js";
@@ -107,6 +108,7 @@ export type {
 } from "./idempotency/business-idempotency-store.js";
 export { idempotencyActorOf } from "./idempotency/business-idempotency-store.js";
 export * from "./modules/business/index.js";
+export * from "./modules/catalog/index.js";
 export * from "./modules/device/index.js";
 export * from "./modules/identity/index.js";
 export * from "./modules/location/index.js";

@@ -1,6 +1,6 @@
 import { DomainError, KernelError } from "@tali/domain";
 import type { ApplicationError } from "./application-error.js";
-import { ConflictError, PermissionDeniedError, ValidationError } from "./application-error.js";
+import { ConflictError, PermissionDeniedError, ValidationError, VersionConflictError } from "./application-error.js";
 
 /** Maps a domain rule violation to its ApplicationError (ADR-005 section 13.1). */
 export function toApplicationError(error: DomainError | KernelError, field?: string): ApplicationError {
@@ -17,6 +17,8 @@ export function toApplicationError(error: DomainError | KernelError, field?: str
       return new ConflictError(error.message);
     case "OWNER_REQUIRED":
       return new PermissionDeniedError(error.message);
+    case "VERSION_CONFLICT":
+      return new VersionConflictError();
   }
 }
 

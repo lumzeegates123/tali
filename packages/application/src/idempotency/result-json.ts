@@ -23,6 +23,20 @@ export function optionalTextAt(object: JsonObject, name: string): string | undef
   return value;
 }
 
+export function booleanAt(object: JsonObject, name: string): boolean {
+  const value = object[name];
+  if (typeof value !== "boolean") throw new Error(`stored result "${name}" is not a boolean`);
+  return value;
+}
+
+export function integerAt(object: JsonObject, name: string): number {
+  const value = object[name];
+  if (typeof value !== "number" || !Number.isSafeInteger(value)) {
+    throw new Error(`stored result "${name}" is not an integer`);
+  }
+  return value;
+}
+
 export function instantAt(object: JsonObject, name: string): Date {
   return new Date(textAt(object, name));
 }
