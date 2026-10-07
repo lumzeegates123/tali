@@ -121,7 +121,11 @@ export function CategoriesPanel({ allowed }: { readonly allowed: CatalogAffordan
                   onDone={() => {
                     setEditing(undefined);
                   }}
-                  onFailure={setRowFailure}
+                  onUnavailable={(failure) => {
+                    setEditing(undefined);
+                    setRowFailure(failure);
+                    void store.loadCategories(categories.status);
+                  }}
                 />
               </li>
             ) : (
@@ -214,19 +218,32 @@ export function CategoriesPanel({ allowed }: { readonly allowed: CatalogAffordan
   );
 }
 
+/**
+ * Renames one category with the version it was loaded at. VERSION_CONFLICT
+ * keeps the typed name and offers Reload latest, whose version the next save
+ * uses; nothing is retried automatically. NOT_FOUND leaves the form.
+ */
 function RenameForm({
   category,
   onDone,
-  onFailure,
+  onUnavailable,
 }: {
   readonly category: CategoryResponse;
   readonly onDone: () => void;
-  readonly onFailure: (failure: ApiFailure) => void;
+  readonly onUnavailable: (failure: ApiFailure) => void;
 }) {
   const store = useCatalogStore();
+  const [base, setBase] = useState(category);
   const [name, setName] = useState(category.name);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
+  const [failure, setFailure] = useState<ApiFailure | undefined>(undefined);
+  const [latest, setLatest] = useState<CategoryResponse | undefined>(undefined);
+
+  function fail(outcomeFailure: ApiFailure) {
+    if (isCode(outcomeFailure, "NOT_FOUND")) onUnavailable(outcomeFailure);
+    else setFailure(outcomeFailure);
+  }
 
   function submit(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -234,28 +251,56 @@ function RenameForm({
       setError("Enter a category name.");
       return;
     }
-    if (name === category.name) {
+    setError(undefined);
+    if (name === base.name) {
       onDone();
       return;
     }
+    setFailure(undefined);
     setSaving(true);
-    void store.updateCategory(category.id, { expectedVersion: category.version, name }).then((outcome) => {
+    void store.updateCategory(base.id, { expectedVersion: base.version, name }).then((outcome) => {
       setSaving(false);
       if (outcome.status === "ok") onDone();
-      else if (outcome.status === "failed") onFailure(outcome.failure);
+      else if (outcome.status === "failed") fail(outcome.failure);
+    });
+  }
+
+  function reloadLatest() {
+    void store.getCategory(base.id).then((outcome) => {
+      if (outcome.status === "ok") {
+        setBase(outcome.value);
+        setLatest(outcome.value);
+        setFailure(undefined);
+      } else if (outcome.status === "failed") {
+        fail(outcome.failure);
+      }
     });
   }
 
   return (
     <form onSubmit={submit} noValidate aria-busy={saving}>
       <TextField
-        id={`rename-${category.id}`}
-        label={`New name for ${category.name}`}
+        id={`rename-${base.id}`}
+        label={`New name for ${base.name}`}
         value={name}
         onChange={setName}
         disabled={saving}
-        error={error}
+        error={error ?? (rejectedFields(failure).includes("name") ? "This name was not accepted." : undefined)}
       />
+      {failure === undefined ? null : <FailureAlert failure={failure} notFoundScope="resource" />}
+      {isCode(failure, "VERSION_CONFLICT") ? (
+        <div className="actions">
+          <button type="button" onClick={reloadLatest}>
+            Reload latest
+          </button>
+        </div>
+      ) : null}
+      {latest === undefined ? null : (
+        <p className="notice" role="status">
+          Latest saved name (version {latest.version}): {latest.name}. Your new name is still in the form; save again to
+          apply it.
+        </p>
+      )}
       <div className="actions">
         <button type="submit" disabled={saving}>
           {saving ? "Saving…" : "Save name"}

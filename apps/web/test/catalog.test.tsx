@@ -413,6 +413,61 @@ describe("categories", () => {
     await act(settle);
     expect(api.to(`POST ${BASE}/categories/${CATEGORY.id}/archive`)[0]?.body).toEqual({ expectedVersion: 2 });
   });
+
+  it("keeps the typed name on VERSION_CONFLICT and saves it with the reloaded version", async () => {
+    const latest = { ...CATEGORY, name: "Beverages", version: 2 };
+    const PATCH = `PATCH ${BASE}/categories/${CATEGORY.id}`;
+    const api = catalogApi()
+      .on(PATCH, apiError(409, "VERSION_CONFLICT"), json(200, { ...latest, name: "Soft Drinks", version: 3 }))
+      .on(`GET ${BASE}/categories/${CATEGORY.id}`, json(200, latest));
+    await openCatalog(api);
+    fireEvent.click(
+      within(screen.getByRole("navigation", { name: "Catalog sections" })).getByRole("button", { name: "Categories" }),
+    );
+    await act(settle);
+    expect(CATEGORY.version).toBe(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Rename Drinks" }));
+    fireEvent.change(screen.getByLabelText("New name for Drinks"), { target: { value: "Soft Drinks" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save name" }));
+    await act(settle);
+    expect(api.to(PATCH)).toHaveLength(1);
+    expect(api.to(PATCH)[0]?.body).toEqual({ expectedVersion: 1, name: "Soft Drinks" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Reload latest" }));
+    await act(settle);
+    expect(api.to(`GET ${BASE}/categories/${CATEGORY.id}`)).toHaveLength(1);
+    expect(api.to(PATCH)).toHaveLength(1);
+    expect(screen.getByLabelText<HTMLInputElement>("New name for Beverages").value).toBe("Soft Drinks");
+    expect(screen.getByRole("status").textContent).toContain("Latest saved name (version 2): Beverages.");
+
+    fireEvent.click(screen.getByRole("button", { name: "Save name" }));
+    await act(settle);
+    expect(api.to(PATCH)).toHaveLength(2);
+    expect(api.to(PATCH)[1]?.body).toEqual({ expectedVersion: 2, name: "Soft Drinks" });
+  });
+
+  it("a rename NOT_FOUND is a neutral notice and returns to the reloaded category list", async () => {
+    const api = catalogApi().on(`PATCH ${BASE}/categories/${CATEGORY.id}`, apiError(404, "NOT_FOUND"));
+    await openCatalog(api);
+    fireEvent.click(
+      within(screen.getByRole("navigation", { name: "Catalog sections" })).getByRole("button", { name: "Categories" }),
+    );
+    await act(settle);
+    const listed = api.to(`GET ${BASE}/categories`).length;
+
+    fireEvent.click(screen.getByRole("button", { name: "Rename Drinks" }));
+    fireEvent.change(screen.getByLabelText("New name for Drinks"), { target: { value: "Soft Drinks" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save name" }));
+    await act(settle);
+
+    expect(
+      screen.getByText("This item is not available. It may have been removed, or you may no longer have access to it."),
+    ).toBeDefined();
+    expect(screen.queryByLabelText("New name for Drinks")).toBeNull();
+    expect(api.to(`GET ${BASE}/categories`).length).toBeGreaterThan(listed);
+    expect(screen.getByRole("navigation", { name: "Business sections" })).toBeDefined();
+  });
 });
 
 describe("NOT_FOUND semantics", () => {

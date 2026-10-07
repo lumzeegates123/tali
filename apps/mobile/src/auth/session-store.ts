@@ -121,6 +121,13 @@ export interface BusinessRequestPolicy {
   readonly notFoundScope: "business" | "resource";
 }
 
+/** The session and business selection a request began under. */
+interface Selection {
+  readonly epoch: number;
+  readonly revision: number;
+  readonly businessId: string;
+}
+
 /**
  * Passed to one request callback and valid for that request only; never kept
  * by the caller. `device` is present only when this device holds a
@@ -230,6 +237,8 @@ export class SessionStore {
   #auth: AuthSession | undefined;
   /** Incremented whenever the session is replaced or cleared; late responses from an older session are dropped. */
   #epoch = 0;
+  /** Advances whenever the selected business changes; the session epoch does not. */
+  #selectionRevision = 0;
   #createAttempt: CreateAttempt | undefined;
   #createInFlight = false;
   readonly #deviceSupported: boolean;
@@ -478,13 +487,21 @@ export class SessionStore {
     policy: BusinessRequestPolicy,
     send: (api: TaliApiClient, credentials: BusinessRequestCredentials) => Promise<ApiResult<T>>,
   ): Promise<BusinessRequestResult<T>> {
-    if (this.#auth === undefined || this.#snapshot.selectedBusinessId !== businessId) return IGNORED;
-    const epoch = this.#epoch;
+    const auth = this.#auth;
+    if (auth === undefined || this.#snapshot.selectedBusinessId !== businessId) return IGNORED;
+    const selection = this.#selection(businessId);
     if (this.#deviceLoad !== undefined) await this.#deviceLoad;
-    if (epoch !== this.#epoch || this.#snapshot.selectedBusinessId !== businessId) return IGNORED;
+    if (!this.#isSelected(selection)) return IGNORED;
+    const current = await auth.accessToken();
+    // Token acquisition may be slow: a request must never reach the API after a sign-out or a business switch.
+    if (!this.#isSelected(selection)) return IGNORED;
     const device = this.#device?.businessId === businessId ? this.#device.registration : undefined;
-    const result = await this.#withToken((token) => send(this.#api, { token, device }));
-    if (epoch !== this.#epoch || this.#snapshot.selectedBusinessId !== businessId) return IGNORED;
+    const result = current.ok
+      ? await send(this.#api, { token: current.token, device })
+      : current.reason === "ended"
+        ? SESSION_ENDED
+        : PROVIDER_UNAVAILABLE;
+    if (!this.#isSelected(selection)) return IGNORED;
     if (result.ok) return result;
     if (device !== undefined && isApiError(result.failure, "DEVICE_NOT_TRUSTED")) {
       await this.#forgetDevice(businessId, device);
@@ -594,6 +611,19 @@ export class SessionStore {
     const current = await auth.accessToken();
     if (!current.ok) return current.reason === "ended" ? SESSION_ENDED : PROVIDER_UNAVAILABLE;
     return call(current.token);
+  }
+
+  #selection(businessId: string): Selection {
+    return { epoch: this.#epoch, revision: this.#selectionRevision, businessId };
+  }
+
+  /** Leaving a business and selecting it again is a new selection: requests from the old one never send. */
+  #isSelected(selection: Selection): boolean {
+    return (
+      selection.epoch === this.#epoch &&
+      selection.revision === this.#selectionRevision &&
+      this.#snapshot.selectedBusinessId === selection.businessId
+    );
   }
 
   async #loadDevice(epoch: number, businessId: string): Promise<void> {
@@ -756,6 +786,7 @@ export class SessionStore {
   }
 
   #set(next: SessionSnapshot): void {
+    if (next.selectedBusinessId !== this.#snapshot.selectedBusinessId) this.#selectionRevision += 1;
     this.#snapshot = Object.freeze(this.#withDevice(next));
     for (const listener of this.#listeners) listener();
   }

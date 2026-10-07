@@ -104,6 +104,13 @@ export interface BusinessRequestPolicy {
   readonly notFoundScope: "business" | "resource";
 }
 
+/** The session and business selection a request began under. */
+interface Selection {
+  readonly epoch: number;
+  readonly revision: number;
+  readonly businessId: string;
+}
+
 /** Passed to one request callback and valid for that request only; never kept by the caller. */
 export interface BusinessRequestCredentials {
   readonly token: AccessToken;
@@ -185,6 +192,8 @@ export class SessionStore {
   #auth: AuthSession | undefined;
   /** Incremented whenever the session is replaced or cleared; late responses from an older session are dropped. */
   #epoch = 0;
+  /** Advances whenever the selected business changes; the session epoch does not. */
+  #selectionRevision = 0;
   #createAttempt: CreateAttempt | undefined;
   #createInFlight = false;
   #inviteAttempt: InviteAttempt | undefined;
@@ -419,10 +428,18 @@ export class SessionStore {
     policy: BusinessRequestPolicy,
     send: (api: TaliApiClient, credentials: BusinessRequestCredentials) => Promise<ApiResult<T>>,
   ): Promise<BusinessRequestResult<T>> {
-    if (this.#auth === undefined || this.#snapshot.selectedBusinessId !== businessId) return IGNORED;
-    const epoch = this.#epoch;
-    const result = await this.#withToken((token) => send(this.#api, { token }));
-    if (epoch !== this.#epoch || this.#snapshot.selectedBusinessId !== businessId) return IGNORED;
+    const auth = this.#auth;
+    if (auth === undefined || this.#snapshot.selectedBusinessId !== businessId) return IGNORED;
+    const selection = this.#selection(businessId);
+    const current = await auth.accessToken();
+    // Token acquisition may be slow: a request must never reach the API after a sign-out or a business switch.
+    if (!this.#isSelected(selection)) return IGNORED;
+    const result = current.ok
+      ? await send(this.#api, { token: current.token })
+      : current.reason === "ended"
+        ? SESSION_ENDED
+        : PROVIDER_UNAVAILABLE;
+    if (!this.#isSelected(selection)) return IGNORED;
     if (result.ok) return result;
     if (this.#applySessionEffects(result.failure)) return IGNORED;
     if (policy.notFoundScope === "business" && isApiError(result.failure, "NOT_FOUND")) {
@@ -545,6 +562,19 @@ export class SessionStore {
     return call(current.token);
   }
 
+  #selection(businessId: string): Selection {
+    return { epoch: this.#epoch, revision: this.#selectionRevision, businessId };
+  }
+
+  /** Leaving a business and selecting it again is a new selection: requests from the old one never send. */
+  #isSelected(selection: Selection): boolean {
+    return (
+      selection.epoch === this.#epoch &&
+      selection.revision === this.#selectionRevision &&
+      this.#snapshot.selectedBusinessId === selection.businessId
+    );
+  }
+
   #errorUnless(action: SessionAction): SessionError | undefined {
     return this.#snapshot.error?.action === action ? undefined : this.#snapshot.error;
   }
@@ -655,6 +685,7 @@ export class SessionStore {
   }
 
   #set(next: SessionSnapshot): void {
+    if (next.selectedBusinessId !== this.#snapshot.selectedBusinessId) this.#selectionRevision += 1;
     this.#snapshot = Object.freeze({ ...next, hasPendingInvitation: this.#pendingInvitation !== undefined });
     for (const listener of this.#listeners) listener();
   }

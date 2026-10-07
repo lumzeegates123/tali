@@ -189,8 +189,8 @@ sees a read-only catalog (no create, edit, archive, price, pack or category cont
 | application unit                       | 26 files, 416 passed (currency query tests added)                         |
 | shared unit                            | 5 files, 43 passed (currency response schema)                             |
 | API unit and compat                    | 6 files, 59 passed (compat route list now 30)                             |
-| web (Vitest)                           | 15 files, 192 passed (Slice 3: 9 files, 117)                              |
-| mobile (jest-expo)                     | 22 suites, 366 passed (Slice 3: 19 suites, 338)                           |
+| web (Vitest)                           | 15 files, 198 passed (Slice 3: 9 files, 117)                              |
+| mobile (jest-expo)                     | 22 suites, 370 passed (Slice 3: 19 suites, 338)                           |
 | database integration                   | 22 files, 289 passed (unchanged)                                          |
 | API integration                        | 9 files, 124 passed, 1 skipped (adds "business currency (Slice 4)")       |
 | worker integration                     | 9 passed, 1 skipped                                                       |
@@ -250,6 +250,51 @@ credentials from `.env.example`). No repository file was changed for the port.
   with the same 64-file change set committed. All scans found no leaks.
   Formatting and text-integrity checks for the final documentation changes
   also passed.
+
+## PR review corrections (PR #16)
+
+Three findings from human review were corrected after the gates above; the test counts in this audit are the final
+counts after these corrections.
+
+- **Pre-send token race.** `businessRequest` used to check the selection before awaiting `accessToken()` and after
+  the response, so a business switch or sign-out while the token was pending could still send a mutation for the
+  old business. Both stores now await the token themselves and check again immediately before `send`; on mobile
+  the device registration is read only after that check, for the same business. Token, session, `DEVICE_NOT_TRUSTED`
+  and `NOT_FOUND` handling are unchanged, and the post-response check remains.
+- **Selection revision (A -> B -> A).** Selecting a business does not change the session epoch, so a request begun
+  under A could still send after A -> B -> A. Each store now keeps a private `#selectionRevision`, incremented in
+  `#set` only when `selectedBusinessId` changes. `businessRequest` captures the epoch, the revision and the
+  business, and requires all three unchanged before `send` and after the response. Re-selecting a business is a
+  new selection; requests from the earlier one are `ignored` without sending.
+- **Category rename `VERSION_CONFLICT`.** The web rename form used to close and reload the list, losing the typed
+  name. It now keeps the form and the typed name; Reload latest calls `getCategory(category.id)`, shows the latest
+  saved name and version, and the next save uses that version. Nothing retries automatically. `NOT_FOUND` closes
+  the form with the neutral message and reloads the list.
+- **Tests.** Web and mobile `business-request` tests hold `accessToken()` pending and prove that a business switch,
+  a sign-out and A -> B -> A each leave a product read and an archive-product mutation unsent and `ignored`, with no
+  API request; a control proves the request sends when the selection is unchanged (mobile also checks the device
+  headers). Web `catalog` tests cover the rename conflict (Drinks v1, typed "Soft Drinks", conflict, Reload latest
+  returns Beverages v2, the input still reads "Soft Drinks", the second PATCH sends
+  `{ expectedVersion: 2, name: "Soft Drinks" }`) and the rename `NOT_FOUND`. Each new test was run against the
+  previous code and failed there.
+- **Gate evidence.** Focused: web `business-request` and `catalog` 37 passed; mobile `business-request` 10 passed.
+  `pnpm verify` exit 0 (web 198, mobile 370). `pnpm test:integration` exit 0 (database 289, worker 9 + 1 skipped,
+  API 124 + 1 skipped). gitleaks v8.30.1 over history and the complete branch change set: no leaks. Failed runs
+  during these corrections:
+  - `pnpm verify`: one ESLint error in a new test (an unnecessary type assertion), fixed.
+  - `pnpm verify`, twice: mobile `cognito-onboarding` exceeded Jest's 30 s test timeout (no assertion failed). In
+    both runs web tests had changed, so turbo ran web Vitest and mobile Jest together, and every mobile suite ran
+    two to three times slower (`shell` 63 s against 19 s; `amplify-cognito` 136 s against 66 s). The suite passed
+    alone (8 of 8, 15 to 22 s), and the unchanged retries, with web tests replayed from the turbo cache, exited 0.
+  - `pnpm test:integration`, first round: worker "fails fast on invalid configuration" timed out at 20 s waiting
+    for its spawned process, straight after `pnpm verify` (as recorded in the Slice 3 audit); the retry exited 0.
+  - `pnpm test:integration`, final round, first attempt: two worker-process tests failed. "refuses the
+    smoke-on-start flag outside local/test" timed out (20 s budget; its spawned worker took 310 s). The message of
+    "starts without an HTTP server, processes its smoke message, and heartbeats ready" (failed after 8.7 s) was
+    lost: the shell could not write the log file ("being used by another process") and the output stops at that
+    test's heading. The host was at 100% CPU in that window and a process listing took over three minutes. No
+    worker file changed in this branch. Once the host was idle, the worker integration suite passed alone (9 + 1
+    skipped), and the full rerun exited 0 with both tests passing in about 1.2 s.
 
 ## Deviations and interpretations
 
