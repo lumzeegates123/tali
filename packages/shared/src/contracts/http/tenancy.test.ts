@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { LocalSignInRequestSchema, LocalSignInResponseSchema } from "./local-sign-in.js";
 import {
+  BusinessCurrencyResponseSchema,
   BusinessPathSchema,
   CreateBusinessRequestSchema,
   CreateBusinessResponseSchema,
@@ -15,6 +16,32 @@ import {
 
 const ID = "0190a000-0000-7000-8000-000000000001";
 const OTHER_ID = "0190a000-0000-7000-8000-000000000002";
+
+describe("business currency response", () => {
+  it("is exactly a currency code and an ISO 4217 minor-unit exponent", () => {
+    for (const valid of [
+      { code: "NGN", minorUnitDigits: 2 },
+      { code: "JPY", minorUnitDigits: 0 },
+      { code: "CLF", minorUnitDigits: 4 },
+    ]) {
+      expect(BusinessCurrencyResponseSchema.parse(valid)).toEqual(valid);
+    }
+    for (const invalid of [
+      {},
+      { code: "NGN" },
+      { minorUnitDigits: 2 },
+      { code: "ngn", minorUnitDigits: 2 },
+      { code: "NGN", minorUnitDigits: -1 },
+      { code: "NGN", minorUnitDigits: 5 },
+      { code: "NGN", minorUnitDigits: 1.5 },
+      { code: "NGN", minorUnitDigits: "2" },
+      { code: "NGN", minorUnitDigits: 2, businessId: ID },
+      { code: "NGN", minorUnitDigits: 2, symbol: "N" },
+    ]) {
+      expect(BusinessCurrencyResponseSchema.safeParse(invalid).success).toBe(false);
+    }
+  });
+});
 
 describe("request contracts", () => {
   it("registration accepts a display name only", () => {

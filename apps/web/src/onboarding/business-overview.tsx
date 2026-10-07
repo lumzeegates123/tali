@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { CatalogSection } from "../catalog/catalog-section";
 import type { BusinessOverview, ResourceResult } from "../lib/auth/session-store";
 import { useSession, useSessionStore } from "../lib/auth/session-context";
 import { FailureAlert } from "./failure-alert";
@@ -10,11 +11,45 @@ import { LoadingState, ScreenHeading } from "./screen-heading";
 type OverviewState =
   { readonly phase: "loading" } | { readonly phase: "done"; readonly result: ResourceResult<BusinessOverview> };
 
+type BusinessSection = "overview" | "catalog";
+
+/** The selected business: an Overview | Catalog switch. Role-based visibility is UX only. */
+export function BusinessOverviewScreen({ businessId }: { readonly businessId: string }) {
+  const session = useSession();
+  const [section, setSection] = useState<BusinessSection>("overview");
+  const summary = session.businesses.find((item) => item.business.id === businessId);
+
+  return (
+    <>
+      <nav aria-label="Business sections" className="section-nav">
+        {(["overview", "catalog"] as const).map((value) => (
+          <button
+            key={value}
+            type="button"
+            className={section === value ? undefined : "secondary"}
+            aria-current={section === value ? "page" : undefined}
+            onClick={() => {
+              setSection(value);
+            }}
+          >
+            {value === "overview" ? "Overview" : "Catalog"}
+          </button>
+        ))}
+      </nav>
+      {section === "overview" ? (
+        <OverviewSection businessId={businessId} />
+      ) : (
+        <CatalogSection businessId={businessId} role={summary?.membership.role} />
+      )}
+    </>
+  );
+}
+
 /**
  * The selected business, loaded from the API every time it is selected:
  * name, currency, time zone and the active default location. No metrics.
  */
-export function BusinessOverviewScreen({ businessId }: { readonly businessId: string }) {
+function OverviewSection({ businessId }: { readonly businessId: string }) {
   const store = useSessionStore();
   const session = useSession();
   const [state, setState] = useState<OverviewState>({ phase: "loading" });

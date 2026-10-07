@@ -52,7 +52,7 @@ export type {
   MembershipRepository,
 } from "./ports.js";
 export { assertInvitationTransition, assertMembershipTransition } from "./ports.js";
-export type { GetBusiness, ListMembers, ListMyBusinesses } from "./queries.js";
-export { createGetBusiness, createListMembers, createListMyBusinesses } from "./queries.js";
+export type { GetBusiness, GetBusinessCurrency, ListMembers, ListMyBusinesses } from "./queries.js";
+export { createGetBusiness, createGetBusinessCurrency, createListMembers, createListMyBusinesses } from "./queries.js";
 export type { UpdateBusinessName, UpdateBusinessNameResult } from "./update-business-name.js";
 export { createUpdateBusinessName } from "./update-business-name.js";

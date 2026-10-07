@@ -1,4 +1,4 @@
-import type { Business } from "@tali/domain";
+import type { Business, CurrencyDefinition } from "@tali/domain";
 import type { AuthenticatedUserContext } from "../../context/authenticated-user-context.js";
 import type { BusinessContext } from "../../context/business-context.js";
 import { requireContextPermission } from "../../context/business-context.js";
@@ -8,7 +8,13 @@ import type { Page } from "../../queries/pagination.js";
 import { parsePageRequest } from "../../queries/pagination.js";
 import type { UserRepository } from "../identity/index.js";
 import { identityPermissions, requireActiveUser } from "../identity/index.js";
-import type { AccessibleBusiness, BusinessRepository, MemberListing, MembershipRepository } from "./ports.js";
+import type {
+  AccessibleBusiness,
+  BusinessRepository,
+  CurrencyReferenceRepository,
+  MemberListing,
+  MembershipRepository,
+} from "./ports.js";
 
 type PageInput = { readonly limit?: number; readonly after?: string };
 
@@ -50,6 +56,36 @@ export function createGetBusiness(dependencies: {
       );
       if (business === undefined) throw new NotFoundError("Business not found");
       return business;
+    },
+  };
+}
+
+/**
+ * The context business's currency definition (`business:read`): the code and
+ * its minor-unit digits from the currency reference data, so clients can
+ * convert and format amounts exactly.
+ */
+export interface GetBusinessCurrency {
+  execute(context: BusinessContext): Promise<CurrencyDefinition>;
+}
+
+export function createGetBusinessCurrency(dependencies: {
+  readonly unitOfWork: UnitOfWork;
+  readonly businesses: BusinessRepository;
+  readonly currencies: CurrencyReferenceRepository;
+}): GetBusinessCurrency {
+  return {
+    async execute(context) {
+      requireContextPermission(context, identityPermissions.permissions["business:read"]);
+      return dependencies.unitOfWork.run(async (scope) => {
+        const business = await dependencies.businesses.findById(scope, context.businessId);
+        if (business === undefined) throw new NotFoundError("Business not found");
+        const currency = await dependencies.currencies.findByCode(scope, business.currencyCode);
+        if (currency === undefined) {
+          throw new Error("The business currency has no reference data; this breaks a database invariant");
+        }
+        return currency;
+      });
     },
   };
 }

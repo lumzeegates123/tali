@@ -1,21 +1,51 @@
 import type {
   AcceptInvitationResponse,
+  AddPackRequest,
+  ArchiveCategoryRequest,
+  ArchiveProductRequest,
+  BusinessCurrencyResponse,
   BusinessResponse,
+  CategoriesResponse,
+  CategoryListParams,
+  CategoryResponse,
   CreateBusinessRequest,
   CreateBusinessResponse,
+  CreateCategoryRequest,
   CreateInvitationRequest,
   CreateInvitationResponse,
+  CreateProductRequest,
   CurrentUserResponse,
   LocalSignInResponse,
   LocationsResponse,
   MembersResponse,
   MyBusinessesResponse,
+  PackListParams,
+  PackResponse,
+  PacksResponse,
+  PriceHistoryResponse,
+  ProductListParams,
+  ProductResponse,
+  ProductsResponse,
+  ReactivateProductRequest,
   ReadinessResponse,
   RevokeInvitationResponse,
+  SetSellingPriceRequest,
+  UnitsResponse,
+  UpdateCategoryRequest,
+  UpdateProductRequest,
 } from "@tali/shared";
 import {
   AcceptInvitationResponseSchema,
+  BusinessCurrencyResponseSchema,
   BusinessResponseSchema,
+  CategoriesResponseSchema,
+  CategoryResponseSchema,
+  PackResponseSchema,
+  PacksResponseSchema,
+  PriceHistoryResponseSchema,
+  ProductResponseSchema,
+  ProductsResponseSchema,
+  UnitsResponseSchema,
   CreateInvitationResponseSchema,
   RevokeInvitationResponseSchema,
   CreateBusinessResponseSchema,
@@ -78,7 +108,7 @@ interface Exchange {
 }
 
 interface RequestSpec {
-  readonly method: "GET" | "POST";
+  readonly method: "GET" | "POST" | "PATCH" | "PUT";
   readonly path: string;
   readonly token?: AccessToken;
   readonly body?: unknown;
@@ -242,6 +272,262 @@ export class TaliApiClient {
     );
   }
 
+  /** `GET .../currency` (`business:read`): the code and minor-unit digits used to parse and format money. */
+  async getBusinessCurrency(token: AccessToken, businessId: string): Promise<ApiResult<BusinessCurrencyResponse>> {
+    return this.#call(
+      { method: "GET", path: `${businessPath(businessId)}/currency`, token },
+      [200],
+      BusinessCurrencyResponseSchema,
+    );
+  }
+
+  async listUnits(token: AccessToken, businessId: string): Promise<ApiResult<UnitsResponse>> {
+    return this.#call(
+      { method: "GET", path: `${businessPath(businessId)}/catalog/units`, token },
+      [200],
+      UnitsResponseSchema,
+    );
+  }
+
+  async listProducts(
+    token: AccessToken,
+    businessId: string,
+    params: ProductListParams = {},
+  ): Promise<ApiResult<ProductsResponse>> {
+    const query = searchQuery({ limit: params.limit, after: params.after, status: params.status, q: params.q });
+    return this.#call(
+      { method: "GET", path: `${businessPath(businessId)}/products${query}`, token },
+      [200],
+      ProductsResponseSchema,
+    );
+  }
+
+  async getProduct(token: AccessToken, businessId: string, productId: string): Promise<ApiResult<ProductResponse>> {
+    return this.#call(
+      { method: "GET", path: `${businessPath(businessId)}/products/${segment(productId)}`, token },
+      [200],
+      ProductResponseSchema,
+    );
+  }
+
+  /** `product:manage` (and `product:price` with `initialPrice`); one logical submission keeps one key. */
+  async createProduct(
+    token: AccessToken,
+    businessId: string,
+    command: CreateProductRequest,
+    idempotencyKey: string,
+  ): Promise<ApiResult<ProductResponse>> {
+    return this.#call(
+      {
+        method: "POST",
+        path: `${businessPath(businessId)}/products`,
+        token,
+        body: command,
+        headers: { [IDEMPOTENCY_KEY_HEADER]: idempotencyKey },
+      },
+      [201],
+      ProductResponseSchema,
+    );
+  }
+
+  async updateProduct(
+    token: AccessToken,
+    businessId: string,
+    productId: string,
+    command: UpdateProductRequest,
+  ): Promise<ApiResult<ProductResponse>> {
+    return this.#call(
+      { method: "PATCH", path: `${businessPath(businessId)}/products/${segment(productId)}`, token, body: command },
+      [200],
+      ProductResponseSchema,
+    );
+  }
+
+  async archiveProduct(
+    token: AccessToken,
+    businessId: string,
+    productId: string,
+    command: ArchiveProductRequest,
+  ): Promise<ApiResult<ProductResponse>> {
+    return this.#call(
+      {
+        method: "POST",
+        path: `${businessPath(businessId)}/products/${segment(productId)}/archive`,
+        token,
+        body: command,
+      },
+      [200],
+      ProductResponseSchema,
+    );
+  }
+
+  async reactivateProduct(
+    token: AccessToken,
+    businessId: string,
+    productId: string,
+    command: ReactivateProductRequest,
+  ): Promise<ApiResult<ProductResponse>> {
+    return this.#call(
+      {
+        method: "POST",
+        path: `${businessPath(businessId)}/products/${segment(productId)}/reactivate`,
+        token,
+        body: command,
+      },
+      [200],
+      ProductResponseSchema,
+    );
+  }
+
+  /** `PUT .../price` (`product:price`): the amount is an exact minor-unit string in the business currency. */
+  async setSellingPrice(
+    token: AccessToken,
+    businessId: string,
+    productId: string,
+    command: SetSellingPriceRequest,
+  ): Promise<ApiResult<ProductResponse>> {
+    return this.#call(
+      {
+        method: "PUT",
+        path: `${businessPath(businessId)}/products/${segment(productId)}/price`,
+        token,
+        body: command,
+      },
+      [200],
+      ProductResponseSchema,
+    );
+  }
+
+  async listPriceHistory(
+    token: AccessToken,
+    businessId: string,
+    productId: string,
+    page: PageRequest = {},
+  ): Promise<ApiResult<PriceHistoryResponse>> {
+    return this.#call(
+      {
+        method: "GET",
+        path: `${businessPath(businessId)}/products/${segment(productId)}/prices${pageQuery(page)}`,
+        token,
+      },
+      [200],
+      PriceHistoryResponseSchema,
+    );
+  }
+
+  async listCategories(
+    token: AccessToken,
+    businessId: string,
+    params: CategoryListParams = {},
+  ): Promise<ApiResult<CategoriesResponse>> {
+    const query = searchQuery({ limit: params.limit, after: params.after, status: params.status });
+    return this.#call(
+      { method: "GET", path: `${businessPath(businessId)}/categories${query}`, token },
+      [200],
+      CategoriesResponseSchema,
+    );
+  }
+
+  async getCategory(token: AccessToken, businessId: string, categoryId: string): Promise<ApiResult<CategoryResponse>> {
+    return this.#call(
+      { method: "GET", path: `${businessPath(businessId)}/categories/${segment(categoryId)}`, token },
+      [200],
+      CategoryResponseSchema,
+    );
+  }
+
+  async createCategory(
+    token: AccessToken,
+    businessId: string,
+    command: CreateCategoryRequest,
+    idempotencyKey: string,
+  ): Promise<ApiResult<CategoryResponse>> {
+    return this.#call(
+      {
+        method: "POST",
+        path: `${businessPath(businessId)}/categories`,
+        token,
+        body: command,
+        headers: { [IDEMPOTENCY_KEY_HEADER]: idempotencyKey },
+      },
+      [201],
+      CategoryResponseSchema,
+    );
+  }
+
+  async updateCategory(
+    token: AccessToken,
+    businessId: string,
+    categoryId: string,
+    command: UpdateCategoryRequest,
+  ): Promise<ApiResult<CategoryResponse>> {
+    return this.#call(
+      { method: "PATCH", path: `${businessPath(businessId)}/categories/${segment(categoryId)}`, token, body: command },
+      [200],
+      CategoryResponseSchema,
+    );
+  }
+
+  async archiveCategory(
+    token: AccessToken,
+    businessId: string,
+    categoryId: string,
+    command: ArchiveCategoryRequest,
+  ): Promise<ApiResult<CategoryResponse>> {
+    return this.#call(
+      {
+        method: "POST",
+        path: `${businessPath(businessId)}/categories/${segment(categoryId)}/archive`,
+        token,
+        body: command,
+      },
+      [200],
+      CategoryResponseSchema,
+    );
+  }
+
+  async listPacks(
+    token: AccessToken,
+    businessId: string,
+    productId: string,
+    params: PackListParams = {},
+  ): Promise<ApiResult<PacksResponse>> {
+    const query = searchQuery({ limit: params.limit, after: params.after, status: params.status });
+    return this.#call(
+      { method: "GET", path: `${businessPath(businessId)}/products/${segment(productId)}/packs${query}`, token },
+      [200],
+      PacksResponseSchema,
+    );
+  }
+
+  async addPack(
+    token: AccessToken,
+    businessId: string,
+    productId: string,
+    command: AddPackRequest,
+    idempotencyKey: string,
+  ): Promise<ApiResult<PackResponse>> {
+    return this.#call(
+      {
+        method: "POST",
+        path: `${businessPath(businessId)}/products/${segment(productId)}/packs`,
+        token,
+        body: command,
+        headers: { [IDEMPOTENCY_KEY_HEADER]: idempotencyKey },
+      },
+      [201],
+      PackResponseSchema,
+    );
+  }
+
+  async retirePack(token: AccessToken, businessId: string, packId: string): Promise<ApiResult<PackResponse>> {
+    return this.#call(
+      { method: "POST", path: `${businessPath(businessId)}/packs/${segment(packId)}/retire`, token, body: {} },
+      [200],
+      PackResponseSchema,
+    );
+  }
+
   async #call<T>(spec: RequestSpec, statuses: readonly number[], schema: ResponseSchema<T>): Promise<ApiResult<T>> {
     const exchange = await this.#send(spec);
     if (!("status" in exchange)) return exchange;
@@ -293,11 +579,21 @@ function businessPath(businessId: string): string {
 }
 
 function pageQuery(page: PageRequest): string {
+  return searchQuery({ limit: page.limit, after: page.after });
+}
+
+/** Encodes defined query values only; an absent value is never sent as an empty parameter. */
+function searchQuery(values: Readonly<Record<string, string | number | undefined>>): string {
   const params = new URLSearchParams();
-  if (page.limit !== undefined) params.set("limit", String(page.limit));
-  if (page.after !== undefined) params.set("after", page.after);
+  for (const [name, value] of Object.entries(values)) {
+    if (value !== undefined) params.set(name, String(value));
+  }
   const query = params.toString();
   return query === "" ? "" : `?${query}`;
+}
+
+function segment(id: string): string {
+  return encodeURIComponent(id);
 }
 
 function interpret<T>(exchange: Exchange, statuses: readonly number[], schema: ResponseSchema<T>): ApiResult<T> {

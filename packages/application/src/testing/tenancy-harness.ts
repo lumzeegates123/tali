@@ -25,6 +25,7 @@ import type {
   CreateBusinessResult,
   CreateInvitation,
   GetBusiness,
+  GetBusinessCurrency,
   ListMembers,
   ListMyBusinesses,
   ReactivateMember,
@@ -40,6 +41,7 @@ import {
   createCreateBusiness,
   createCreateInvitation,
   createGetBusiness,
+  createGetBusinessCurrency,
   createListMembers,
   createListMyBusinesses,
   createReactivateMember,
@@ -97,6 +99,7 @@ export interface TenancyHarness {
   readonly createBusiness: CreateBusiness;
   readonly listMyBusinesses: ListMyBusinesses;
   readonly getBusiness: GetBusiness;
+  readonly getBusinessCurrency: GetBusinessCurrency;
   readonly listLocations: ListLocations;
   readonly listMembers: ListMembers;
   readonly defaultLocations: DefaultLocationResolver;
@@ -264,6 +267,7 @@ export function createTenancyHarness(options: {
     createBusiness,
     listMyBusinesses: createListMyBusinesses({ unitOfWork, users, memberships }),
     getBusiness: createGetBusiness({ unitOfWork, businesses }),
+    getBusinessCurrency: createGetBusinessCurrency({ unitOfWork, businesses, currencies: store.currencyRepository }),
     listLocations: createListLocations({ unitOfWork, locations }),
     listMembers: createListMembers({ unitOfWork, memberships }),
     defaultLocations: createDefaultLocationResolver({ unitOfWork, locations }),

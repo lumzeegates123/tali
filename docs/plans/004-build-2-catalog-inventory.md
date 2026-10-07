@@ -6,7 +6,8 @@ COMPLETE (2026-10-05).** The design is recorded in `docs/decisions/ADR-008-catal
 (2026-10-05)**, with all gates passed, pending human review (`docs/audits/build-2-slice-1.md`). **Slice 2 (catalog
 schema and repositories) COMPLETE (2026-10-05)** (`docs/audits/build-2-slice-2.md`). **Slice 3 (catalog API and
 shared contracts) COMPLETE (2026-10-05)**, with all gates passed, pending human review
-(`docs/audits/build-2-slice-3.md`). Where this plan and an ADR differ, the ADR is authoritative (`AGENTS.md` section 4).
+(`docs/audits/build-2-slice-3.md`). **Slice 4 (catalog clients) COMPLETE (2026-10-06)**, with all gates passed,
+pending human review (`docs/audits/build-2-slice-4.md`). Where this plan and an ADR differ, the ADR is authoritative (`AGENTS.md` section 4).
 
 Scope: implementation steps 3 (product catalog) and 4 (inventory) of `docs/product/mvp-scope.md`, quantity-only.
 
@@ -27,7 +28,7 @@ Not in Build 2:
 | 1     | Catalog domain and application: `Quantity`, units, Product/Variant/Category/Pack, identifiers, price history, use cases, permissions, audit actions | **COMPLETE** (2026-10-05; `docs/audits/build-2-slice-1.md`) |
 | 2     | Catalog schema, migration, `verify-schema` expectations and repositories                      | **COMPLETE** (2026-10-05; `docs/audits/build-2-slice-2.md`) |
 | 3     | Catalog API and shared contracts                                                              | **COMPLETE** (2026-10-05; `docs/audits/build-2-slice-3.md`) |
-| 4     | Catalog clients (web and mobile)                                                              | Not started                    |
+| 4     | Catalog clients (web and mobile)                                                              | **COMPLETE** (2026-10-06; `docs/audits/build-2-slice-4.md`) |
 | 5     | Inventory core: movements, balances, opening, goods receipts, adjustments, write-offs, reversals, low-stock thresholds and the derived low-stock state (domain, application, schema, repositories) | Not started (needs S1 to S3 stable) |
 | 6     | Stocktake (domain, application, schema) and the inventory API, including threshold endpoints  | Not started                    |
 | 7     | Inventory clients (web and mobile), including threshold management and the LOW STOCK indicator | Not started                   |
@@ -40,7 +41,7 @@ flowchart TD
   S0["S0 Decisions: ADR-008 and plan 004 (COMPLETE)"] --> S1["S1 Catalog domain and application (COMPLETE)"]
   S1 --> S2["S2 Catalog schema and repositories (COMPLETE)"]
   S2 --> S3["S3 Catalog API (COMPLETE)"]
-  S3 --> S4["S4 Catalog clients"]
+  S3 --> S4["S4 Catalog clients (COMPLETE)"]
   S3 --> S5["S5 Inventory core"]
   S5 --> S6["S6 Inventory and stocktake API"]
   S6 --> S7["S7 Inventory clients"]
@@ -259,7 +260,12 @@ process-startup or resource failure in which no assertion failed, and it is docu
   - the route inventory test updated.
 - Stop: a breaking change to an existing public contract.
 
-### S4. Catalog clients
+### S4. Catalog clients: COMPLETE (2026-10-06)
+
+- Outcome: all gates passed (Playwright 11 passed, client-bundle scan clean, `pnpm verify` and
+  `pnpm test:integration` exit 0, gitleaks clean); audit in `docs/audits/build-2-slice-4.md`, pending human review.
+  One additive read route (`GET .../currency`); no schema change, no new dependency; `PreInventoryStateReader`
+  unchanged.
 
 - Content:
   - web pages: list, search, create, edit, archive and reactivate, price, categories, packs;

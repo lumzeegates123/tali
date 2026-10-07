@@ -7,13 +7,15 @@ export function FailureAlert({
   onRetry,
   retryLabel = "Try again",
   retryDisabled = false,
+  notFoundScope,
 }: {
   readonly failure: ApiFailure | { readonly kind: "missing-default-location" };
   readonly onRetry?: () => void;
   readonly retryLabel?: string;
   readonly retryDisabled?: boolean;
+  readonly notFoundScope?: "business" | "resource";
 }) {
-  const message = describeFailure(failure);
+  const message = describeFailure(failure, notFoundScope === undefined ? {} : { notFoundScope });
   return (
     <div role="alert" className="alert">
       <p>{message.text}</p>
