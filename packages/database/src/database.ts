@@ -5,23 +5,36 @@ import {
   type CurrencyReferenceRepository,
   DependencyUnavailableError,
   type DeviceRepository,
+  type GoodsReceiptRepository,
+  type InventoryAdjustmentRepository,
+  type InventoryMovementRepository,
   type InvitationRepository,
   type LocationRepository,
   type MembershipRepository,
+  type OpeningBatchRepository,
   type ProductCategoryRepository,
   type ProductPackRepository,
   type ProductPriceHistoryRepository,
   type ProductRepository,
+  type StockBalanceRepository,
+  type StockThresholdRepository,
   type UnitOfWork,
   type UnitReferenceRepository,
   type UserIdempotencyStore,
   type UserRepository,
+  type VariantInventoryStateReader,
 } from "@tali/application";
 import { createPrismaClient } from "./client/prisma-client.js";
 import { createAuditWriter } from "./repositories/audit-writer.js";
 import { createBusinessIdempotencyStore } from "./repositories/business-idempotency-store.js";
 import { createBusinessRepository, createCurrencyReferenceRepository } from "./repositories/business-repository.js";
 import { createDeviceRepository } from "./repositories/device-repository.js";
+import { createGoodsReceiptRepository } from "./repositories/goods-receipt-repository.js";
+import { createInventoryAdjustmentRepository } from "./repositories/inventory-adjustment-repository.js";
+import { createInventoryBalanceRepository } from "./repositories/inventory-balance-repository.js";
+import { createInventoryMovementRepository } from "./repositories/inventory-movement-repository.js";
+import { createOpeningBatchRepository } from "./repositories/inventory-opening-batch-repository.js";
+import { createInventoryStockThresholdRepository } from "./repositories/inventory-stock-threshold-repository.js";
 import { createInvitationRepository } from "./repositories/invitation-repository.js";
 import { createLocationRepository } from "./repositories/location-repository.js";
 import { createMembershipRepository } from "./repositories/membership-repository.js";
@@ -32,6 +45,7 @@ import { createProductRepository } from "./repositories/product-repository.js";
 import { createUnitReferenceRepository } from "./repositories/unit-reference-repository.js";
 import { createUserIdempotencyStore } from "./repositories/user-idempotency-store.js";
 import { createUserRepository } from "./repositories/user-repository.js";
+import { createVariantInventoryStateReader } from "./repositories/variant-inventory-state-reader.js";
 import { PrismaUnitOfWork } from "./unit-of-work/prisma-unit-of-work.js";
 
 export interface DatabaseOptions {
@@ -48,8 +62,9 @@ export interface DatabaseOptions {
 
 /**
  * The repository adapters, as application ports. They work only with this
- * database's unit of work. There is deliberately no VariantInventoryStateReader:
- * the inventory module provides it (ADR-008 section 3.2; Plan 004 S3 and S5).
+ * database's unit of work. `variantInventoryState` is the only
+ * VariantInventoryStateReader: it reads the authoritative inventory tables
+ * (ADR-008 section 3.2; Plan 004 S5).
  */
 export interface DatabaseRepositories {
   readonly users: UserRepository;
@@ -67,6 +82,13 @@ export interface DatabaseRepositories {
   readonly productPacks: ProductPackRepository;
   readonly productPriceHistory: ProductPriceHistoryRepository;
   readonly units: UnitReferenceRepository;
+  readonly inventoryMovements: InventoryMovementRepository;
+  readonly inventoryBalances: StockBalanceRepository;
+  readonly inventoryOpeningBatches: OpeningBatchRepository;
+  readonly goodsReceipts: GoodsReceiptRepository;
+  readonly inventoryAdjustments: InventoryAdjustmentRepository;
+  readonly inventoryThresholds: StockThresholdRepository;
+  readonly variantInventoryState: VariantInventoryStateReader;
 }
 
 /**
@@ -98,6 +120,13 @@ export function createRepositories(): DatabaseRepositories {
     productPacks: createProductPackRepository(),
     productPriceHistory: createProductPriceHistoryRepository(),
     units: createUnitReferenceRepository(),
+    inventoryMovements: createInventoryMovementRepository(),
+    inventoryBalances: createInventoryBalanceRepository(),
+    inventoryOpeningBatches: createOpeningBatchRepository(),
+    goodsReceipts: createGoodsReceiptRepository(),
+    inventoryAdjustments: createInventoryAdjustmentRepository(),
+    inventoryThresholds: createInventoryStockThresholdRepository(),
+    variantInventoryState: createVariantInventoryStateReader(),
   });
 }
 

@@ -1,6 +1,7 @@
 /**
- * Composes the Slice 1 use cases over the PostgreSQL repositories and the
- * Prisma unit of work, as the API composition root will (Slice 3). Test
+ * Composes the Slice 1 use cases, the catalog write use cases and the Build 2
+ * Slice 5 inventory use cases over the PostgreSQL repositories and the Prisma
+ * unit of work, as the API composition root does. Test
  * inputs only: the fingerprint hasher is the application's deterministic fake
  * (the real SHA-256 adapter arrives in Slice 3), identities come from the fake
  * identity provider, and failures are injected by wrapping a repository in a
@@ -8,49 +9,80 @@
  */
 import {
   type AcceptInvitation,
+  type AddPack,
+  type ArchiveProduct,
   AuditRecorder,
   type AuthenticatedUserContext,
   type BusinessContext,
   type ChangeMemberRole,
+  type ClearLowStockThreshold,
   type CreateBusiness,
   type CreateBusinessInput,
   type CreateBusinessOutcome,
   type CreateInvitation,
+  type CreateProduct,
   createAcceptInvitation,
+  createAddPack,
+  createArchiveProduct,
   createBusinessContextResolver,
   createChangeMemberRole,
+  createClearLowStockThreshold,
   createCreateBusiness,
   createCreateInvitation,
+  createCreateProduct,
   createDefaultLocationCreation,
+  createDefaultLocationResolver,
   createDeviceVerifier,
   createListDevices,
   createListLocations,
   createListMembers,
   createListMyBusinesses,
+  createPostGoodsReceipt,
   createReactivateMember,
+  createReactivateProduct,
+  createRecordAdjustment,
+  createRecordOpeningStock,
+  createRecordWriteOff,
   createRegisterCurrentUser,
   createRegisterDevice,
+  createRetirePack,
+  createReverseAdjustment,
+  createReverseGoodsReceipt,
   createRevokeDevice,
   createRevokeInvitation,
+  createSetLowStockThreshold,
   createSuspendMember,
   createUpdateBusinessName,
+  createUpdateProduct,
   createUserContextResolver,
+  type DefaultLocationResolver,
   type DeviceVerifier,
   KeyedIdempotency,
   type ListDevices,
   type ListLocations,
   type ListMembers,
   type ListMyBusinesses,
+  type LocationBoundContext,
   parseCorrelationId,
+  type PostGoodsReceipt,
   type ReactivateMember,
+  type ReactivateProduct,
+  type RecordAdjustment,
+  type RecordOpeningStock,
+  type RecordWriteOff,
   type RegisterCurrentUser,
   type RegisterDevice,
+  type RetirePack,
+  type ReverseAdjustment,
+  type ReverseGoodsReceipt,
   type RevokeDevice,
   type RevokeInvitation,
+  type SetLowStockThreshold,
   type SuspendMember,
   taliAuditRegistry,
   type UnitOfWork,
   type UpdateBusinessName,
+  type UpdateProduct,
   type UserId,
 } from "@tali/application";
 import {
@@ -94,10 +126,27 @@ export interface Tenancy {
   readonly listDevices: ListDevices;
   readonly revokeDevice: RevokeDevice;
   readonly deviceVerifier: DeviceVerifier;
+  readonly defaultLocations: DefaultLocationResolver;
+  readonly createProduct: CreateProduct;
+  readonly updateProduct: UpdateProduct;
+  readonly archiveProduct: ArchiveProduct;
+  readonly reactivateProduct: ReactivateProduct;
+  readonly addPack: AddPack;
+  readonly retirePack: RetirePack;
+  readonly recordOpeningStock: RecordOpeningStock;
+  readonly postGoodsReceipt: PostGoodsReceipt;
+  readonly recordAdjustment: RecordAdjustment;
+  readonly recordWriteOff: RecordWriteOff;
+  readonly reverseGoodsReceipt: ReverseGoodsReceipt;
+  readonly reverseAdjustment: ReverseAdjustment;
+  readonly setLowStockThreshold: SetLowStockThreshold;
+  readonly clearLowStockThreshold: ClearLowStockThreshold;
   registeredUser(subject: string, displayName?: string): Promise<RegisteredUser>;
   create(user: RegisteredUser, input?: Partial<CreateBusinessInput>): Promise<CreateBusinessOutcome>;
   /** The server-resolved context of an ACTIVE member, as the API's BusinessContextGuard produces it. */
   contextFor(user: RegisteredUser, businessId: BusinessId): Promise<BusinessContext>;
+  /** contextFor bound to the business's default location, as the API binds inventory requests. */
+  boundContextFor(user: RegisteredUser, businessId: BusinessId): Promise<LocationBoundContext>;
 }
 
 /** Per-test deterministic inputs, shared by every composition in the test so identifiers never collide. */
@@ -146,6 +195,33 @@ export function useTenancyHarness() {
     const businessContexts = createBusinessContextResolver({ unitOfWork: uow, userContexts, businesses, memberships });
     const audit = new AuditRecorder({ registry: taliAuditRegistry, writer: repos.auditWriter, clock, ids });
     const registerCurrentUser = createRegisterCurrentUser({ unitOfWork: uow, users: repos.users, audit, ids, clock });
+    const defaultLocations = createDefaultLocationResolver({ unitOfWork: uow, locations: repos.locations });
+    const catalog = {
+      unitOfWork: uow,
+      memberships,
+      products: repos.products,
+      categories: repos.productCategories,
+      packs: repos.productPacks,
+      prices: repos.productPriceHistory,
+      units: repos.units,
+      audit,
+      ids,
+      clock,
+    };
+    const stock = {
+      unitOfWork: uow,
+      memberships,
+      products: repos.products,
+      packs: repos.productPacks,
+      units: repos.units,
+      movements: repos.inventoryMovements,
+      balances: repos.inventoryBalances,
+      idempotency: businessIdempotency,
+      hasher,
+      audit,
+      ids,
+      clock,
+    };
     const createBusiness = createCreateBusiness({
       unitOfWork: uow,
       users: repos.users,
@@ -210,8 +286,26 @@ export function useTenancyHarness() {
       listDevices: createListDevices({ unitOfWork: uow, devices }),
       revokeDevice: createRevokeDevice({ unitOfWork: uow, memberships, devices, audit, clock }),
       deviceVerifier: createDeviceVerifier({ unitOfWork: uow, devices, secretHasher }),
+      defaultLocations,
+      createProduct: createCreateProduct({ ...catalog, idempotency: businessIdempotency, hasher }),
+      updateProduct: createUpdateProduct({ ...catalog, inventory: repos.variantInventoryState }),
+      archiveProduct: createArchiveProduct(catalog),
+      reactivateProduct: createReactivateProduct(catalog),
+      addPack: createAddPack({ ...catalog, idempotency: businessIdempotency, hasher }),
+      retirePack: createRetirePack(catalog),
+      recordOpeningStock: createRecordOpeningStock({ ...stock, openings: repos.inventoryOpeningBatches }),
+      postGoodsReceipt: createPostGoodsReceipt({ ...stock, receipts: repos.goodsReceipts }),
+      recordAdjustment: createRecordAdjustment({ ...stock, adjustments: repos.inventoryAdjustments }),
+      recordWriteOff: createRecordWriteOff({ ...stock, adjustments: repos.inventoryAdjustments }),
+      reverseGoodsReceipt: createReverseGoodsReceipt({ ...stock, receipts: repos.goodsReceipts }),
+      reverseAdjustment: createReverseAdjustment({ ...stock, adjustments: repos.inventoryAdjustments }),
+      setLowStockThreshold: createSetLowStockThreshold({ ...stock, thresholds: repos.inventoryThresholds }),
+      clearLowStockThreshold: createClearLowStockThreshold({ ...stock, thresholds: repos.inventoryThresholds }),
       contextFor(user, businessId) {
         return businessContexts.resolveForUser(user.context, businessId);
+      },
+      async boundContextFor(user, businessId) {
+        return defaultLocations.resolveDefaultLocation(await businessContexts.resolveForUser(user.context, businessId));
       },
       async registeredUser(subject, displayName = "Test User") {
         const identity = await identities.verifyAccessToken(identities.issueToken(subject));

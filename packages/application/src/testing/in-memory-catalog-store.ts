@@ -30,7 +30,11 @@ import type { InMemoryTenancyStore } from "./in-memory-tenancy-store.js";
 import { page } from "./in-memory-tenancy-store.js";
 import type { InMemoryUnitOfWork, RollbackParticipant } from "./in-memory-unit-of-work.js";
 
-const NO_INVENTORY: VariantInventoryState = Object.freeze({ hasMovements: false, hasNonZeroBalance: false });
+const NO_INVENTORY: VariantInventoryState = Object.freeze({
+  hasMovements: false,
+  hasNonZeroBalance: false,
+  hasConfiguredThreshold: false,
+});
 
 /**
  * In-memory products, variants, categories, packs, price history and unit
@@ -82,8 +86,9 @@ export class InMemoryCatalogStore implements RollbackParticipant {
   // Test setup.
 
   /** What the (future) inventory module would report for a variant. Defaults to no movements and zero balance. */
-  setInventoryState(variantId: ProductVariantId, state: VariantInventoryState): this {
-    this.#inventory.set(variantId, Object.freeze({ ...state }));
+  /** Facts not given default to false (no movements, zero balance, no configured threshold). */
+  setInventoryState(variantId: ProductVariantId, state: Partial<VariantInventoryState>): this {
+    this.#inventory.set(variantId, Object.freeze({ ...NO_INVENTORY, ...state }));
     return this;
   }
 
@@ -209,6 +214,13 @@ export class InMemoryCatalogStore implements RollbackParticipant {
       return this.#variants().find(
         (v) => v.businessId === businessId && v.status === "ACTIVE" && v.barcode?.normalized === barcode,
       )?.id;
+    },
+    lockVariantsForShare: async (scope, businessId, variantIds) => {
+      this.#enter(scope, "products.lockVariantsForShare");
+      const locked = this.#variants()
+        .filter((v) => v.businessId === businessId && variantIds.has(v.id))
+        .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+      return new Map(locked.map((variant) => [variant.id, variant]));
     },
   };
 
@@ -341,6 +353,11 @@ export class InMemoryCatalogStore implements RollbackParticipant {
       return [...this.#packs.values()].find(
         (p) => p.businessId === businessId && p.variantId === variantId && p.status === "ACTIVE" && p.name === name,
       )?.id;
+    },
+    findForEntry: async (scope, businessId, packIds) => {
+      this.#enter(scope, "packs.findForEntry");
+      const found = [...this.#packs.values()].filter((p) => p.businessId === businessId && packIds.has(p.id));
+      return new Map(found.map((pack) => [pack.id, pack]));
     },
   };
 

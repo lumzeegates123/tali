@@ -19,15 +19,43 @@ export const identityPermissions = definePermissionCatalogue([
   "device:revoke",
 ]);
 
-/**
- * The Build 2 catalog permissions (ADR-008 section 15). The inventory
- * permissions of that section arrive with the inventory use cases.
- */
+/** The Build 2 catalog permissions (ADR-008 section 15). */
 export const catalogPermissions = definePermissionCatalogue(["product:read", "product:manage", "product:price"]);
+
+/**
+ * The Build 2 inventory permissions (ADR-008 section 15). The stocktake
+ * permissions (`inventory:count`, `inventory:count-post`) are granted now and
+ * gain their use cases in Build 2 Slice 6; a permission with no use case grants
+ * nothing.
+ */
+export const inventoryPermissions = definePermissionCatalogue([
+  "inventory:read",
+  "inventory:threshold",
+  "inventory:opening",
+  "inventory:receive",
+  "inventory:adjust",
+  "inventory:count",
+  "inventory:count-post",
+]);
 
 const p = identityPermissions.permissions;
 const c = catalogPermissions.permissions;
-const everyRole = [p["business:read"], p["location:read"], p["device:register"], c["product:read"]];
+const i = inventoryPermissions.permissions;
+const everyRole = [
+  p["business:read"],
+  p["location:read"],
+  p["device:register"],
+  c["product:read"],
+  i["inventory:read"],
+];
+const allInventoryChanges = [
+  i["inventory:threshold"],
+  i["inventory:opening"],
+  i["inventory:receive"],
+  i["inventory:adjust"],
+  i["inventory:count"],
+  i["inventory:count-post"],
+];
 
 /** The static, code-versioned role mapping (ADR-005 section 8). Permissions are never stored per membership. */
 export const rolePermissions: Readonly<Record<MembershipRole, readonly Permission[]>> = Object.freeze({
@@ -41,10 +69,24 @@ export const rolePermissions: Readonly<Record<MembershipRole, readonly Permissio
     p["device:revoke"],
     c["product:manage"],
     c["product:price"],
+    ...allInventoryChanges,
   ]),
-  MANAGER: Object.freeze([...everyRole, p["member:read"], p["device:read"], c["product:manage"], c["product:price"]]),
+  MANAGER: Object.freeze([
+    ...everyRole,
+    p["member:read"],
+    p["device:read"],
+    c["product:manage"],
+    c["product:price"],
+    ...allInventoryChanges,
+  ]),
   CASHIER: Object.freeze([...everyRole]),
-  STOCK_KEEPER: Object.freeze([...everyRole, c["product:manage"]]),
+  STOCK_KEEPER: Object.freeze([
+    ...everyRole,
+    c["product:manage"],
+    i["inventory:threshold"],
+    i["inventory:receive"],
+    i["inventory:count"],
+  ]),
   ACCOUNTANT: Object.freeze([...everyRole]),
 });
 

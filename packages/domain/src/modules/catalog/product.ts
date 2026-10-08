@@ -113,16 +113,17 @@ export interface ProductVariantPrice {
 }
 
 /**
- * The inventory facts the catalog guards depend on (ADR-008 section 3.2).
- * Build 2 Slice 1 has no inventory; until the inventory module supplies these
- * facts, callers pass what the authoritative inventory store says. The
- * low-stock threshold fact is added with S5, not here.
+ * The inventory facts the catalog guards depend on (ADR-008 section 3.2),
+ * supplied by the inventory module from its authoritative store, across all
+ * locations of the business.
  */
 export interface VariantInventoryState {
   /** True when any inventory movement exists for the variant at any location. */
   readonly hasMovements: boolean;
   /** True when the variant's balance is non-zero at any location. */
   readonly hasNonZeroBalance: boolean;
+  /** True when a low-stock threshold is configured (not cleared) for the variant at any location. */
+  readonly hasConfiguredThreshold: boolean;
 }
 
 function validSellingPrice(price: Money, businessCurrency: CurrencyCode): Money {
@@ -443,6 +444,13 @@ export function updateProduct(props: {
     throw new DomainError(
       "INVALID_TRANSITION",
       "the stock unit cannot change once inventory movements exist",
+      "stockUnit",
+    );
+  }
+  if (changes.stockUnit && props.inventory.hasConfiguredThreshold) {
+    throw new DomainError(
+      "INVALID_TRANSITION",
+      "the stock unit cannot change while a low-stock threshold is configured",
       "stockUnit",
     );
   }

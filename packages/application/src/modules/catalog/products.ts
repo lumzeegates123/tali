@@ -338,7 +338,7 @@ export function createUpdateProduct(dependencies: {
         const unitOrTrackingRequested = update.stockUnit !== undefined || update.trackInventory !== undefined;
         const inventory = unitOrTrackingRequested
           ? await dependencies.inventory.stateOf(scope, context.businessId, variant.id)
-          : { hasMovements: false, hasNonZeroBalance: false };
+          : { hasMovements: false, hasNonZeroBalance: false, hasConfiguredThreshold: false };
         const hasActivePacks =
           update.stockUnit !== undefined && update.stockUnit !== variant.stockUnit
             ? await dependencies.packs.hasActivePacks(scope, context.businessId, variant.id)

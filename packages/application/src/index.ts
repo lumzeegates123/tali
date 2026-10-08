@@ -43,6 +43,7 @@ export {
   IdempotencyInProgressError,
   IdempotencyKeyRequiredError,
   IdempotencyKeyReusedError,
+  InsufficientStockError,
   LocationRequiredError,
   NotFoundError,
   PermissionDeniedError,
@@ -111,6 +112,7 @@ export * from "./modules/business/index.js";
 export * from "./modules/catalog/index.js";
 export * from "./modules/device/index.js";
 export * from "./modules/identity/index.js";
+export * from "./modules/inventory/index.js";
 export * from "./modules/location/index.js";
 export * from "./ports/index.js";
 export type { Page, PageRequest } from "./queries/pagination.js";

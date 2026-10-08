@@ -359,7 +359,7 @@ describe("UpdateProduct", () => {
     expect(snapshot(h)).toBe(before);
   });
 
-  it("guards stock unit and tracking with the inventory facts (S5 threshold guard deferred)", async () => {
+  it("guards stock unit and tracking with the inventory facts", async () => {
     const { h, mine, item } = await created();
     h.catalog.setInventoryState(item.variant.id, { hasMovements: true, hasNonZeroBalance: true });
     await expect(
@@ -375,6 +375,33 @@ describe("UpdateProduct", () => {
       trackInventory: false,
     });
     expect(untracked.item.variant.trackInventory).toBe(false);
+  });
+
+  it("rejects a stock-unit change while a low-stock threshold is configured, and allows it once cleared", async () => {
+    const { h, mine, item } = await created();
+    h.catalog.setInventoryState(item.variant.id, { hasConfiguredThreshold: true });
+    const before = snapshot(h);
+    const blocked = h.updateProduct.execute(mine.OWNER, {
+      productId: item.product.id,
+      expectedVersion: 1,
+      stockUnit: "KG",
+    });
+    await expect(blocked).rejects.toThrow(ConflictError);
+    await expect(blocked).rejects.toThrow("the stock unit cannot change while a low-stock threshold is configured");
+    expect(snapshot(h)).toBe(before);
+    const untracked = await h.updateProduct.execute(mine.OWNER, {
+      productId: item.product.id,
+      expectedVersion: 1,
+      trackInventory: false,
+    });
+    expect(untracked.item.variant.trackInventory).toBe(false);
+    h.catalog.setInventoryState(item.variant.id, { hasConfiguredThreshold: false });
+    const changed = await h.updateProduct.execute(mine.OWNER, {
+      productId: item.product.id,
+      expectedVersion: 2,
+      stockUnit: "KG",
+    });
+    expect(changed.item.variant.stockUnit).toBe("KG");
   });
 
   it("rejects a stock-unit change while an active pack exists; once retired, only movements still block it", async () => {

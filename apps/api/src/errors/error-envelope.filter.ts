@@ -21,6 +21,7 @@ const APPLICATION_STATUS: Record<ApplicationErrorCode, number> = {
   IDEMPOTENCY_IN_PROGRESS: HttpStatus.CONFLICT,
   CONCURRENT_MODIFICATION: HttpStatus.CONFLICT,
   VERSION_CONFLICT: HttpStatus.CONFLICT,
+  INSUFFICIENT_STOCK: HttpStatus.CONFLICT,
 };
 
 const HTTP_CODE: Readonly<Record<number, string>> = {

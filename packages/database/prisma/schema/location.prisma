@@ -15,6 +15,13 @@ model BusinessLocation {
 
   auditRecords BusinessAuditRecord[]
 
+  inventoryOpeningBatches InventoryOpeningBatch[]
+  goodsReceipts           GoodsReceipt[]
+  inventoryAdjustments    InventoryAdjustment[]
+  inventoryMovements      InventoryMovement[]
+  inventoryBalances       InventoryBalance[]
+  inventoryThresholds     InventoryStockThreshold[]
+
   @@unique([businessId, id])
   @@map("business_locations")
 }

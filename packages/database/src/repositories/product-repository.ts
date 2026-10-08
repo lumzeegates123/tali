@@ -1,6 +1,6 @@
 import type { ProductRepository, ProductSearch } from "@tali/application";
 import { assertCatalogProductTransition, ConcurrentModificationError } from "@tali/application";
-import type { CatalogProduct, ProductVariant } from "@tali/domain";
+import type { CatalogProduct, ProductVariant, ProductVariantId } from "@tali/domain";
 import {
   Money,
   parseBusinessId,
@@ -265,6 +265,26 @@ export function createProductRepository(): ProductRepository {
         select: { id: true },
       });
       return row === null ? undefined : parseProductVariantId(row.id);
+    },
+
+    async lockVariantsForShare(scope, businessId, variantIds) {
+      const ids = [...variantIds].sort();
+      const locked = new Map<ProductVariantId, ProductVariant>();
+      if (ids.length === 0) return locked;
+      const client = transactionClient(scope);
+      await client.$queryRaw<{ id: string }[]>`
+        SELECT id::text AS id FROM product_variants
+        WHERE business_id = ${businessId}::uuid AND id = ANY(${ids}::uuid[])
+        ORDER BY id FOR SHARE`;
+      const rows = await client.product.findMany({
+        where: { businessId, variants: { some: { businessId, id: { in: ids } } } },
+        include: { variants: { orderBy: { id: "asc" } } },
+      });
+      for (const row of rows) {
+        const { variant } = toCatalogProduct(row, row.variants);
+        if (variantIds.has(variant.id)) locked.set(variant.id, variant);
+      }
+      return locked;
     },
   };
 }

@@ -179,13 +179,21 @@ describe("audit actions and registry", () => {
     expect(registry.has(defineAuditAction({ ...action, fields: { flag: auditField.boolean() } }))).toBe(false);
   });
 
-  it("registers exactly the Build 1 actions (plan 003 section 12) and the Build 2 catalog actions", () => {
+  it("registers exactly the Build 1 actions (plan 003 section 12) and the Build 2 catalog and inventory actions", () => {
     expect(taliAuditRegistry.actions.map((a) => [a.name, a.stream]).sort()).toEqual([
       ["business.created", "business"],
       ["business.renamed", "business"],
       ["device.registered", "business"],
       ["device.revoked", "business"],
       ["identity.linked", "platform"],
+      ["inventory.adjusted", "business"],
+      ["inventory.adjustment_reversed", "business"],
+      ["inventory.low_stock_threshold_cleared", "business"],
+      ["inventory.low_stock_threshold_set", "business"],
+      ["inventory.opening_recorded", "business"],
+      ["inventory.receipt_reversed", "business"],
+      ["inventory.received", "business"],
+      ["inventory.written_off", "business"],
       ["invitation.accepted", "business"],
       ["invitation.created", "business"],
       ["invitation.revoked", "business"],
@@ -208,8 +216,13 @@ describe("audit actions and registry", () => {
     ]);
   });
 
-  it("registers no inventory action in Build 2 Slice 1", () => {
-    expect(taliAuditRegistry.actions.filter((a) => a.name.startsWith("inventory."))).toEqual([]);
+  it("registers the eight Slice 5 inventory actions and no stocktake action (Build 2 Slice 6)", () => {
+    const inventory = taliAuditRegistry.actions.filter((a) => a.name.startsWith("inventory."));
+    expect(inventory).toHaveLength(8);
+    expect(inventory.filter((a) => a.name.includes("stocktake") || a.name.includes("count"))).toEqual([]);
+    expect(new Set(inventory.map((a) => a.entityType))).toEqual(
+      new Set(["inventory_opening_batch", "goods_receipt", "inventory_adjustment", "inventory_stock_threshold"]),
+    );
   });
 
   /**

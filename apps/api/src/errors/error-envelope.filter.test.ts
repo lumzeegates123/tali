@@ -9,6 +9,7 @@ import {
   IdempotencyInProgressError,
   IdempotencyKeyRequiredError,
   IdempotencyKeyReusedError,
+  InsufficientStockError,
   LocationRequiredError,
   NotFoundError,
   PermissionDeniedError,
@@ -62,6 +63,7 @@ describe("ErrorEnvelopeFilter", () => {
     [new IdempotencyInProgressError(), 409, "IDEMPOTENCY_IN_PROGRESS"],
     [new ConcurrentModificationError(), 409, "CONCURRENT_MODIFICATION"],
     [new VersionConflictError(), 409, "VERSION_CONFLICT"],
+    [new InsufficientStockError(), 409, "INSUFFICIENT_STOCK"],
   ] as const)("maps %s to %i %s", (error: ApplicationError, status, code) => {
     const result = run(error);
     expect(result.status).toBe(status);

@@ -11,6 +11,7 @@ import type {
   ProductId,
   ProductPack,
   ProductPackId,
+  ProductVariant,
   ProductVariantId,
   ProductVariantPrice,
   SkuKey,
@@ -79,6 +80,19 @@ export interface ProductRepository {
     businessId: BusinessId,
     barcode: BarcodeKey,
   ): Promise<ProductVariantId | undefined>;
+  /**
+   * The variants of this business among `variantIds`, in any status, each
+   * locked FOR SHARE until the transaction ends (ADR-008 section 9). The
+   * adapter locks them in one statement in ascending ID order, so concurrent
+   * stock changes cannot deadlock on variants, and a concurrent product edit
+   * (which locks the variant FOR UPDATE) waits for this transaction. A variant
+   * of another business is simply absent from the result.
+   */
+  lockVariantsForShare(
+    scope: TransactionScope,
+    businessId: BusinessId,
+    variantIds: ReadonlySet<ProductVariantId>,
+  ): Promise<ReadonlyMap<ProductVariantId, ProductVariant>>;
 }
 
 /**
@@ -162,6 +176,16 @@ export interface ProductPackRepository {
     variantId: ProductVariantId,
     name: PackName,
   ): Promise<ProductPackId | undefined>;
+  /**
+   * The packs of this business among `packIds`, in any status, without
+   * locking: a pack's name and factor never change, and retirement only stops
+   * new entries (ADR-008 section 3.4). A pack of another business is absent.
+   */
+  findForEntry(
+    scope: TransactionScope,
+    businessId: BusinessId,
+    packIds: ReadonlySet<ProductPackId>,
+  ): Promise<ReadonlyMap<ProductPackId, ProductPack>>;
 }
 
 /** The approved unit reference data (global, read-only; ADR-008 section 4.2). */

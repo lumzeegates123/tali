@@ -16,7 +16,8 @@ const migrationsDir = fileURLToPath(new URL("../prisma/migrations", import.meta.
  * that no longer exist, so the scan keeps covering every migration that
  * touched them. Audit and keyed-idempotency records are insert-only
  * (ADR-004 sections 4.2 and 8.1). Unit reference data is read-only and price
- * history is insert-only (ADR-008 sections 3.4 and 4.2).
+ * history is insert-only (ADR-008 sections 3.4 and 4.2). Inventory movements
+ * and opening batches are append-only (ADR-008 sections 7.1 and 11).
  */
 const PROTECTED_TABLES = [
   "foundation_spike.protected_entry",
@@ -26,6 +27,8 @@ const PROTECTED_TABLES = [
   "public.business_idempotency_records",
   "public.units_of_measure",
   "public.product_variant_prices",
+  "public.inventory_movements",
+  "public.inventory_opening_batches",
 ];
 
 /**
@@ -47,6 +50,10 @@ const NO_DELETE_TABLES = [
   "public.products",
   "public.product_variants",
   "public.product_packs",
+  "public.goods_receipts",
+  "public.inventory_adjustments",
+  "public.inventory_balances",
+  "public.inventory_stock_thresholds",
 ];
 
 /**
@@ -71,9 +78,11 @@ const TEST_ONLY_SCHEMAS = ["test_fixtures"];
 
 /**
  * Exact table privileges expected for the application role (Build 1 Slice 2
- * and Slice 5, Build 2 Slice 2 migrations). No table grants DELETE or
- * TRUNCATE; audit, idempotency and price-history tables are insert-only;
- * currencies and units of measure are read-only.
+ * and Slice 5, Build 2 Slice 2 and Slice 5 migrations). No table grants
+ * DELETE or TRUNCATE; audit, idempotency, price-history, movement and
+ * opening-batch tables are insert-only; currencies and units of measure are
+ * read-only. Receipt and adjustment headers have no table-level UPDATE: see
+ * EXPECTED_APP_COLUMN_PRIVILEGES.
  */
 const EXPECTED_APP_PRIVILEGES = {
   "public.currencies": ["SELECT"],
@@ -94,6 +103,24 @@ const EXPECTED_APP_PRIVILEGES = {
   "public.product_variants": ["INSERT", "SELECT", "UPDATE"],
   "public.product_packs": ["INSERT", "SELECT", "UPDATE"],
   "public.product_variant_prices": ["INSERT", "SELECT"],
+  "public.inventory_opening_batches": ["INSERT", "SELECT"],
+  "public.goods_receipts": ["INSERT", "SELECT"],
+  "public.inventory_adjustments": ["INSERT", "SELECT"],
+  "public.inventory_movements": ["INSERT", "SELECT"],
+  "public.inventory_balances": ["INSERT", "SELECT", "UPDATE"],
+  "public.inventory_stock_thresholds": ["INSERT", "SELECT", "UPDATE"],
+};
+
+/**
+ * Exact column-level privileges expected for the application role, read from
+ * pg_attribute.attacl. The only column grants are UPDATE on the four reversal
+ * columns of the receipt and adjustment headers (POSTED to REVERSED; ADR-008
+ * section 11); no other column of any table carries a grant to the role.
+ */
+const REVERSAL_COLUMNS = ["reversal_reason", "reversed_at", "reversed_by_membership_id", "status"];
+const EXPECTED_APP_COLUMN_PRIVILEGES = {
+  "public.goods_receipts": Object.fromEntries(REVERSAL_COLUMNS.map((column) => [column, ["UPDATE"]])),
+  "public.inventory_adjustments": Object.fromEntries(REVERSAL_COLUMNS.map((column) => [column, ["UPDATE"]])),
 };
 
 const ENVELOPE_SOURCE_CHANNELS =
@@ -169,6 +196,196 @@ function idempotencyChecks(table) {
     },
   ];
 }
+
+/** An optional, trimmed text column of 1..max characters. */
+function trimmedTextCheck(table, column, max) {
+  return {
+    table,
+    name: `${table}_${column}_valid`,
+    definition: `CHECK (((${column} IS NULL) OR (((char_length(${column}) >= 1) AND (char_length(${column}) <= ${max})) AND (${column} = btrim(${column})))))`,
+  };
+}
+
+/** The recording CHECKs shared by every inventory document and movement (ADR-008 section 11). */
+function inventoryRecordingChecks(table) {
+  return [
+    {
+      table,
+      name: `${table}_source_channel_valid`,
+      definition: `CHECK ((source_channel = ANY (${ENVELOPE_SOURCE_CHANNELS})))`,
+    },
+    {
+      table,
+      name: `${table}_correlation_id_format`,
+      definition: "CHECK ((correlation_id ~ '^[A-Za-z0-9._:-]{1,128}$'::text))",
+    },
+    { table, name: `${table}_recorded_after_occurred`, definition: "CHECK ((recorded_at >= occurred_at))" },
+  ];
+}
+
+/** POSTED or REVERSED, with who, when and why present exactly when REVERSED. */
+function documentReversalChecks(table) {
+  return [
+    {
+      table,
+      name: `${table}_status_valid`,
+      definition: "CHECK ((status = ANY (ARRAY['POSTED'::text, 'REVERSED'::text])))",
+    },
+    {
+      table,
+      name: `${table}_reversed_shape`,
+      definition:
+        "CHECK ((((status = 'REVERSED'::text) = (reversed_at IS NOT NULL)) AND ((reversed_at IS NULL) = (reversed_by_membership_id IS NULL)) AND ((reversed_at IS NULL) = (reversal_reason IS NULL))))",
+    },
+    trimmedTextCheck(table, "reversal_reason", 500),
+  ];
+}
+
+const QUANTITY_BOUND = "'1000000000000000'::bigint";
+const ADJUSTMENT_REASON_CODES = "ARRAY['FOUND_STOCK'::text, 'DATA_ENTRY_CORRECTION'::text, 'OTHER'::text]";
+const WRITE_OFF_REASON_CODES =
+  "ARRAY['DAMAGED'::text, 'EXPIRED'::text, 'SPOILED'::text, 'THEFT_OR_LOSS'::text, 'OTHER'::text]";
+
+/** The Build 2 Slice 5 inventory CHECKs (ADR-008 sections 7, 8 and 11; plan section O). */
+const INVENTORY_CHECKS = [
+  ...inventoryRecordingChecks("inventory_opening_batches"),
+  trimmedTextCheck("inventory_opening_batches", "note", 500),
+  ...inventoryRecordingChecks("goods_receipts"),
+  trimmedTextCheck("goods_receipts", "note", 500),
+  trimmedTextCheck("goods_receipts", "reference", 64),
+  ...documentReversalChecks("goods_receipts"),
+  ...inventoryRecordingChecks("inventory_adjustments"),
+  trimmedTextCheck("inventory_adjustments", "note", 500),
+  ...documentReversalChecks("inventory_adjustments"),
+  {
+    table: "inventory_adjustments",
+    name: "inventory_adjustments_kind_valid",
+    definition: "CHECK ((kind = ANY (ARRAY['ADJUSTMENT'::text, 'WRITE_OFF'::text])))",
+  },
+  {
+    table: "inventory_adjustments",
+    name: "inventory_adjustments_reason_valid",
+    definition: `CHECK ((((kind = 'ADJUSTMENT'::text) AND (reason_code = ANY (${ADJUSTMENT_REASON_CODES}))) OR ((kind = 'WRITE_OFF'::text) AND (reason_code = ANY (${WRITE_OFF_REASON_CODES})))))`,
+  },
+  {
+    table: "inventory_adjustments",
+    name: "inventory_adjustments_other_requires_note",
+    definition: "CHECK (((reason_code <> 'OTHER'::text) OR (reason_note IS NOT NULL)))",
+  },
+  trimmedTextCheck("inventory_adjustments", "reason_note", 500),
+  ...inventoryRecordingChecks("inventory_movements"),
+  {
+    table: "inventory_movements",
+    name: "inventory_movements_type_valid",
+    definition:
+      "CHECK ((type = ANY (ARRAY['OPENING'::text, 'PURCHASE_RECEIPT'::text, 'ADJUSTMENT'::text, 'WRITE_OFF'::text])))",
+  },
+  {
+    table: "inventory_movements",
+    name: "inventory_movements_delta_nonzero",
+    definition: `CHECK (((quantity_delta_minor <> 0) AND ((quantity_delta_minor >= '-1000000000000000'::bigint) AND (quantity_delta_minor <= ${QUANTITY_BOUND}))))`,
+  },
+  {
+    table: "inventory_movements",
+    name: "inventory_movements_balance_after_range",
+    definition: `CHECK (((balance_after_minor >= '-1000000000000000'::bigint) AND (balance_after_minor <= ${QUANTITY_BOUND})))`,
+  },
+  {
+    table: "inventory_movements",
+    name: "inventory_movements_balance_version_positive",
+    definition: "CHECK ((balance_version >= 1))",
+  },
+  {
+    table: "inventory_movements",
+    name: "inventory_movements_one_source",
+    definition: "CHECK ((num_nonnulls(opening_batch_id, goods_receipt_id, adjustment_id) = 1))",
+  },
+  {
+    table: "inventory_movements",
+    name: "inventory_movements_opening_source",
+    definition: "CHECK (((type = 'OPENING'::text) = (opening_batch_id IS NOT NULL)))",
+  },
+  {
+    table: "inventory_movements",
+    name: "inventory_movements_receipt_source",
+    definition: "CHECK (((type = 'PURCHASE_RECEIPT'::text) = (goods_receipt_id IS NOT NULL)))",
+  },
+  {
+    table: "inventory_movements",
+    name: "inventory_movements_adjustment_source",
+    definition: "CHECK (((type = ANY (ARRAY['ADJUSTMENT'::text, 'WRITE_OFF'::text])) = (adjustment_id IS NOT NULL)))",
+  },
+  {
+    table: "inventory_movements",
+    name: "inventory_movements_direction",
+    definition:
+      "CHECK ((((type = 'OPENING'::text) AND (reverses_movement_id IS NULL) AND (quantity_delta_minor > 0)) OR ((type = 'PURCHASE_RECEIPT'::text) AND ((reverses_movement_id IS NULL) = (quantity_delta_minor > 0))) OR ((type = 'WRITE_OFF'::text) AND ((reverses_movement_id IS NULL) = (quantity_delta_minor < 0))) OR (type = 'ADJUSTMENT'::text)))",
+  },
+  {
+    table: "inventory_movements",
+    name: "inventory_movements_not_self_reversal",
+    definition: "CHECK ((reverses_movement_id <> id))",
+  },
+  {
+    table: "inventory_movements",
+    name: "inventory_movements_pack_shape",
+    definition:
+      "CHECK ((((pack_id IS NULL) = (pack_name IS NULL)) AND ((pack_id IS NULL) = (pack_count IS NULL)) AND ((pack_id IS NULL) = (pack_factor_minor IS NULL))))",
+  },
+  // Exact NUMERIC arithmetic: cast before ABS and before the product, so
+  // neither can overflow BIGINT; no floating-point type is involved.
+  {
+    table: "inventory_movements",
+    name: "inventory_movements_pack_arithmetic",
+    definition: `CHECK (((pack_id IS NULL) OR (((pack_count >= 1) AND (pack_count <= ${QUANTITY_BOUND})) AND ((pack_factor_minor >= 2) AND (pack_factor_minor <= 1000000000)) AND (abs((quantity_delta_minor)::numeric) = ((pack_count)::numeric * (pack_factor_minor)::numeric)))))`,
+  },
+  {
+    table: "inventory_movements",
+    name: "inventory_movements_pack_reversal",
+    definition: "CHECK (((reverses_movement_id IS NULL) OR (pack_id IS NULL)))",
+  },
+  trimmedTextCheck("inventory_movements", "reason_note", 500),
+  {
+    table: "inventory_movements",
+    name: "inventory_movements_reason_shape",
+    definition: `CHECK ((((reverses_movement_id IS NULL) AND (type = ANY (ARRAY['OPENING'::text, 'PURCHASE_RECEIPT'::text])) AND (reason_code IS NULL) AND (reason_note IS NULL)) OR ((reverses_movement_id IS NULL) AND (type = 'ADJUSTMENT'::text) AND (reason_code = ANY (${ADJUSTMENT_REASON_CODES})) AND ((reason_code <> 'OTHER'::text) OR (reason_note IS NOT NULL))) OR ((reverses_movement_id IS NULL) AND (type = 'WRITE_OFF'::text) AND (reason_code = ANY (${WRITE_OFF_REASON_CODES})) AND ((reason_code <> 'OTHER'::text) OR (reason_note IS NOT NULL))) OR ((reverses_movement_id IS NOT NULL) AND (reason_code IS NULL) AND (reason_note IS NOT NULL))))`,
+  },
+  {
+    table: "inventory_balances",
+    name: "inventory_balances_quantity_range",
+    definition: `CHECK (((quantity_minor >= '-1000000000000000'::bigint) AND (quantity_minor <= ${QUANTITY_BOUND})))`,
+  },
+  {
+    table: "inventory_balances",
+    name: "inventory_balances_version_non_negative",
+    definition: "CHECK ((version >= 0))",
+  },
+  {
+    table: "inventory_balances",
+    name: "inventory_balances_last_movement_shape",
+    definition: "CHECK (((version = 0) = (last_movement_id IS NULL)))",
+  },
+  {
+    table: "inventory_balances",
+    name: "inventory_balances_empty_is_zero",
+    definition: "CHECK (((version > 0) OR (quantity_minor = 0)))",
+  },
+  {
+    table: "inventory_stock_thresholds",
+    name: "inventory_stock_thresholds_threshold_range",
+    definition: `CHECK (((low_stock_threshold_minor IS NULL) OR ((low_stock_threshold_minor >= 0) AND (low_stock_threshold_minor <= ${QUANTITY_BOUND}))))`,
+  },
+  {
+    table: "inventory_stock_thresholds",
+    name: "inventory_stock_thresholds_version_positive",
+    definition: "CHECK ((version >= 1))",
+  },
+  {
+    table: "inventory_stock_thresholds",
+    name: "inventory_stock_thresholds_updated_after_created",
+    definition: "CHECK ((updated_at >= created_at))",
+  },
+];
 
 /**
  * Every custom CHECK constraint, compared with PostgreSQL's canonical
@@ -503,6 +720,7 @@ const EXPECTED_CHECKS = [
     definition:
       "CHECK (((reason IS NULL) OR (((char_length(reason) >= 1) AND (char_length(reason) <= 500)) AND (reason ~ '[^[:space:]]'::text))))",
   },
+  ...INVENTORY_CHECKS,
 ];
 
 /** @type {{ schema: string; name: string; columns: string; predicate: string }[]} */
@@ -537,6 +755,23 @@ const EXPECTED_PARTIAL_UNIQUE_INDEXES = [
     columns: "business_id,variant_id,name",
     predicate: "(status = 'ACTIVE'::text)",
   },
+  // One OPENING per stock item ever; one original line per document and variant (ADR-008 sections 7.1 and 8).
+  {
+    schema: "public",
+    name: "inventory_movements_one_opening",
+    columns: "business_id,location_id,variant_id",
+    predicate: "(type = 'OPENING'::text)",
+  },
+  ...[
+    ["opening_line", "opening_batch_id"],
+    ["receipt_line", "goods_receipt_id"],
+    ["adjustment_line", "adjustment_id"],
+  ].map(([rule, column]) => ({
+    schema: "public",
+    name: `inventory_movements_${rule}_unique`,
+    columns: `business_id,${column},variant_id`,
+    predicate: `((${column} IS NOT NULL) AND (reverses_movement_id IS NULL))`,
+  })),
 ];
 
 /**
@@ -597,6 +832,67 @@ const EXPECTED_TENANT_FOREIGN_KEYS = [
     name: `${table}_business_id_${column}_fkey`,
     definition: `FOREIGN KEY (business_id, ${column}) REFERENCES businesses(id, currency_code) ON UPDATE RESTRICT ON DELETE RESTRICT`,
   })),
+  // Inventory (ADR-008 sections 7, 8 and 11): every reference stays in its business.
+  ...[
+    ["inventory_opening_batches", "location_id", "business_locations"],
+    ["inventory_opening_batches", "actor_membership_id", "business_memberships"],
+    ["inventory_opening_batches", "device_id", "devices"],
+    ["goods_receipts", "location_id", "business_locations"],
+    ["goods_receipts", "actor_membership_id", "business_memberships"],
+    ["goods_receipts", "reversed_by_membership_id", "business_memberships"],
+    ["goods_receipts", "device_id", "devices"],
+    ["inventory_adjustments", "location_id", "business_locations"],
+    ["inventory_adjustments", "actor_membership_id", "business_memberships"],
+    ["inventory_adjustments", "device_id", "devices"],
+    ["inventory_movements", "location_id", "business_locations"],
+    ["inventory_movements", "variant_id", "product_variants"],
+    ["inventory_movements", "actor_membership_id", "business_memberships"],
+    ["inventory_movements", "device_id", "devices"],
+    ["inventory_movements", "opening_batch_id", "inventory_opening_batches"],
+    ["inventory_movements", "goods_receipt_id", "goods_receipts"],
+    ["inventory_balances", "location_id", "business_locations"],
+    ["inventory_balances", "variant_id", "product_variants"],
+    ["inventory_stock_thresholds", "location_id", "business_locations"],
+    ["inventory_stock_thresholds", "variant_id", "product_variants"],
+  ].map(([table, column, target]) => ({
+    table,
+    name: `${table}_business_id_${column}_fkey`,
+    definition: `FOREIGN KEY (business_id, ${column}) REFERENCES ${target}(business_id, id) ON UPDATE RESTRICT ON DELETE RESTRICT`,
+  })),
+  {
+    table: "inventory_adjustments",
+    name: "inventory_adjustments_reversed_by_membership_fkey",
+    definition:
+      "FOREIGN KEY (business_id, reversed_by_membership_id) REFERENCES business_memberships(business_id, id) ON UPDATE RESTRICT ON DELETE RESTRICT",
+  },
+  // A movement's type is its adjustment document's kind.
+  {
+    table: "inventory_movements",
+    name: "inventory_movements_business_id_adjustment_id_type_fkey",
+    definition:
+      "FOREIGN KEY (business_id, adjustment_id, type) REFERENCES inventory_adjustments(business_id, id, kind) ON UPDATE RESTRICT ON DELETE RESTRICT",
+  },
+  // A pack snapshot names a pack of the movement's own variant.
+  {
+    table: "inventory_movements",
+    name: "inventory_movements_business_id_pack_id_variant_id_fkey",
+    definition:
+      "FOREIGN KEY (business_id, pack_id, variant_id) REFERENCES product_packs(business_id, id, variant_id) ON UPDATE RESTRICT ON DELETE RESTRICT",
+  },
+  // A reversal has its original's location, variant and type.
+  {
+    table: "inventory_movements",
+    name: "inventory_movements_reversal_fkey",
+    definition:
+      "FOREIGN KEY (business_id, reverses_movement_id, location_id, variant_id, type) REFERENCES inventory_movements(business_id, id, location_id, variant_id, type) ON UPDATE RESTRICT ON DELETE RESTRICT",
+  },
+  // A balance's last movement belongs to the same stock item (plan decision D18).
+  {
+    table: "inventory_balances",
+    name: "inventory_balances_last_movement_fkey",
+    definition:
+      "FOREIGN KEY (business_id, location_id, variant_id, last_movement_id) REFERENCES inventory_movements(business_id, location_id, variant_id, id) ON UPDATE RESTRICT ON DELETE RESTRICT",
+  },
 ];
 
 /**
@@ -621,6 +917,44 @@ const EXPECTED_UNIQUE_INDEXES = [
     schema: "public",
     name: "product_variant_prices_business_id_variant_id_price_version_key",
     columns: "business_id,variant_id,price_version",
+  },
+  // Inventory (ADR-008 sections 7 and 8): the adjustment kind target, the
+  // reversal and last-movement targets, the gap-free balance version per stock
+  // item, one reversal per original, and one threshold row per stock item.
+  {
+    schema: "public",
+    name: "inventory_adjustments_business_id_id_kind_key",
+    columns: "business_id,id,kind",
+  },
+  {
+    schema: "public",
+    name: "inventory_movements_reversal_target_key",
+    columns: "business_id,id,location_id,variant_id,type",
+  },
+  {
+    schema: "public",
+    name: "inventory_movements_business_id_location_id_variant_id_id_key",
+    columns: "business_id,location_id,variant_id,id",
+  },
+  {
+    schema: "public",
+    name: "inventory_movements_stock_item_version_key",
+    columns: "business_id,location_id,variant_id,balance_version",
+  },
+  {
+    schema: "public",
+    name: "inventory_movements_business_id_reverses_movement_id_key",
+    columns: "business_id,reverses_movement_id",
+  },
+  {
+    schema: "public",
+    name: "inventory_balances_pkey",
+    columns: "business_id,location_id,variant_id",
+  },
+  {
+    schema: "public",
+    name: "inventory_stock_thresholds_stock_item_key",
+    columns: "business_id,location_id,variant_id",
   },
 ];
 
@@ -824,6 +1158,36 @@ try {
     }
   }
 
+  // Column-level grants are invisible to role_table_grants; read every column ACL entry for the role (and PUBLIC).
+  const columnGrants = await client.query(
+    `SELECT n.nspname || '.' || c.relname AS table, a.attname AS column, acl.grantee = 0 AS public,
+            array_agg(acl.privilege_type::text ORDER BY acl.privilege_type) AS privileges
+     FROM pg_attribute a
+     JOIN pg_class c ON c.oid = a.attrelid
+     JOIN pg_namespace n ON n.oid = c.relnamespace
+     CROSS JOIN LATERAL aclexplode(a.attacl) AS acl
+     WHERE a.attacl IS NOT NULL AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+       AND (acl.grantee = 0 OR acl.grantee = (SELECT oid FROM pg_roles WHERE rolname = $1))
+     GROUP BY 1, 2, 3 ORDER BY 1, 2`,
+    [APP_ROLE],
+  );
+  const actualColumns = {};
+  for (const row of columnGrants.rows) {
+    if (row.public) {
+      fail(`PUBLIC has column privileges ${JSON.stringify(row.privileges)} on ${row.table}.${row.column}`);
+      continue;
+    }
+    actualColumns[row.table] = { ...actualColumns[row.table], [row.column]: row.privileges };
+  }
+  for (const table of new Set([...Object.keys(EXPECTED_APP_COLUMN_PRIVILEGES), ...Object.keys(actualColumns)])) {
+    const sorted = (grants = {}) =>
+      JSON.stringify(Object.fromEntries(Object.entries(grants).sort(([a], [b]) => (a < b ? -1 : 1))));
+    const expected = sorted(EXPECTED_APP_COLUMN_PRIVILEGES[table]);
+    if (sorted(actualColumns[table]) !== expected) {
+      fail(`${APP_ROLE} column privileges on ${table}: expected ${expected}, found ${sorted(actualColumns[table])}`);
+    }
+  }
+
   const publicGrants = await client.query(
     `SELECT table_schema || '.' || table_name AS table, privilege_type FROM information_schema.role_table_grants
      WHERE grantee = 'PUBLIC' AND table_schema NOT IN ('pg_catalog', 'information_schema')`,
@@ -875,5 +1239,5 @@ if (failures.length > 0) {
   process.exit(1);
 }
 console.log(
-  `Schema verification passed (${migrationNames.length} migration(s), ${Object.keys(APPROVED_DESTRUCTIVE_MIGRATIONS).length} approved destructive migration(s), ${Object.keys(EXPECTED_APP_PRIVILEGES).length} table grant sets, ${EXPECTED_CHECKS.length} CHECK, ${EXPECTED_PARTIAL_UNIQUE_INDEXES.length} partial unique index, ${EXPECTED_UNIQUE_INDEXES.length} unique index, ${EXPECTED_TENANT_FOREIGN_KEYS.length} tenant foreign keys, ${EXPECTED_CURRENCIES.length} reference currency, ${EXPECTED_UNITS.length} units of measure, removed schemas absent: ${REMOVED_SCHEMAS.join(", ")}, test-only schemas absent: ${TEST_ONLY_SCHEMAS.join(", ")}).`,
+  `Schema verification passed (${migrationNames.length} migration(s), ${Object.keys(APPROVED_DESTRUCTIVE_MIGRATIONS).length} approved destructive migration(s), ${Object.keys(EXPECTED_APP_PRIVILEGES).length} table grant sets, ${Object.keys(EXPECTED_APP_COLUMN_PRIVILEGES).length} column grant sets, ${EXPECTED_CHECKS.length} CHECK, ${EXPECTED_PARTIAL_UNIQUE_INDEXES.length} partial unique index, ${EXPECTED_UNIQUE_INDEXES.length} unique index, ${EXPECTED_TENANT_FOREIGN_KEYS.length} tenant foreign keys, ${EXPECTED_CURRENCIES.length} reference currency, ${EXPECTED_UNITS.length} units of measure, removed schemas absent: ${REMOVED_SCHEMAS.join(", ")}, test-only schemas absent: ${TEST_ONLY_SCHEMAS.join(", ")}).`,
 );

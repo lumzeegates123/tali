@@ -88,8 +88,6 @@ import {
   type UserContextResolver,
 } from "@tali/application";
 import type { Database } from "@tali/database";
-import { PreInventoryStateReader } from "./pre-inventory-state-reader.js";
-
 /**
  * The application-facing services the HTTP layer may call: context resolvers,
  * the device verifier and use cases only. Guards and controllers receive this
@@ -142,8 +140,10 @@ export interface ApiServices {
  * work, the PostgreSQL audit writer and idempotency stores, the SHA-256
  * fingerprint hasher, the UUIDv7 generator and the node:crypto one-time
  * secret adapters. Transaction semantics are exactly those of the unit of
- * work; nothing here opens transactions. Until Slice 5, UpdateProduct's
- * inventory guard reads the temporary PreInventoryStateReader.
+ * work; nothing here opens transactions. UpdateProduct's inventory guard
+ * reads the authoritative inventory tables through the database's
+ * variantInventoryState reader (movements, balances and configured low-stock
+ * thresholds at every location).
  */
 export function composeApiServices(dependencies: {
   readonly database: Database;
@@ -263,7 +263,7 @@ export function composeApiServices(dependencies: {
       categories,
       packs,
       units,
-      inventory: new PreInventoryStateReader(),
+      inventory: database.repositories.variantInventoryState,
       audit,
       clock,
     }),

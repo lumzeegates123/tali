@@ -10,10 +10,13 @@ export {
   testDatabaseUrls,
 } from "./test-database.js";
 export { assertFixtureSession, FixtureSafetyError, fixtureTargetUrl } from "./fixture-safety.js";
-export type { CatalogSnapshot, TenancySnapshot } from "./tenancy-fixtures.js";
+export type { InventoryConsistencyIssue, InventoryConsistencyKind } from "../inventory/consistency-query.js";
+export type { CatalogSnapshot, InventorySnapshot, TenancySnapshot } from "./tenancy-fixtures.js";
 export {
   addTestCurrencies,
   readCatalogSnapshot,
+  readInventoryConsistency,
+  readInventorySnapshot,
   readTenancySnapshot,
   removeTestCurrencies,
   resetTenancyTables,

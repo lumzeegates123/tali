@@ -100,6 +100,10 @@ model ProductVariant {
   packs  ProductPack[]
   prices ProductVariantPrice[]
 
+  inventoryMovements  InventoryMovement[]
+  inventoryBalances   InventoryBalance[]
+  inventoryThresholds InventoryStockThreshold[]
+
   @@unique([businessId, id])
   @@unique([businessId, skuNormalized])
   @@index([businessId, productId])
@@ -121,6 +125,8 @@ model ProductPack {
 
   business Business       @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   variant  ProductVariant @relation(fields: [businessId, variantId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  inventoryMovements InventoryMovement[]
 
   @@unique([businessId, id])
   @@unique([businessId, id, variantId])

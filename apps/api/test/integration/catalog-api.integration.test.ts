@@ -1,6 +1,24 @@
 import { randomUUID } from "node:crypto";
-import { readCatalogSnapshot, readTenancySnapshot, resetTenancyTables, tenancyFixtures } from "@tali/database/testing";
-import { uuidV7IdGenerator } from "@tali/integrations/platform";
+import {
+  AuditRecorder,
+  createClearLowStockThreshold,
+  createPostGoodsReceipt,
+  createSetLowStockThreshold,
+  KeyedIdempotency,
+  type LocationBoundContext,
+  parseCorrelationId,
+  taliAuditRegistry,
+} from "@tali/application";
+import {
+  readCatalogSnapshot,
+  readInventoryConsistency,
+  readInventorySnapshot,
+  readTenancySnapshot,
+  resetTenancyTables,
+  tenancyFixtures,
+} from "@tali/database/testing";
+import { parseLocationId } from "@tali/domain";
+import { Sha256FingerprintHasher, uuidV7IdGenerator } from "@tali/integrations/platform";
 import {
   BusinessCurrencyResponseSchema,
   CategoriesResponseSchema,
@@ -16,7 +34,7 @@ import {
   UnitsResponseSchema,
 } from "@tali/shared";
 import request from "supertest";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { startApi, type ApiHarness } from "../support/api-harness.js";
 import { bearer, createBusinessAs, registerActor, type RegisteredActor } from "../support/tenancy-client.js";
 
@@ -620,6 +638,181 @@ describe("Build 2 Slice 3 catalog API over HTTP", () => {
         .send({ expectedVersion: 1, categoryId: null })
         .expect(200);
       expect(ProductResponseSchema.parse(cleared.body).categoryId).toBeNull();
+    });
+  });
+
+  describe("inventory guard through the production reader (Slice 5)", () => {
+    /**
+     * The Slice 5 inventory use cases composed over the API runtime's own
+     * database, as a future inventory route would compose them. Slice 5 has
+     * no inventory route, so the tests call the use cases directly with a
+     * context resolved by the API's own resolvers.
+     */
+    function inventory() {
+      const { database, clock } = api.runtime;
+      const { unitOfWork, repositories: repos } = database;
+      const ids = uuidV7IdGenerator;
+      const audit = new AuditRecorder({ registry: taliAuditRegistry, writer: repos.auditWriter, clock, ids });
+      const stock = {
+        unitOfWork,
+        memberships: repos.memberships,
+        products: repos.products,
+        packs: repos.productPacks,
+        units: repos.units,
+        movements: repos.inventoryMovements,
+        balances: repos.inventoryBalances,
+        idempotency: new KeyedIdempotency({ businessStore: repos.businessIdempotency, clock, ids }),
+        hasher: new Sha256FingerprintHasher(),
+        audit,
+        ids,
+        clock,
+      };
+      return {
+        postGoodsReceipt: createPostGoodsReceipt({ ...stock, receipts: repos.goodsReceipts }),
+        setLowStockThreshold: createSetLowStockThreshold({ ...stock, thresholds: repos.inventoryThresholds }),
+        clearLowStockThreshold: createClearLowStockThreshold({ ...stock, thresholds: repos.inventoryThresholds }),
+      };
+    }
+
+    /** The actor's context as the API's guards resolve it, bound to the default location unless one is given. */
+    async function boundContext(
+      actor: RegisteredActor,
+      businessId: string,
+      locationId?: string,
+    ): Promise<LocationBoundContext> {
+      const { services } = api.runtime;
+      const identity = await api.identity.verifyAccessToken(actor.token);
+      const user = await services.userContexts.resolve(identity, {
+        correlationId: parseCorrelationId("w4-inventory-setup"),
+        sourceChannel: "web",
+      });
+      const bound = await services.defaultLocations.resolveDefaultLocation(
+        await services.businessContexts.resolveForUser(user, businessId),
+      );
+      return locationId === undefined ? bound : { ...bound, locationId: parseLocationId(locationId) };
+    }
+
+    async function backStore(businessId = world.a): Promise<string> {
+      const id = uuidV7IdGenerator.newId("location");
+      await tenancyFixtures.insertLocation({ id, businessId, name: "Back store" });
+      return id;
+    }
+
+    const receive = async (context: LocationBoundContext, variantId: string, quantityMinor: string) =>
+      inventory().postGoodsReceipt.execute(context, {
+        lines: [{ variantId, quantityMinor, unit: "PIECE" }],
+        idempotencyKey: randomUUID(),
+      });
+
+    /** The single default variant of a product, as stored. */
+    async function variantOf(productId: string): Promise<string> {
+      const variant = (await readCatalogSnapshot()).variants.find((row) => row.productId === productId);
+      if (variant === undefined) throw new Error("product has no variant");
+      return variant.id;
+    }
+
+    const patch = (productId: string, body: Record<string, unknown>) =>
+      http()
+        .patch(url(world.a, `products/${productId}`))
+        .set(bearer(as("OWNER").token))
+        .send(body);
+
+    async function stored(productId: string): Promise<ProductResponse> {
+      return ProductResponseSchema.parse((await get(as("OWNER"), `products/${productId}`).expect(200)).body);
+    }
+
+    afterEach(async () => {
+      expect(await readInventoryConsistency()).toEqual([]);
+    });
+
+    it("a goods receipt's movement blocks a stock-unit change (409) and nothing changes", async () => {
+      const item = await product();
+      const variantId = await variantOf(item.id);
+      const receipt = await receive(await boundContext(as("OWNER"), world.a), variantId, "12");
+      expect(receipt.movements).toHaveLength(1);
+      const before = await readInventorySnapshot();
+      expect(before.movements).toHaveLength(1);
+      expect(before.balances).toMatchObject([{ variantId, quantityText: "12", version: 1 }]);
+
+      const rejected = await patch(item.id, { expectedVersion: 1, stockUnit: "KG" }).expect(409);
+      expect(code(rejected.body)).toBe("CONFLICT");
+      expect(await stored(item.id)).toEqual(item);
+      expect(await readInventorySnapshot()).toEqual(before);
+    });
+
+    it("a threshold at a non-default location blocks a stock-unit change; once cleared it does not", async () => {
+      const item = await product();
+      const variantId = await variantOf(item.id);
+      const elsewhere = await boundContext(as("OWNER"), world.a, await backStore());
+      const defaultContext = await boundContext(as("OWNER"), world.a);
+      expect(elsewhere.locationId).not.toBe(defaultContext.locationId);
+      await inventory().setLowStockThreshold.execute(elsewhere, {
+        variantId,
+        expectedVersion: 0,
+        threshold: { quantityMinor: "3", unit: "PIECE" },
+      });
+      const configured = await readInventorySnapshot();
+      expect(configured.thresholds).toMatchObject([
+        { variantId, locationId: elsewhere.locationId, thresholdText: "3", version: 1 },
+      ]);
+
+      const rejected = await patch(item.id, { expectedVersion: 1, stockUnit: "KG" }).expect(409);
+      expect(code(rejected.body)).toBe("CONFLICT");
+      expect(await stored(item.id)).toEqual(item);
+      expect(await readInventorySnapshot()).toEqual(configured);
+      expect(configured.movements).toEqual([]);
+      expect(configured.balances).toEqual([]);
+
+      await inventory().clearLowStockThreshold.execute(elsewhere, { variantId, expectedVersion: 1 });
+      const cleared = await readInventorySnapshot();
+      expect(cleared.thresholds).toMatchObject([
+        { variantId, locationId: elsewhere.locationId, thresholdText: null, version: 2 },
+      ]);
+
+      const changed = record(
+        ProductResponseSchema.parse((await patch(item.id, { expectedVersion: 1, stockUnit: "KG" }).expect(200)).body),
+      );
+      expect(changed).toMatchObject({ stockUnit: "KG", version: 2 });
+      expect(await readInventorySnapshot()).toEqual(cleared);
+    });
+
+    it("non-zero stock at a non-default location blocks turning inventory tracking off (409)", async () => {
+      const item = await product({ name: "Sugar 1kg" });
+      const variantId = await variantOf(item.id);
+      const elsewhere = await boundContext(as("OWNER"), world.a, await backStore());
+      await receive(elsewhere, variantId, "5");
+      const before = await readInventorySnapshot();
+      expect(before.balances).toMatchObject([
+        { variantId, locationId: elsewhere.locationId, quantityText: "5", version: 1 },
+      ]);
+
+      const rejected = await patch(item.id, { expectedVersion: 1, trackInventory: false }).expect(409);
+      expect(code(rejected.body)).toBe("CONFLICT");
+      expect(await stored(item.id)).toMatchObject({ trackInventory: true, version: 1 });
+      expect(await readInventorySnapshot()).toEqual(before);
+    });
+
+    it("another business's stock and threshold do not block this business's unit change", async () => {
+      const theirs = ProductResponseSchema.parse(
+        (await createProduct(world.ownerB, { name: "Their milk" }, randomUUID(), world.b).expect(201)).body,
+      );
+      const theirVariant = await variantOf(theirs.id);
+      const theirContext = await boundContext(world.ownerB, world.b);
+      await receive(theirContext, theirVariant, "9");
+      await inventory().setLowStockThreshold.execute(theirContext, {
+        variantId: theirVariant,
+        expectedVersion: 0,
+        threshold: { quantityMinor: "2", unit: "PIECE" },
+      });
+      const mine = await product();
+      const before = await readInventorySnapshot();
+
+      const changed = record(
+        ProductResponseSchema.parse((await patch(mine.id, { expectedVersion: 1, stockUnit: "KG" }).expect(200)).body),
+      );
+      expect(changed).toMatchObject({ stockUnit: "KG", trackInventory: true, version: 2 });
+      expect(await readInventorySnapshot()).toEqual(before);
+      expect((await get(world.ownerB, `products/${theirs.id}`, world.b).expect(200)).body).toEqual(theirs);
     });
   });
 

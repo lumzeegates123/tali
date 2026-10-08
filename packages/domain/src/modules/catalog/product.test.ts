@@ -35,7 +35,11 @@ const PIECE = parseUnitCode("PIECE");
 const KG = parseUnitCode("KG");
 const now = new Date("2026-10-05T10:00:00.000Z");
 const later = new Date("2026-10-05T11:00:00.000Z");
-const noInventory: VariantInventoryState = { hasMovements: false, hasNonZeroBalance: false };
+const noInventory: VariantInventoryState = {
+  hasMovements: false,
+  hasNonZeroBalance: false,
+  hasConfiguredThreshold: false,
+};
 
 function expectDomainError(action: () => unknown, code: string, field?: string): void {
   try {
@@ -225,7 +229,7 @@ describe("updateProduct", () => {
           item,
           expectedVersion: 1,
           update: { stockUnit: KG },
-          inventory: { hasMovements: true, hasNonZeroBalance: false },
+          inventory: { ...noInventory, hasMovements: true },
           hasActivePacks: false,
           now: later,
         }),
@@ -238,7 +242,7 @@ describe("updateProduct", () => {
           item,
           expectedVersion: 1,
           update: { trackInventory: false },
-          inventory: { hasMovements: true, hasNonZeroBalance: true },
+          inventory: { ...noInventory, hasMovements: true, hasNonZeroBalance: true },
           hasActivePacks: false,
           now: later,
         }),
@@ -249,11 +253,54 @@ describe("updateProduct", () => {
       item,
       expectedVersion: 1,
       update: { trackInventory: false },
-      inventory: { hasMovements: true, hasNonZeroBalance: false },
+      inventory: { ...noInventory, hasMovements: true, hasConfiguredThreshold: true },
       hasActivePacks: false,
       now: later,
     });
     expect(untracked.item.variant.trackInventory).toBe(false);
+  });
+
+  it("rejects a stock-unit change while a low-stock threshold is configured, and allows it once cleared", () => {
+    const item = newProduct();
+    const change =
+      (inventory: VariantInventoryState, hasActivePacks = false) =>
+      () =>
+        updateProduct({ item, expectedVersion: 1, update: { stockUnit: KG }, inventory, hasActivePacks, now: later });
+    expectDomainError(change({ ...noInventory, hasConfiguredThreshold: true }), "INVALID_TRANSITION", "stockUnit");
+    expect(change({ ...noInventory, hasConfiguredThreshold: true }, true)).toThrow(
+      "the stock unit cannot change while a low-stock threshold is configured",
+    );
+    expect(change({ ...noInventory, hasMovements: true, hasConfiguredThreshold: true })).toThrow(
+      "the stock unit cannot change once inventory movements exist",
+    );
+    expect(change(noInventory)().item.variant.stockUnit).toBe(KG);
+  });
+
+  it("checks the version and the no-op before the threshold guard", () => {
+    const item = newProduct();
+    const inventory = { ...noInventory, hasConfiguredThreshold: true };
+    expectDomainError(
+      () =>
+        updateProduct({
+          item,
+          expectedVersion: 2,
+          update: { stockUnit: KG },
+          inventory,
+          hasActivePacks: false,
+          now: later,
+        }),
+      "VERSION_CONFLICT",
+      "expectedVersion",
+    );
+    const same = updateProduct({
+      item,
+      expectedVersion: 1,
+      update: { stockUnit: item.variant.stockUnit },
+      inventory,
+      hasActivePacks: false,
+      now: later,
+    });
+    expect(same.outcome).toBe("unchanged");
   });
 
   it("rejects a stock-unit change while an active pack is defined in the unit", () => {

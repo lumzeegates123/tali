@@ -13,7 +13,9 @@ export type DomainErrorCode =
   /** Granting or removing OWNER by an actor that is not an ACTIVE OWNER. */
   | "OWNER_REQUIRED"
   /** The caller's expectedVersion is not the record's current version (ADR-008 section 9). */
-  | "VERSION_CONFLICT";
+  | "VERSION_CONFLICT"
+  /** A manual decrease would take on-hand stock below zero (ADR-008 section 10). */
+  | "INSUFFICIENT_STOCK";
 
 export class DomainError extends Error {
   readonly code: DomainErrorCode;
