@@ -25,6 +25,7 @@ import {
   createDefaultLocationResolver,
   createDeviceVerifier,
   createGetBusiness,
+  createGetBusinessCurrency,
   createGetCategory,
   createGetCurrentUser,
   createGetProduct,
@@ -54,6 +55,7 @@ import {
   type DeviceVerifier,
   type FingerprintHasher,
   type GetBusiness,
+  type GetBusinessCurrency,
   type GetCategory,
   type GetCurrentUser,
   type GetProduct,
@@ -103,6 +105,7 @@ export interface ApiServices {
   readonly createBusiness: CreateBusiness;
   readonly listMyBusinesses: ListMyBusinesses;
   readonly getBusiness: GetBusiness;
+  readonly getBusinessCurrency: GetBusinessCurrency;
   readonly listLocations: ListLocations;
   readonly listMembers: ListMembers;
   readonly updateBusinessName: UpdateBusinessName;
@@ -195,6 +198,7 @@ export function composeApiServices(dependencies: {
     }),
     listMyBusinesses: createListMyBusinesses({ unitOfWork, users, memberships }),
     getBusiness: createGetBusiness({ unitOfWork, businesses }),
+    getBusinessCurrency: createGetBusinessCurrency({ unitOfWork, businesses, currencies }),
     listLocations: createListLocations({ unitOfWork, locations }),
     listMembers: createListMembers({ unitOfWork, memberships }),
     updateBusinessName: createUpdateBusinessName({ unitOfWork, businesses, memberships, audit, clock }),

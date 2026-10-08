@@ -23,16 +23,40 @@ const API_ERROR_MESSAGES: Readonly<Record<string, FailureMessage>> = {
     retryable: true,
   },
   CONCURRENT_MODIFICATION: { text: "Tali was busy with another change. Try again.", retryable: true },
+  VERSION_CONFLICT: {
+    text: "This record changed since you opened it. Reload to see the latest.",
+    retryable: false,
+  },
+  CONFLICT: {
+    text: "This conflicts with an existing record, for example a SKU, barcode or name already in use.",
+    retryable: false,
+  },
   DEPENDENCY_UNAVAILABLE: { text: "Tali is temporarily unavailable. Try again shortly.", retryable: true },
   RATE_LIMITED: { text: "Too many attempts. Wait a minute, then try again.", retryable: true },
+};
+
+/** NOT_FOUND wording by what was asked for; a resource may be hidden by tenancy, so its text stays neutral. */
+const NOT_FOUND_MESSAGES: Readonly<Record<"business" | "resource", FailureMessage>> = {
+  business: { text: "This business is no longer available to you.", retryable: false },
+  resource: {
+    text: "This item is not available. It may have been removed, or you may no longer have access to it.",
+    retryable: false,
+  },
 };
 
 /**
  * Plain-language text for a failed API call. Server messages, bodies and
  * internal details are never shown; unknown codes get a generic message and
- * no invented meaning.
+ * no invented meaning. `notFoundScope` selects the NOT_FOUND wording for
+ * business-scoped requests.
  */
-export function describeFailure(failure: ApiFailure | { readonly kind: "missing-default-location" }): FailureMessage {
+export function describeFailure(
+  failure: ApiFailure | { readonly kind: "missing-default-location" },
+  options: { readonly notFoundScope?: "business" | "resource" } = {},
+): FailureMessage {
+  if (failure.kind === "api-error" && failure.code === "NOT_FOUND" && options.notFoundScope !== undefined) {
+    return NOT_FOUND_MESSAGES[options.notFoundScope];
+  }
   switch (failure.kind) {
     case "unavailable":
       return failure.reason === "timeout"

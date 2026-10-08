@@ -181,6 +181,66 @@ table {
   border-collapse: collapse;
 }
 
+h3:focus {
+  outline: 2px solid #1c1c1a;
+  outline-offset: 2px;
+}
+
+.section-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.panel {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.catalog-list {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0;
+  list-style: none;
+}
+
+.catalog-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid #d8d8d2;
+}
+
+.catalog-name {
+  font-weight: 600;
+}
+
+fieldset.field {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.choice {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-right: 1rem;
+  font-weight: 400;
+}
+
+.field select,
+.field textarea {
+  max-width: 24rem;
+  padding: 0.5rem;
+  border: 1px solid #8a8a84;
+  border-radius: 0.25rem;
+  font: inherit;
+}
+
 th,
 td {
   padding: 0.25rem 1rem 0.25rem 0;

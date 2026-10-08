@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Inject, Patch, Query, UseGuards } from "@nestjs/common";
 import type { BusinessContext } from "@tali/application";
 import {
+  type BusinessCurrencyResponse,
   type BusinessResponse,
   EmptyQuerySchema,
   type LocationsResponse,
@@ -14,7 +15,12 @@ import { DeviceContextGuard } from "../auth/device-context.guard.js";
 import type { ApiServices } from "../composition/api-services.js";
 import { API_SERVICES } from "../composition/tokens.js";
 import { ResolvedBusinessContext } from "../http/request-context.js";
-import { toBusinessResponse, toLocationsResponse, toMembersResponse } from "../http/response-mappers.js";
+import {
+  toBusinessCurrencyResponse,
+  toBusinessResponse,
+  toLocationsResponse,
+  toMembersResponse,
+} from "../http/response-mappers.js";
 import { parseRequest, toPageInput } from "../http/validation.js";
 
 /** The path prefix of every business-scoped route (ADR-005 section 12). */
@@ -57,6 +63,16 @@ export class BusinessScopedController {
     const input = parseRequest(UpdateBusinessNameRequestSchema, body, "body");
     const { business } = await this.#services.updateBusinessName.execute(context, { name: input.name });
     return toBusinessResponse(business);
+  }
+
+  /** `business:read`: the business currency's code and minor-unit digits. */
+  @Get("currency")
+  async currency(
+    @ResolvedBusinessContext() context: BusinessContext,
+    @Query() query: unknown,
+  ): Promise<BusinessCurrencyResponse> {
+    parseRequest(EmptyQuerySchema, query, "query");
+    return toBusinessCurrencyResponse(await this.#services.getBusinessCurrency.execute(context));
   }
 
   @Get("locations")

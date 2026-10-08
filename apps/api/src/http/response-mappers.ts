@@ -13,6 +13,8 @@ import type {
 import {
   type AcceptInvitationResponse,
   AcceptInvitationResponseSchema,
+  type BusinessCurrencyResponse,
+  BusinessCurrencyResponseSchema,
   type BusinessResponse,
   BusinessResponseSchema,
   type CreateInvitationResponse,
@@ -69,6 +71,13 @@ export function toCurrentUserResponse(user: User): CurrentUserResponse {
 
 export function toBusinessResponse(value: Business): BusinessResponse {
   return BusinessResponseSchema.parse(business(value));
+}
+
+export function toBusinessCurrencyResponse(value: {
+  readonly code: string;
+  readonly minorUnitDigits: number;
+}): BusinessCurrencyResponse {
+  return BusinessCurrencyResponseSchema.parse({ code: value.code, minorUnitDigits: value.minorUnitDigits });
 }
 
 export function toCreateBusinessResponse(result: CreateBusinessResult): CreateBusinessResponse {

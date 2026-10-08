@@ -109,13 +109,15 @@ export function FailureNotice({
   onRetry,
   retryLabel = "Try again",
   retryDisabled = false,
+  notFoundScope,
 }: {
   readonly failure: ApiFailure | { readonly kind: "missing-default-location" };
   readonly onRetry?: () => void;
   readonly retryLabel?: string;
   readonly retryDisabled?: boolean;
+  readonly notFoundScope?: "business" | "resource";
 }) {
-  const message = describeFailure(failure);
+  const message = describeFailure(failure, notFoundScope === undefined ? {} : { notFoundScope });
   return (
     <View style={styles.alert} accessibilityRole="alert" accessibilityLiveRegion="assertive">
       <Text>{message.text}</Text>

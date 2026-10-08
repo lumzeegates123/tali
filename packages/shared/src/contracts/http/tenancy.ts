@@ -81,6 +81,18 @@ export const BusinessResponseSchema = z.strictObject({
 
 export type BusinessResponse = z.infer<typeof BusinessResponseSchema>;
 
+/**
+ * `GET /v1/businesses/:businessId/currency`: the business currency and its
+ * minor-unit digits from reference data, so clients convert decimal input and
+ * format amounts exactly (ISO 4217 exponents are 0 to 4).
+ */
+export const BusinessCurrencyResponseSchema = z.strictObject({
+  code: CurrencyCodeWireSchema,
+  minorUnitDigits: z.number().int().min(0).max(4),
+});
+
+export type BusinessCurrencyResponse = z.infer<typeof BusinessCurrencyResponseSchema>;
+
 export const LocationResponseSchema = z.strictObject({
   id: IdWireSchema,
   name: z.string(),

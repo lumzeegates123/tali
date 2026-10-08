@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readCatalogSnapshot, readTenancySnapshot, resetTenancyTables, tenancyFixtures } from "@tali/database/testing";
 import { uuidV7IdGenerator } from "@tali/integrations/platform";
 import {
+  BusinessCurrencyResponseSchema,
   CategoriesResponseSchema,
   CategoryResponseSchema,
   ErrorEnvelopeSchema,
@@ -301,6 +302,53 @@ describe("Build 2 Slice 3 catalog API over HTTP", () => {
         { error: { code: "NOT_FOUND" } },
       );
       expect(await readCatalogSnapshot()).toEqual(before);
+    });
+  });
+
+  describe("business currency (Slice 4)", () => {
+    it("requires a bearer token", async () => {
+      const response = await http().get(url(world.a, "currency"));
+      expect(response.status).toBe(401);
+      expect(code(response.body)).toBe("UNAUTHENTICATED");
+    });
+
+    it("returns exactly the business currency code and minor-unit digits to all five roles", async () => {
+      for (const role of ROLES) {
+        const response = await get(as(role), "currency").expect(200);
+        expect({ role, body: response.body as unknown }).toEqual({
+          role,
+          body: { code: "KES", minorUnitDigits: 2 },
+        });
+        expect(BusinessCurrencyResponseSchema.parse(response.body)).toEqual({ code: "KES", minorUnitDigits: 2 });
+      }
+    });
+
+    it("reports each business's own currency exponent from reference data", async () => {
+      const owner = as("OWNER");
+      for (const [currencyCode, minorUnitDigits] of [
+        ["NGN", 2],
+        ["JPY", 0],
+        ["BHD", 3],
+      ] as const) {
+        const created = await createBusinessAs(api, owner, { name: `Shop ${currencyCode}`, currencyCode });
+        const body = (await get(owner, "currency", created.business.id).expect(200)).body as unknown;
+        expect(BusinessCurrencyResponseSchema.parse(body)).toEqual({ code: currencyCode, minorUnitDigits });
+      }
+    });
+
+    it("answers another business's currency with 404 and rejects any query", async () => {
+      for (const role of ROLES) {
+        const response = await get(as(role), "currency", world.b);
+        expect({ role, status: response.status }).toEqual({ role, status: 404 });
+        expect(code(response.body)).toBe("NOT_FOUND");
+      }
+      const missing = await get(as("OWNER"), "currency", MISSING_ID);
+      expect(missing.status).toBe(404);
+      for (const path of ["currency?code=NGN", `currency?businessId=${world.b}`]) {
+        const response = await get(as("OWNER"), path);
+        expect({ path, status: response.status }).toEqual({ path, status: 400 });
+        expect(code(response.body)).toBe("VALIDATION_FAILED");
+      }
     });
   });
 

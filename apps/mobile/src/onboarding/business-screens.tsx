@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { describeFailure, rejectedFields } from "../api/failure-messages";
+import { CatalogScreen } from "../catalog/catalog-screen";
 import { useSession, useSessionStore } from "../auth/session-context";
 import type { BusinessOverview, ResourceResult } from "../auth/session-store";
 import { detectDeviceTimeZone, PILOT_CURRENCY_CODES } from "./create-business-defaults";
@@ -182,8 +183,45 @@ export function BusinessPickerScreen() {
   );
 }
 
-/** The selected business from the API: name, currency, time zone and default location. No metrics. */
+type BusinessSection = "overview" | "catalog";
+
+/** The selected business: an in-screen Overview | Catalog switch. Role-based visibility is UX only. */
 export function BusinessOverviewScreen({ businessId }: { readonly businessId: string }) {
+  const session = useSession();
+  const [section, setSection] = useState<BusinessSection>("overview");
+  const summary = session.businesses.find((item) => item.business.id === businessId);
+
+  return (
+    <View style={styles.screen}>
+      <View style={styles.row} accessibilityRole="tablist" accessibilityLabel="Business sections">
+        {(["overview", "catalog"] as const).map((value) => (
+          <Pressable
+            key={value}
+            accessibilityRole="tab"
+            accessibilityLabel={value === "overview" ? "Overview" : "Catalog"}
+            accessibilityState={{ selected: section === value }}
+            onPress={() => {
+              setSection(value);
+            }}
+            style={[styles.button, section === value ? styles.primary : styles.secondary]}
+          >
+            <Text style={section === value ? styles.primaryText : styles.secondaryText}>
+              {value === "overview" ? "Overview" : "Catalog"}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+      {section === "overview" ? (
+        <OverviewSection businessId={businessId} />
+      ) : (
+        <CatalogScreen businessId={businessId} role={summary?.membership.role} />
+      )}
+    </View>
+  );
+}
+
+/** The selected business from the API: name, currency, time zone and default location. No metrics. */
+function OverviewSection({ businessId }: { readonly businessId: string }) {
   const store = useSessionStore();
   const session = useSession();
   const [result, setResult] = useState<ResourceResult<BusinessOverview> | undefined>(undefined);

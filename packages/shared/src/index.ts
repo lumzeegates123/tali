@@ -68,6 +68,7 @@ export {
 export type { LocalSignInRequest, LocalSignInResponse } from "./contracts/http/local-sign-in.js";
 export { LocalSignInRequestSchema, LocalSignInResponseSchema } from "./contracts/http/local-sign-in.js";
 export type {
+  BusinessCurrencyResponse,
   BusinessResponse,
   CreateBusinessRequest,
   CreateBusinessResponse,
@@ -80,6 +81,7 @@ export type {
   RegisterCurrentUserRequest,
 } from "./contracts/http/tenancy.js";
 export {
+  BusinessCurrencyResponseSchema,
   BusinessPathSchema,
   BusinessResponseSchema,
   CreateBusinessRequestSchema,

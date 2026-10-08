@@ -23,6 +23,8 @@ export const E2E = { apiOrigin: API_ORIGIN, webOrigin: WEB_ORIGIN } as const;
 export default defineConfig({
   testDir: "e2e",
   fullyParallel: false,
+  // Every spec shares one API process and one database; parallel files compete for them.
+  workers: 1,
   forbidOnly: process.env["CI"] !== undefined,
   retries: 0,
   reporter: process.env["CI"] === undefined ? "list" : [["list"], ["html", { open: "never" }]],

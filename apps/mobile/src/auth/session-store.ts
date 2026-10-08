@@ -111,6 +111,39 @@ export type ResourceResult<T> =
   | { readonly ok: true; readonly value: T }
   | { readonly ok: false; readonly failure: ApiFailure | { readonly kind: "missing-default-location" } };
 
+/**
+ * How a business-scoped request reads NOT_FOUND. `business`: a business-level
+ * read (lists, units, currency), where NOT_FOUND means the business itself is
+ * unavailable. `resource`: one record or a mutation, where NOT_FOUND says
+ * nothing about the business.
+ */
+export interface BusinessRequestPolicy {
+  readonly notFoundScope: "business" | "resource";
+}
+
+/** The session and business selection a request began under. */
+interface Selection {
+  readonly epoch: number;
+  readonly revision: number;
+  readonly businessId: string;
+}
+
+/**
+ * Passed to one request callback and valid for that request only; never kept
+ * by the caller. `device` is present only when this device holds a
+ * registration for the same business.
+ */
+export interface BusinessRequestCredentials {
+  readonly token: AccessToken;
+  readonly device: DeviceHeaders | undefined;
+}
+
+export type BusinessRequestResult<T> =
+  | ApiResult<T>
+  /** The session or selected business changed, or the session itself handled the failure. */
+  | { readonly status: "ignored" }
+  | { readonly status: "businessUnavailable"; readonly failure: ApiFailure };
+
 export interface SessionStoreOptions {
   readonly api: TaliApiClient;
   /** The approved client UUID implementation (RFC 9562 UUIDv7), used for Idempotency-Key values. */
@@ -190,6 +223,7 @@ const PROVIDER_UNAVAILABLE: { readonly ok: false; readonly failure: ApiFailure }
   ok: false,
   failure: Object.freeze({ kind: "unavailable", reason: "network" }),
 });
+const IGNORED: { readonly status: "ignored" } = Object.freeze({ status: "ignored" });
 
 function sameCommand(left: CreateBusinessRequest, right: CreateBusinessRequest): boolean {
   return left.name === right.name && left.currencyCode === right.currencyCode && left.timeZone === right.timeZone;
@@ -203,6 +237,8 @@ export class SessionStore {
   #auth: AuthSession | undefined;
   /** Incremented whenever the session is replaced or cleared; late responses from an older session are dropped. */
   #epoch = 0;
+  /** Advances whenever the selected business changes; the session epoch does not. */
+  #selectionRevision = 0;
   #createAttempt: CreateAttempt | undefined;
   #createInFlight = false;
   readonly #deviceSupported: boolean;
@@ -436,6 +472,49 @@ export class SessionStore {
   }
 
   /**
+   * One request for the selected business, with credentials for that request
+   * only. Device headers are attached only for this device's registration
+   * with the same business; DEVICE_NOT_TRUSTED forgets that registration and
+   * is returned, so a retry runs without it. The result is `ignored` when the
+   * session or the selection changed before or during the request, or when
+   * the session handled the failure (401, unregistered, disabled). With
+   * `notFoundScope: "business"`, NOT_FOUND answers `businessUnavailable`; the
+   * selection is never changed here, only by the user. With `"resource"`,
+   * NOT_FOUND is an ordinary failure.
+   */
+  async businessRequest<T>(
+    businessId: string,
+    policy: BusinessRequestPolicy,
+    send: (api: TaliApiClient, credentials: BusinessRequestCredentials) => Promise<ApiResult<T>>,
+  ): Promise<BusinessRequestResult<T>> {
+    const auth = this.#auth;
+    if (auth === undefined || this.#snapshot.selectedBusinessId !== businessId) return IGNORED;
+    const selection = this.#selection(businessId);
+    if (this.#deviceLoad !== undefined) await this.#deviceLoad;
+    if (!this.#isSelected(selection)) return IGNORED;
+    const current = await auth.accessToken();
+    // Token acquisition may be slow: a request must never reach the API after a sign-out or a business switch.
+    if (!this.#isSelected(selection)) return IGNORED;
+    const device = this.#device?.businessId === businessId ? this.#device.registration : undefined;
+    const result = current.ok
+      ? await send(this.#api, { token: current.token, device })
+      : current.reason === "ended"
+        ? SESSION_ENDED
+        : PROVIDER_UNAVAILABLE;
+    if (!this.#isSelected(selection)) return IGNORED;
+    if (result.ok) return result;
+    if (device !== undefined && isApiError(result.failure, "DEVICE_NOT_TRUSTED")) {
+      await this.#forgetDevice(businessId, device);
+      return result;
+    }
+    if (this.#applySessionEffects(result.failure)) return IGNORED;
+    if (policy.notFoundScope === "business" && isApiError(result.failure, "NOT_FOUND")) {
+      return { status: "businessUnavailable", failure: result.failure };
+    }
+    return result;
+  }
+
+  /**
    * `POST .../devices` for the selected business, Android only, when this
    * device holds no registration for it. One Idempotency-Key per logical
    * submission (business and label). The credential from the first response
@@ -532,6 +611,19 @@ export class SessionStore {
     const current = await auth.accessToken();
     if (!current.ok) return current.reason === "ended" ? SESSION_ENDED : PROVIDER_UNAVAILABLE;
     return call(current.token);
+  }
+
+  #selection(businessId: string): Selection {
+    return { epoch: this.#epoch, revision: this.#selectionRevision, businessId };
+  }
+
+  /** Leaving a business and selecting it again is a new selection: requests from the old one never send. */
+  #isSelected(selection: Selection): boolean {
+    return (
+      selection.epoch === this.#epoch &&
+      selection.revision === this.#selectionRevision &&
+      this.#snapshot.selectedBusinessId === selection.businessId
+    );
   }
 
   async #loadDevice(epoch: number, businessId: string): Promise<void> {
@@ -694,6 +786,7 @@ export class SessionStore {
   }
 
   #set(next: SessionSnapshot): void {
+    if (next.selectedBusinessId !== this.#snapshot.selectedBusinessId) this.#selectionRevision += 1;
     this.#snapshot = Object.freeze(this.#withDevice(next));
     for (const listener of this.#listeners) listener();
   }

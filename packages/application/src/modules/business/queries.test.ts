@@ -82,6 +82,39 @@ describe("GetBusiness", () => {
   });
 });
 
+describe("GetBusinessCurrency", () => {
+  it("returns the context business's currency definition from reference data", async () => {
+    const h = createTenancyHarness({ currencies: [defineCurrency("KES", 2), defineCurrency("JPY", 0)] });
+    const owner = await h.registeredUser("owner");
+    const kes = await h.businessOwnedBy(owner, { currencyCode: "KES" });
+    const jpy = await h.businessOwnedBy(owner, { currencyCode: "JPY" });
+    const kesContext = await h.businessContexts.resolveForUser(owner.context, kes.business.id);
+    const jpyContext = await h.businessContexts.resolveForUser(owner.context, jpy.business.id);
+    expect(await h.getBusinessCurrency.execute(kesContext)).toEqual({ code: "KES", minorUnitDigits: 2 });
+    expect(await h.getBusinessCurrency.execute(jpyContext)).toEqual({ code: "JPY", minorUnitDigits: 0 });
+  });
+
+  it("requires business:read and is available to every role", async () => {
+    const { h, mine, ownerContext } = await setup();
+    await expect(h.getBusinessCurrency.execute({ ...ownerContext, permissions: permissionSet([]) })).rejects.toThrow(
+      PermissionDeniedError,
+    );
+    for (const role of ["MANAGER", "CASHIER", "STOCK_KEEPER", "ACCOUNTANT"] as const) {
+      const member = await h.registeredUser(`currency-${role}`);
+      h.addMember(mine.business.id, member, role);
+      const context = await h.businessContexts.resolveForUser(member.context, mine.business.id);
+      expect((await h.getBusinessCurrency.execute(context)).code).toBe("KES");
+    }
+  });
+
+  it("fails loudly when the business currency has no reference row", async () => {
+    const { h, mine, ownerContext } = await setup();
+    h.store.currencyRepository.findByCode = () => Promise.resolve(undefined);
+    expect(mine.business.currencyCode).toBe("KES");
+    await expect(h.getBusinessCurrency.execute(ownerContext)).rejects.toThrow(/reference data/);
+  });
+});
+
 describe("ListLocations", () => {
   it("lists only the context business's locations", async () => {
     const { h, mine, ownerContext } = await setup();
