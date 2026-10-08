@@ -7,7 +7,9 @@ COMPLETE (2026-10-05).** The design is recorded in `docs/decisions/ADR-008-catal
 schema and repositories) COMPLETE (2026-10-05)** (`docs/audits/build-2-slice-2.md`). **Slice 3 (catalog API and
 shared contracts) COMPLETE (2026-10-05)**, with all gates passed, pending human review
 (`docs/audits/build-2-slice-3.md`). **Slice 4 (catalog clients) COMPLETE (2026-10-06)**, with all gates passed,
-pending human review (`docs/audits/build-2-slice-4.md`). Where this plan and an ADR differ, the ADR is authoritative (`AGENTS.md` section 4).
+pending human review (`docs/audits/build-2-slice-4.md`). **Slice 5 (inventory core) COMPLETE (2026-10-08)**, with
+all gates passed, pending human review (`docs/audits/build-2-slice-5.md`). Slice 6 is not started. Where this plan
+and an ADR differ, the ADR is authoritative (`AGENTS.md` section 4).
 
 Scope: implementation steps 3 (product catalog) and 4 (inventory) of `docs/product/mvp-scope.md`, quantity-only.
 
@@ -29,7 +31,7 @@ Not in Build 2:
 | 2     | Catalog schema, migration, `verify-schema` expectations and repositories                      | **COMPLETE** (2026-10-05; `docs/audits/build-2-slice-2.md`) |
 | 3     | Catalog API and shared contracts                                                              | **COMPLETE** (2026-10-05; `docs/audits/build-2-slice-3.md`) |
 | 4     | Catalog clients (web and mobile)                                                              | **COMPLETE** (2026-10-06; `docs/audits/build-2-slice-4.md`) |
-| 5     | Inventory core: movements, balances, opening, goods receipts, adjustments, write-offs, reversals, low-stock thresholds and the derived low-stock state (domain, application, schema, repositories) | Not started (needs S1 to S3 stable) |
+| 5     | Inventory core: movements, balances, opening, goods receipts, adjustments, write-offs, reversals, low-stock thresholds and the derived low-stock state (domain, application, schema, repositories) | **COMPLETE** (2026-10-08; `docs/audits/build-2-slice-5.md`) |
 | 6     | Stocktake (domain, application, schema) and the inventory API, including threshold endpoints  | Not started                    |
 | 7     | Inventory clients (web and mobile), including threshold management and the LOW STOCK indicator | Not started                   |
 | 8     | Hardening and final acceptance                                                                | Not started                    |
@@ -42,7 +44,7 @@ flowchart TD
   S1 --> S2["S2 Catalog schema and repositories (COMPLETE)"]
   S2 --> S3["S3 Catalog API (COMPLETE)"]
   S3 --> S4["S4 Catalog clients (COMPLETE)"]
-  S3 --> S5["S5 Inventory core"]
+  S3 --> S5["S5 Inventory core (COMPLETE)"]
   S5 --> S6["S6 Inventory and stocktake API"]
   S6 --> S7["S7 Inventory clients"]
   S4 --> S8["S8 Hardening and acceptance"]
@@ -213,10 +215,11 @@ process-startup or resource failure in which no assertion failed, and it is docu
   gitleaks clean); audit in `docs/audits/build-2-slice-2.md`. Review correction applied:
   `product_variants_default_only CHECK (is_default = true)` with the partial default index, so a Build 2 product has
   at most one variant row and it is the default (ADR-008 section 3.2). Interpretations approved by the human review.
-  `DatabaseRepositories` has no production `VariantInventoryStateReader`. Approved for S3: the API composition may use
-  a visibly temporary `PreInventoryStateReader` (outside `packages/database`) returning no movements and a zero
-  balance, truthful only while no inventory tables exist. S5 MUST delete or replace it with the inventory-backed
-  reader.
+  At S2, `DatabaseRepositories` had no production `VariantInventoryStateReader`. Approved for S3: the API composition
+  could use a visibly temporary `PreInventoryStateReader` (outside `packages/database`) returning no movements and a
+  zero balance, truthful only while no inventory tables existed, and S5 had to delete or replace it with the
+  inventory-backed reader. **Done in S5:** the temporary reader is deleted and the database-backed
+  `variantInventoryState` reader is in production composition.
 
 - Content:
   - migration for `units_of_measure` (seed), `product_categories`, `products`, `product_variants`, `product_packs` and
@@ -239,10 +242,10 @@ process-startup or resource failure in which no assertion failed, and it is docu
 ### S3. Catalog API: COMPLETE (2026-10-05)
 
 - Outcome: all gates passed (`pnpm verify` and `pnpm test:integration` exit 0, gitleaks clean); audit in
-  `docs/audits/build-2-slice-3.md`, pending human review. No schema change, no new dependency. The API composition
-  uses the temporary `PreInventoryStateReader` (no I/O, UpdateProduct only), with gate tests that fail if any
-  inventory table, module or route appears.
-  SLICE 5 MUST DELETE OR REPLACE PreInventoryStateReader with the real movement/balance-backed implementation.
+  `docs/audits/build-2-slice-3.md`, pending human review. No schema change, no new dependency. Through S3 and S4 the
+  API composition used the temporary `PreInventoryStateReader` (no I/O, UpdateProduct only), with gate tests that
+  failed if any inventory table, module or route appeared. The S3 obligation to delete or replace it with the real
+  movement- and balance-backed implementation was met in S5 (see the S5 outcome).
 
 - Content:
   - shared Zod contracts (`catalog.ts`, `quantity.ts`);
@@ -265,7 +268,7 @@ process-startup or resource failure in which no assertion failed, and it is docu
 - Outcome: all gates passed (Playwright 11 passed, client-bundle scan clean, `pnpm verify` and
   `pnpm test:integration` exit 0, gitleaks clean); audit in `docs/audits/build-2-slice-4.md`, pending human review.
   One additive read route (`GET .../currency`); no schema change, no new dependency; `PreInventoryStateReader`
-  unchanged.
+  unchanged in S4 (deleted in S5).
 
 - Content:
   - web pages: list, search, create, edit, archive and reactivate, price, categories, packs;
@@ -278,7 +281,26 @@ process-startup or resource failure in which no assertion failed, and it is docu
   - no authoritative arithmetic in clients.
 - Stop: camera barcode scanning or any new native dependency is requested (dependency review first).
 
-### S5. Inventory core
+### S5. Inventory core: COMPLETE (2026-10-08)
+
+- Outcome: all gates passed (`pnpm verify` and `pnpm test:integration` exit 0; migrate status, drift, verify-schema
+  and the inventory consistency check clean before and after integration; `pnpm boundaries` clean; gitleaks clean);
+  audit in `docs/audits/build-2-slice-5.md`, pending human review. No new dependency; no HTTP route; no client UI.
+  - inventory domain and application: the four Slice 5 movement types, the negative-stock rule, reversals, eight
+    use cases with the seven inventory permissions and eight audit actions, and a state-independent keyed `plan()`
+    with all locks and decisions in `apply()` after the idempotency claim;
+  - six tables (`inventory_opening_batches`, `goods_receipts`, `inventory_adjustments`, `inventory_movements`,
+    `inventory_balances`, `inventory_stock_thresholds`): append-only movements with typed sources and a
+    version-guarded balance projection, tenant-composite FKs, column-level reversal grants, no DELETE;
+  - low-stock thresholds and the pure low-stock derivation (read-time use in S6);
+  - the production `VariantInventoryStateReader` replaces the deleted `PreInventoryStateReader`, and UpdateProduct
+    rejects a stock-unit change while a threshold is configured at any location; the catalog API guard is proven end
+    to end against real inventory;
+  - the consistency query and read-only operator script, and the database concurrency suite;
+  - the dependency-cruiser rule `ai-no-catalog-inventory` (reachability, so the `@tali/application` root cannot be
+    used as a bypass).
+  - Human-confirmed D1 (Option A): `COUNT_CORRECTION`, `stocktake_id`, the stocktake-line FK and the extended
+    movement constraints arrive with stocktakes in S6.
 
 - Content:
   - domain and application for movements, balances, opening batches, goods receipts, adjustments, write-offs, and

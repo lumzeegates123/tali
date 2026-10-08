@@ -18,7 +18,11 @@ export type AuditEntityType =
   | "device"
   | "product"
   | "product_category"
-  | "product_pack";
+  | "product_pack"
+  | "inventory_opening_batch"
+  | "goods_receipt"
+  | "inventory_adjustment"
+  | "inventory_stock_threshold";
 
 export interface AuditActionDefinition<
   Stream extends AuditStream = AuditStream,

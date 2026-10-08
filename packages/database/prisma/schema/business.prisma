@@ -31,6 +31,13 @@ model Business {
   pricedVariants       ProductVariant[]      @relation("VariantPriceCurrency")
   pricedHistory        ProductVariantPrice[] @relation("PriceHistoryCurrency")
 
+  inventoryOpeningBatches InventoryOpeningBatch[]
+  goodsReceipts           GoodsReceipt[]
+  inventoryAdjustments    InventoryAdjustment[]
+  inventoryMovements      InventoryMovement[]
+  inventoryBalances       InventoryBalance[]
+  inventoryThresholds     InventoryStockThreshold[]
+
   // Target of the catalog's composite currency foreign keys (ADR-008 section
   // 3.4): a stored price is always in its business's currency.
   @@unique([id, currencyCode])
@@ -51,13 +58,19 @@ model BusinessMembership {
   user     User     @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   actedAuditRecords   BusinessAuditRecord[]
-  createdInvitations  BusinessInvitation[]  @relation("InvitationCreatedBy")
-  acceptedInvitations BusinessInvitation[]  @relation("InvitationAcceptedBy")
-  revokedInvitations  BusinessInvitation[]  @relation("InvitationRevokedBy")
-  registeredDevices   Device[]              @relation("DeviceRegisteredBy")
-  revokedDevices      Device[]              @relation("DeviceRevokedBy")
-  createdProducts     Product[]             @relation("ProductCreatedBy")
-  setPrices           ProductVariantPrice[] @relation("PriceSetBy")
+  createdInvitations  BusinessInvitation[]    @relation("InvitationCreatedBy")
+  acceptedInvitations BusinessInvitation[]    @relation("InvitationAcceptedBy")
+  revokedInvitations  BusinessInvitation[]    @relation("InvitationRevokedBy")
+  registeredDevices   Device[]                @relation("DeviceRegisteredBy")
+  revokedDevices      Device[]                @relation("DeviceRevokedBy")
+  createdProducts     Product[]               @relation("ProductCreatedBy")
+  setPrices           ProductVariantPrice[]   @relation("PriceSetBy")
+  openingBatches      InventoryOpeningBatch[] @relation("OpeningBatchActor")
+  goodsReceipts       GoodsReceipt[]          @relation("GoodsReceiptActor")
+  reversedReceipts    GoodsReceipt[]          @relation("GoodsReceiptReversedBy")
+  adjustments         InventoryAdjustment[]   @relation("InventoryAdjustmentActor")
+  reversedAdjustments InventoryAdjustment[]   @relation("InventoryAdjustmentReversedBy")
+  inventoryMovements  InventoryMovement[]     @relation("InventoryMovementActor")
 
   @@unique([businessId, id])
   @@unique([businessId, userId])
@@ -116,6 +129,11 @@ model Device {
   revokedBy    BusinessMembership? @relation("DeviceRevokedBy", fields: [businessId, revokedByMembershipId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
 
   auditRecords BusinessAuditRecord[]
+
+  inventoryOpeningBatches InventoryOpeningBatch[]
+  goodsReceipts           GoodsReceipt[]
+  inventoryAdjustments    InventoryAdjustment[]
+  inventoryMovements      InventoryMovement[]
 
   @@unique([businessId, id])
   @@index([businessId, status])

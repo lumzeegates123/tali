@@ -24,7 +24,8 @@
     "db:migrate:deploy": "prisma migrate deploy",
     "db:migrate:status": "prisma migrate status",
     "db:drift": "node scripts/check-drift.mjs",
-    "db:verify-schema": "node scripts/verify-schema.mjs"
+    "db:verify-schema": "node scripts/verify-schema.mjs",
+    "db:inventory-consistency": "node scripts/check-inventory-consistency.mjs"
   },
   "dependencies": {
     "@prisma/adapter-pg": "7.10.0",

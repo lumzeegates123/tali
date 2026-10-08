@@ -234,6 +234,17 @@ module.exports = {
       to: { path: ["^packages/(database|integrations|ui)/", "^apps/"] },
     },
     {
+      name: "ai-no-catalog-inventory",
+      severity: "error",
+      comment:
+        "AI source never reaches the database or the catalog and inventory application modules (their use cases and repository ports), directly or through any re-export such as the @tali/application root index (ADR-008; 40-ai-safety.mdc). Execution goes through authorized use cases composed outside AI code. Domain value objects and shared contracts stay reachable.",
+      from: { path: ["^packages/ai/", "^packages/application/src/modules/ai/"], pathNot: TEST_FILE },
+      to: {
+        path: ["^packages/database/", "^packages/application/src/modules/(catalog|inventory)/"],
+        reachable: true,
+      },
+    },
+    {
       name: "ui-direction",
       severity: "error",
       from: { path: "^packages/ui/" },

@@ -1,6 +1,6 @@
 import type { ProductPackRepository } from "@tali/application";
 import { assertPackTransition, ConcurrentModificationError } from "@tali/application";
-import type { ProductPack } from "@tali/domain";
+import type { ProductPack, ProductPackId } from "@tali/domain";
 import { parseBusinessId, parseProductPackId, parseProductVariantId, restorePack } from "@tali/domain";
 import type { ProductPack as ProductPackRow } from "../generated/prisma/client.js";
 import { translatingUniqueViolations } from "../errors/unique-violations.js";
@@ -91,6 +91,20 @@ export function createProductPackRepository(): ProductPackRepository {
         select: { id: true },
       });
       return row === null ? undefined : parseProductPackId(row.id);
+    },
+
+    async findForEntry(scope, businessId, packIds) {
+      const found = new Map<ProductPackId, ProductPack>();
+      if (packIds.size === 0) return found;
+      const rows = await transactionClient(scope).productPack.findMany({
+        where: { businessId, id: { in: [...packIds] } },
+        orderBy: { id: "asc" },
+      });
+      for (const row of rows) {
+        const pack = toPack(row);
+        found.set(pack.id, pack);
+      }
+      return found;
     },
   };
 }

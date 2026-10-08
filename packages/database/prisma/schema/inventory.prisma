@@ -1,0 +1,200 @@
+// Inventory module (ADR-008 sections 7, 8, 9 and 11; Build 2 Slice 5). Every
+// table is tenant-owned: business_id NOT NULL, UNIQUE (business_id, id) for
+// composite references, and composite foreign keys so a reference never
+// crosses businesses. Quantities are BIGINT minor units of the variant's stock
+// unit. Type, source, direction, reason, pack, range and shape CHECKs, the
+// partial unique indexes (one OPENING per stock item, one original line per
+// document and variant) and the privileges live in the migration SQL. No row
+// is ever deleted. Movements and opening batches are append-only; the only
+// header change is POSTED to REVERSED (a column-level UPDATE grant).
+
+// Opening-stock headers. Never reversed, so never updated.
+model InventoryOpeningBatch {
+  businessId        String   @map("business_id") @db.Uuid
+  id                String   @id @db.Uuid
+  locationId        String   @map("location_id") @db.Uuid
+  note              String?
+  actorMembershipId String   @map("actor_membership_id") @db.Uuid
+  deviceId          String?  @map("device_id") @db.Uuid
+  sourceChannel     String   @map("source_channel")
+  correlationId     String   @map("correlation_id")
+  occurredAt        DateTime @map("occurred_at") @db.Timestamptz(3)
+  businessDate      DateTime @map("business_date") @db.Date
+  recordedAt        DateTime @map("recorded_at") @db.Timestamptz(3)
+
+  business Business           @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  location BusinessLocation   @relation(fields: [businessId, locationId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  actor    BusinessMembership @relation("OpeningBatchActor", fields: [businessId, actorMembershipId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  device   Device?            @relation(fields: [businessId, deviceId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  movements InventoryMovement[]
+
+  @@unique([businessId, id])
+  @@map("inventory_opening_batches")
+}
+
+// Quantity-only goods receipts: no supplier, purchase order or cost.
+model GoodsReceipt {
+  businessId             String    @map("business_id") @db.Uuid
+  id                     String    @id @db.Uuid
+  locationId             String    @map("location_id") @db.Uuid
+  reference              String?
+  note                   String?
+  status                 String
+  reversedAt             DateTime? @map("reversed_at") @db.Timestamptz(3)
+  reversedByMembershipId String?   @map("reversed_by_membership_id") @db.Uuid
+  reversalReason         String?   @map("reversal_reason")
+  actorMembershipId      String    @map("actor_membership_id") @db.Uuid
+  deviceId               String?   @map("device_id") @db.Uuid
+  sourceChannel          String    @map("source_channel")
+  correlationId          String    @map("correlation_id")
+  occurredAt             DateTime  @map("occurred_at") @db.Timestamptz(3)
+  businessDate           DateTime  @map("business_date") @db.Date
+  recordedAt             DateTime  @map("recorded_at") @db.Timestamptz(3)
+
+  business   Business            @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  location   BusinessLocation    @relation(fields: [businessId, locationId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  actor      BusinessMembership  @relation("GoodsReceiptActor", fields: [businessId, actorMembershipId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  reversedBy BusinessMembership? @relation("GoodsReceiptReversedBy", fields: [businessId, reversedByMembershipId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  device     Device?             @relation(fields: [businessId, deviceId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  movements InventoryMovement[]
+
+  @@unique([businessId, id])
+  @@map("goods_receipts")
+}
+
+// Adjustment (two-way) and write-off (decrease-only) headers. (business_id, id,
+// kind) is the target of the movements' adjustment key, so a movement's type
+// always equals its document's kind.
+model InventoryAdjustment {
+  businessId             String    @map("business_id") @db.Uuid
+  id                     String    @id @db.Uuid
+  locationId             String    @map("location_id") @db.Uuid
+  kind                   String
+  reasonCode             String    @map("reason_code")
+  reasonNote             String?   @map("reason_note")
+  note                   String?
+  status                 String
+  reversedAt             DateTime? @map("reversed_at") @db.Timestamptz(3)
+  reversedByMembershipId String?   @map("reversed_by_membership_id") @db.Uuid
+  reversalReason         String?   @map("reversal_reason")
+  actorMembershipId      String    @map("actor_membership_id") @db.Uuid
+  deviceId               String?   @map("device_id") @db.Uuid
+  sourceChannel          String    @map("source_channel")
+  correlationId          String    @map("correlation_id")
+  occurredAt             DateTime  @map("occurred_at") @db.Timestamptz(3)
+  businessDate           DateTime  @map("business_date") @db.Date
+  recordedAt             DateTime  @map("recorded_at") @db.Timestamptz(3)
+
+  business   Business            @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  location   BusinessLocation    @relation(fields: [businessId, locationId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  actor      BusinessMembership  @relation("InventoryAdjustmentActor", fields: [businessId, actorMembershipId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  reversedBy BusinessMembership? @relation("InventoryAdjustmentReversedBy", fields: [businessId, reversedByMembershipId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict, map: "inventory_adjustments_reversed_by_membership_fkey")
+  device     Device?             @relation(fields: [businessId, deviceId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  movements InventoryMovement[]
+
+  @@unique([businessId, id])
+  @@unique([businessId, id, kind])
+  @@map("inventory_adjustments")
+}
+
+// The append-only movement ledger (ADR-008 section 7.1). Exactly one document
+// reference per row, matching its type. A reversal references its original
+// through a composite key that pins the same location, variant and type, and
+// an original is reversed at most once. (business_id, location_id, variant_id,
+// balance_version) is the stock item's gap-free sequence.
+model InventoryMovement {
+  businessId         String   @map("business_id") @db.Uuid
+  id                 String   @id @db.Uuid
+  locationId         String   @map("location_id") @db.Uuid
+  variantId          String   @map("variant_id") @db.Uuid
+  type               String
+  quantityDeltaMinor BigInt   @map("quantity_delta_minor")
+  balanceAfterMinor  BigInt   @map("balance_after_minor")
+  balanceVersion     Int      @map("balance_version")
+  openingBatchId     String?  @map("opening_batch_id") @db.Uuid
+  goodsReceiptId     String?  @map("goods_receipt_id") @db.Uuid
+  adjustmentId       String?  @map("adjustment_id") @db.Uuid
+  packId             String?  @map("pack_id") @db.Uuid
+  packName           String?  @map("pack_name")
+  packCount          BigInt?  @map("pack_count")
+  packFactorMinor    BigInt?  @map("pack_factor_minor")
+  reversesMovementId String?  @map("reverses_movement_id") @db.Uuid
+  reasonCode         String?  @map("reason_code")
+  reasonNote         String?  @map("reason_note")
+  actorMembershipId  String   @map("actor_membership_id") @db.Uuid
+  deviceId           String?  @map("device_id") @db.Uuid
+  sourceChannel      String   @map("source_channel")
+  correlationId      String   @map("correlation_id")
+  occurredAt         DateTime @map("occurred_at") @db.Timestamptz(3)
+  businessDate       DateTime @map("business_date") @db.Date
+  recordedAt         DateTime @map("recorded_at") @db.Timestamptz(3)
+
+  business     Business               @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  location     BusinessLocation       @relation(fields: [businessId, locationId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  variant      ProductVariant         @relation(fields: [businessId, variantId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  actor        BusinessMembership     @relation("InventoryMovementActor", fields: [businessId, actorMembershipId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  device       Device?                @relation(fields: [businessId, deviceId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  openingBatch InventoryOpeningBatch? @relation(fields: [businessId, openingBatchId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  goodsReceipt GoodsReceipt?          @relation(fields: [businessId, goodsReceiptId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  adjustment   InventoryAdjustment?   @relation(fields: [businessId, adjustmentId, type], references: [businessId, id, kind], onDelete: Restrict, onUpdate: Restrict)
+  pack         ProductPack?           @relation(fields: [businessId, packId, variantId], references: [businessId, id, variantId], onDelete: Restrict, onUpdate: Restrict)
+  reverses     InventoryMovement?     @relation("MovementReversal", fields: [businessId, reversesMovementId, locationId, variantId, type], references: [businessId, id, locationId, variantId, type], onDelete: Restrict, onUpdate: Restrict, map: "inventory_movements_reversal_fkey")
+
+  reversals      InventoryMovement[] @relation("MovementReversal")
+  lastOfBalances InventoryBalance[]
+
+  @@unique([businessId, id])
+  @@unique([businessId, id, locationId, variantId, type], map: "inventory_movements_reversal_target_key")
+  @@unique([businessId, locationId, variantId, id])
+  @@unique([businessId, locationId, variantId, balanceVersion], map: "inventory_movements_stock_item_version_key")
+  @@unique([businessId, reversesMovementId])
+  @@index([businessId, variantId])
+  @@map("inventory_movements")
+}
+
+// The transactional balance projection (ADR-008 section 7.3), one row per
+// stock item. Version 0 is a row with no movement yet. There is deliberately
+// no non-negative CHECK: stock policy belongs to the domain.
+model InventoryBalance {
+  businessId     String   @map("business_id") @db.Uuid
+  locationId     String   @map("location_id") @db.Uuid
+  variantId      String   @map("variant_id") @db.Uuid
+  quantityMinor  BigInt   @map("quantity_minor")
+  version        Int
+  lastMovementId String?  @map("last_movement_id") @db.Uuid
+  updatedAt      DateTime @map("updated_at") @db.Timestamptz(3)
+
+  business     Business           @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  location     BusinessLocation   @relation(fields: [businessId, locationId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  variant      ProductVariant     @relation(fields: [businessId, variantId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  lastMovement InventoryMovement? @relation(fields: [businessId, locationId, variantId, lastMovementId], references: [businessId, locationId, variantId, id], onDelete: Restrict, onUpdate: Restrict, map: "inventory_balances_last_movement_fkey")
+
+  @@id([businessId, locationId, variantId])
+  @@index([businessId, variantId])
+  @@map("inventory_balances")
+}
+
+// Low-stock configuration (ADR-008 section 7.4), one row per stock item. A
+// NULL threshold is "not configured"; clearing keeps the row.
+model InventoryStockThreshold {
+  businessId             String   @map("business_id") @db.Uuid
+  id                     String   @id @db.Uuid
+  locationId             String   @map("location_id") @db.Uuid
+  variantId              String   @map("variant_id") @db.Uuid
+  lowStockThresholdMinor BigInt?  @map("low_stock_threshold_minor")
+  version                Int
+  createdAt              DateTime @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime @map("updated_at") @db.Timestamptz(3)
+
+  business Business         @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  location BusinessLocation @relation(fields: [businessId, locationId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  variant  ProductVariant   @relation(fields: [businessId, variantId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([businessId, id])
+  @@unique([businessId, locationId, variantId], map: "inventory_stock_thresholds_stock_item_key")
+  @@index([businessId, variantId])
+  @@map("inventory_stock_thresholds")
+}

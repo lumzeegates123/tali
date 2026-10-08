@@ -1,7 +1,13 @@
 export { identityAuditActions, identityLinked, userRegistered } from "./audit-actions.js";
 export type { GetCurrentUser } from "./get-current-user.js";
 export { createGetCurrentUser } from "./get-current-user.js";
-export { catalogPermissions, identityPermissions, permissionsForRole, rolePermissions } from "./permissions.js";
+export {
+  catalogPermissions,
+  identityPermissions,
+  inventoryPermissions,
+  permissionsForRole,
+  rolePermissions,
+} from "./permissions.js";
 export type { UserRegistration, UserRepository } from "./ports.js";
 export type {
   RegisterCurrentUser,

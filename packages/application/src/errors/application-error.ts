@@ -2,7 +2,7 @@
  * Foundational application errors. Transports map `code` to a response (for
  * example the HTTP error envelope); messages must not leak other tenants' data.
  * Build 1 codes follow ADR-005 section 13.1 (and ADR-004 section 11);
- * VERSION_CONFLICT is added by ADR-008 section 20.
+ * VERSION_CONFLICT and INSUFFICIENT_STOCK are added by ADR-008 sections 10 and 20.
  */
 export type ApplicationErrorCode =
   | "VALIDATION_FAILED"
@@ -19,7 +19,8 @@ export type ApplicationErrorCode =
   | "IDEMPOTENCY_KEY_REUSED"
   | "IDEMPOTENCY_IN_PROGRESS"
   | "CONCURRENT_MODIFICATION"
-  | "VERSION_CONFLICT";
+  | "VERSION_CONFLICT"
+  | "INSUFFICIENT_STOCK";
 
 /** Whether a client may retry the same request unchanged (ADR-004 section 11; ADR-005 section 13.1). */
 const RETRYABLE: Readonly<Record<ApplicationErrorCode, boolean>> = {
@@ -38,6 +39,7 @@ const RETRYABLE: Readonly<Record<ApplicationErrorCode, boolean>> = {
   IDEMPOTENCY_IN_PROGRESS: true,
   CONCURRENT_MODIFICATION: true,
   VERSION_CONFLICT: false,
+  INSUFFICIENT_STOCK: false,
 };
 
 export interface ValidationIssue {
@@ -173,5 +175,16 @@ export class ConcurrentModificationError extends ApplicationError {
 export class VersionConflictError extends ApplicationError {
   constructor(message = "The record has changed since it was read; reload and try again") {
     super("VERSION_CONFLICT", message);
+  }
+}
+
+/**
+ * A manual stock decrease (adjustment, write-off or reversal) would take
+ * on-hand stock below zero (ADR-008 section 10). Nothing was written. Not
+ * retryable unchanged: the stock must change first.
+ */
+export class InsufficientStockError extends ApplicationError {
+  constructor(message = "There is not enough stock on hand for this change") {
+    super("INSUFFICIENT_STOCK", message);
   }
 }

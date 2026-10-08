@@ -13,6 +13,7 @@ const COMMITTED_MIGRATIONS = [
   "20260929213019_build1_timestamp_consistency",
   "20260930165547_build1_invitations_devices",
   "20261005120000_build2_catalog",
+  "20261006120000_build2_inventory_core",
 ];
 
 const BUILD_1_TABLES = [
@@ -30,7 +31,7 @@ const BUILD_1_TABLES = [
   "public.users",
 ];
 
-/** Build 2 Slice 2 adds the catalog only; no inventory table exists before Slice 4. */
+/** Build 2 Slice 2 adds the catalog. */
 const BUILD_2_CATALOG_TABLES = [
   "public.product_categories",
   "public.product_packs",
@@ -40,12 +41,23 @@ const BUILD_2_CATALOG_TABLES = [
   "public.units_of_measure",
 ];
 
+/** Build 2 Slice 5 adds the inventory core: three document headers, movements, balances and thresholds; no stocktakes. */
+const BUILD_2_INVENTORY_TABLES = [
+  "public.goods_receipts",
+  "public.inventory_adjustments",
+  "public.inventory_balances",
+  "public.inventory_movements",
+  "public.inventory_opening_batches",
+  "public.inventory_stock_thresholds",
+];
+
 /**
  * Criterion E and the migration chain. The global setup has already run
  * `migrate deploy` against this database from empty: the spike migration, the
  * approved cleanup migration that removes the temporary foundation_spike
  * schema, the two Build 1 identity and tenancy migrations, the Slice 5
- * invitations and devices migration, and the Build 2 catalog migration.
+ * invitations and devices migration, the Build 2 catalog migration and the
+ * Build 2 inventory core migration.
  */
 describe("E. migration chain", () => {
   const { owner } = useFixtureHarness();
@@ -96,14 +108,31 @@ describe("E. migration chain", () => {
     expect(objects.rows).toEqual([]);
   });
 
-  it("the migration chain creates exactly the Build 1 and catalog tables (and Prisma's migration table)", async () => {
+  it("the migration chain creates exactly the Build 1, catalog and inventory tables (and Prisma's migration table)", async () => {
     const { rows } = await owner.query<{ name: string }>(
       `SELECT schemaname || '.' || tablename AS name FROM pg_tables
        WHERE schemaname NOT IN ('pg_catalog', 'information_schema', 'test_fixtures') ORDER BY (schemaname || '.' || tablename) COLLATE "C"`,
     );
     expect(rows.map((row) => row.name)).toEqual(
-      ["public._prisma_migrations", ...BUILD_1_TABLES, ...BUILD_2_CATALOG_TABLES].sort(),
+      ["public._prisma_migrations", ...BUILD_1_TABLES, ...BUILD_2_CATALOG_TABLES, ...BUILD_2_INVENTORY_TABLES].sort(),
     );
+  });
+
+  it("the inventory migration adds no trigger, function, RLS policy or CASCADE", async () => {
+    const triggers = await owner.query(
+      `SELECT tgname FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE NOT t.tgisinternal AND n.nspname = 'public'`,
+    );
+    expect(triggers.rows).toEqual([]);
+    const functions = await owner.query(
+      `SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'public'`,
+    );
+    expect(functions.rows).toEqual([]);
+    const cascades = await owner.query(
+      `SELECT conname FROM pg_constraint WHERE contype = 'f' AND (confdeltype IN ('c', 'n', 'd') OR confupdtype IN ('c', 'n', 'd'))
+       AND connamespace = 'public'::regnamespace`,
+    );
+    expect(cascades.rows).toEqual([]);
   });
 
   it("the migrations seed NGN as the only reference currency (test currencies are fixtures)", async () => {

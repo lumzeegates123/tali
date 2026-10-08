@@ -1,3 +1,5 @@
+import type { InventoryConsistencyIssue } from "../inventory/consistency-query.js";
+import { findInventoryInconsistencies } from "../inventory/consistency-query.js";
 import type { FixtureEnv } from "./fixture-safety.js";
 import { withFixtureSession } from "./fixture-session.js";
 
@@ -27,6 +29,12 @@ type Env = FixtureEnv;
  * `units_of_measure` are reference data and are never truncated.
  */
 export const TENANCY_TABLES = [
+  "inventory_balances",
+  "inventory_stock_thresholds",
+  "inventory_movements",
+  "inventory_opening_batches",
+  "goods_receipts",
+  "inventory_adjustments",
   "product_variant_prices",
   "product_packs",
   "product_variants",
@@ -126,6 +134,20 @@ export const tenancyFixtures = {
         `INSERT INTO public.business_memberships (business_id, id, user_id, role, status, version, created_at, updated_at)
          VALUES ($1, $2, $3, $4, $5, 1, now(), now())`,
         [membership.businessId, membership.id, membership.userId, membership.role, membership.status ?? "ACTIVE"],
+      );
+    });
+  },
+
+  /** Adds an ACTIVE, non-default location; the MVP has no use case that creates one. */
+  async insertLocation(
+    location: { readonly id: string; readonly businessId: string; readonly name: string },
+    env: Env = process.env,
+  ): Promise<void> {
+    await withFixtureSession(env, async (client) => {
+      await client.query(
+        `INSERT INTO public.business_locations (business_id, id, name, is_default, status, created_at, updated_at)
+         VALUES ($1, $2, $3, false, 'ACTIVE', now(), now())`,
+        [location.businessId, location.id, location.name],
       );
     });
   },
@@ -361,4 +383,115 @@ export async function readCatalogSnapshot(env: Env = process.env): Promise<Catal
       ),
     };
   });
+}
+
+/** Plain inventory rows for assertions (no Prisma types; quantities as text), across every tenant. */
+export interface InventorySnapshot {
+  readonly openingBatches: readonly { id: string; businessId: string; locationId: string; note: string | null }[];
+  readonly goodsReceipts: readonly {
+    id: string;
+    businessId: string;
+    locationId: string;
+    reference: string | null;
+    status: string;
+    reversedByMembershipId: string | null;
+    reversalReason: string | null;
+  }[];
+  readonly adjustments: readonly {
+    id: string;
+    businessId: string;
+    locationId: string;
+    kind: string;
+    reasonCode: string;
+    reasonNote: string | null;
+    status: string;
+    reversedByMembershipId: string | null;
+    reversalReason: string | null;
+  }[];
+  readonly movements: readonly {
+    id: string;
+    businessId: string;
+    locationId: string;
+    variantId: string;
+    type: string;
+    deltaText: string;
+    balanceAfterText: string;
+    balanceVersion: number;
+    openingBatchId: string | null;
+    goodsReceiptId: string | null;
+    adjustmentId: string | null;
+    packId: string | null;
+    packCountText: string | null;
+    reversesMovementId: string | null;
+    reasonCode: string | null;
+    reasonNote: string | null;
+    actorMembershipId: string;
+    correlationId: string;
+    businessDate: string;
+  }[];
+  readonly balances: readonly {
+    businessId: string;
+    locationId: string;
+    variantId: string;
+    quantityText: string;
+    version: number;
+    lastMovementId: string | null;
+  }[];
+  readonly thresholds: readonly {
+    id: string;
+    businessId: string;
+    locationId: string;
+    variantId: string;
+    thresholdText: string | null;
+    version: number;
+  }[];
+}
+
+export async function readInventorySnapshot(env: Env = process.env): Promise<InventorySnapshot> {
+  return withFixtureSession(env, async (client) => {
+    const rows = async <Row>(sql: string): Promise<Row[]> => (await client.query(sql)).rows as Row[];
+    return {
+      openingBatches: await rows(
+        `SELECT id, business_id AS "businessId", location_id AS "locationId", note
+         FROM public.inventory_opening_batches ORDER BY id`,
+      ),
+      goodsReceipts: await rows(
+        `SELECT id, business_id AS "businessId", location_id AS "locationId", reference, status,
+                reversed_by_membership_id AS "reversedByMembershipId", reversal_reason AS "reversalReason"
+         FROM public.goods_receipts ORDER BY id`,
+      ),
+      adjustments: await rows(
+        `SELECT id, business_id AS "businessId", location_id AS "locationId", kind, reason_code AS "reasonCode",
+                reason_note AS "reasonNote", status, reversed_by_membership_id AS "reversedByMembershipId",
+                reversal_reason AS "reversalReason"
+         FROM public.inventory_adjustments ORDER BY id`,
+      ),
+      movements: await rows(
+        `SELECT id, business_id AS "businessId", location_id AS "locationId", variant_id AS "variantId", type,
+                quantity_delta_minor::text AS "deltaText", balance_after_minor::text AS "balanceAfterText",
+                balance_version AS "balanceVersion", opening_batch_id AS "openingBatchId",
+                goods_receipt_id AS "goodsReceiptId", adjustment_id AS "adjustmentId", pack_id AS "packId",
+                pack_count::text AS "packCountText", reverses_movement_id AS "reversesMovementId",
+                reason_code AS "reasonCode", reason_note AS "reasonNote",
+                actor_membership_id AS "actorMembershipId", correlation_id AS "correlationId",
+                business_date::text AS "businessDate"
+         FROM public.inventory_movements ORDER BY business_id, location_id, variant_id, balance_version`,
+      ),
+      balances: await rows(
+        `SELECT business_id AS "businessId", location_id AS "locationId", variant_id AS "variantId",
+                quantity_minor::text AS "quantityText", version, last_movement_id AS "lastMovementId"
+         FROM public.inventory_balances ORDER BY business_id, location_id, variant_id`,
+      ),
+      thresholds: await rows(
+        `SELECT id, business_id AS "businessId", location_id AS "locationId", variant_id AS "variantId",
+                low_stock_threshold_minor::text AS "thresholdText", version
+         FROM public.inventory_stock_thresholds ORDER BY id`,
+      ),
+    };
+  });
+}
+
+/** Every inconsistent stock item across every tenant (plan section T); empty when the ledger and balances agree. */
+export async function readInventoryConsistency(env: Env = process.env): Promise<readonly InventoryConsistencyIssue[]> {
+  return withFixtureSession(env, (client) => findInventoryInconsistencies(client));
 }

@@ -44,7 +44,7 @@ import { sqlState } from "../support/pg.js";
 import { useTenancyHarness } from "../support/tenancy.js";
 
 const LOCK_NOT_AVAILABLE = "55P03";
-const NO_INVENTORY = { hasMovements: false, hasNonZeroBalance: false } as const;
+const NO_INVENTORY = { hasMovements: false, hasNonZeroBalance: false, hasConfiguredThreshold: false } as const;
 
 interface Tenant {
   readonly businessId: BusinessId;
@@ -599,6 +599,99 @@ describe("catalog repositories (PostgreSQL)", () => {
       expect(await rejection(run((scope) => repos.productPacks.insert(scope, smuggled)))).not.toBeInstanceOf(
         ConflictError,
       );
+    });
+  });
+
+  describe("inventory entry reads (Slice 5)", () => {
+    it("lockVariantsForShare returns this business's variants in any status, keyed by ID; others are absent", async () => {
+      const first = await savedProduct(a, { name: "First" });
+      const archivedProduct = await savedProduct(a, { name: "Archived" });
+      const archived = archiveProduct({ item: archivedProduct, expectedVersion: 1, now: now() });
+      if (archived.outcome !== "changed") throw new Error("expected a change");
+      await run((scope) => repos.products.update(scope, archivedProduct, archived.item));
+      const foreign = await savedProduct(b, { name: "Foreign" });
+      const missing = ids().newId("ProductVariant");
+      const locked = await run((scope) =>
+        repos.products.lockVariantsForShare(
+          scope,
+          a.businessId,
+          new Set([foreign.variant.id, archived.item.variant.id, missing, first.variant.id]),
+        ),
+      );
+      expect([...locked.keys()].sort()).toEqual([first.variant.id, archived.item.variant.id].sort());
+      expect(locked.get(first.variant.id)).toEqual(first.variant);
+      expect(locked.get(archived.item.variant.id)).toEqual(archived.item.variant);
+      expect(await run((scope) => repos.products.lockVariantsForShare(scope, a.businessId, new Set()))).toEqual(
+        new Map(),
+      );
+    });
+
+    it("lockVariantsForShare holds FOR SHARE: other readers share it, a writer waits until the transaction ends", async () => {
+      const item = await savedProduct(a);
+      const locked = gate();
+      const release = gate();
+      const holder = run(async (scope) => {
+        await repos.products.lockVariantsForShare(scope, a.businessId, new Set([item.variant.id]));
+        locked.open();
+        await release.opened;
+      });
+      await locked.opened;
+      const shared = await harness.owner.connect();
+      try {
+        await shared.query("BEGIN");
+        await shared.query(`SELECT id FROM product_variants WHERE id = $1 FOR SHARE NOWAIT`, [item.variant.id]);
+        await shared.query("ROLLBACK");
+      } finally {
+        shared.release();
+      }
+      expect(
+        await sqlState(
+          harness.owner.query(`SELECT id FROM product_variants WHERE id = $1 FOR UPDATE NOWAIT`, [item.variant.id]),
+        ),
+      ).toBe(LOCK_NOT_AVAILABLE);
+      const quick = harness.unitOfWorkWith({ lockTimeoutMs: 200 });
+      expect(
+        await rejection(quick.run((scope) => repos.products.findByIdForUpdate(scope, a.businessId, item.product.id))),
+      ).toBeInstanceOf(ConcurrentModificationError);
+      release.open();
+      await holder;
+      await expect(
+        quick.run((scope) => repos.products.findByIdForUpdate(scope, a.businessId, item.product.id)),
+      ).resolves.toEqual(item);
+    });
+
+    it("findForEntry returns this business's packs in any status, without locking; others are absent", async () => {
+      const item = await savedProduct(a);
+      const active = newPack(item.variant, "Carton", 24n);
+      const toRetire = newPack(item.variant, "Crate", 12n);
+      const foreignItem = await savedProduct(b);
+      const foreign = newPack(foreignItem.variant);
+      await run(async (scope) => {
+        await repos.productPacks.insert(scope, active);
+        await repos.productPacks.insert(scope, toRetire);
+        await repos.productPacks.insert(scope, foreign);
+      });
+      const retired = retirePack({ pack: toRetire, now: now() });
+      if (retired.outcome !== "changed") throw new Error("expected a change");
+      await run((scope) => repos.productPacks.update(scope, toRetire, retired.pack));
+      const locked = gate();
+      const release = gate();
+      const holder = run(async (scope) => {
+        await repos.productPacks.findByIdForUpdate(scope, a.businessId, active.id);
+        locked.open();
+        await release.opened;
+      });
+      await locked.opened;
+      const quick = harness.unitOfWorkWith({ lockTimeoutMs: 200 });
+      const found = await quick.run((scope) =>
+        repos.productPacks.findForEntry(scope, a.businessId, new Set([active.id, retired.pack.id, foreign.id])),
+      );
+      release.open();
+      await holder;
+      expect([...found.keys()].sort()).toEqual([active.id, retired.pack.id].sort());
+      expect(found.get(active.id)).toEqual(active);
+      expect(found.get(retired.pack.id)).toEqual(retired.pack);
+      expect(await run((scope) => repos.productPacks.findForEntry(scope, a.businessId, new Set()))).toEqual(new Map());
     });
   });
 

@@ -255,6 +255,8 @@ const PROTECTED_MODEL_DELEGATES = [
   "businessIdempotencyRecord",
   "unitOfMeasure",
   "productVariantPrice",
+  "inventoryMovement",
+  "inventoryOpeningBatch",
 ];
 /**
  * Models that are updated through audited status changes but never
@@ -273,6 +275,10 @@ const NO_DELETE_MODEL_DELEGATES = [
   "product",
   "productVariant",
   "productPack",
+  "goodsReceipt",
+  "inventoryAdjustment",
+  "inventoryBalance",
+  "inventoryStockThreshold",
 ];
 const BANNED_PROTECTED_MUTATIONS = [
   ...(PROTECTED_MODEL_DELEGATES.length === 0
