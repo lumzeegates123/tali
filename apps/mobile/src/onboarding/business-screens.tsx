@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { describeFailure, rejectedFields } from "../api/failure-messages";
 import { CatalogScreen } from "../catalog/catalog-screen";
+import { InventoryScreen } from "../inventory/inventory-screen";
 import { useSession, useSessionStore } from "../auth/session-context";
 import type { BusinessOverview, ResourceResult } from "../auth/session-store";
 import { detectDeviceTimeZone, PILOT_CURRENCY_CODES } from "./create-business-defaults";
@@ -183,9 +184,15 @@ export function BusinessPickerScreen() {
   );
 }
 
-type BusinessSection = "overview" | "catalog";
+type BusinessSection = "overview" | "catalog" | "inventory";
 
-/** The selected business: an in-screen Overview | Catalog switch. Role-based visibility is UX only. */
+const SECTION_LABEL: Readonly<Record<BusinessSection, string>> = {
+  overview: "Overview",
+  catalog: "Catalog",
+  inventory: "Inventory",
+};
+
+/** The selected business: an in-screen Overview | Catalog | Inventory switch. Role-based visibility is UX only. */
 export function BusinessOverviewScreen({ businessId }: { readonly businessId: string }) {
   const session = useSession();
   const [section, setSection] = useState<BusinessSection>("overview");
@@ -194,27 +201,27 @@ export function BusinessOverviewScreen({ businessId }: { readonly businessId: st
   return (
     <View style={styles.screen}>
       <View style={styles.row} accessibilityRole="tablist" accessibilityLabel="Business sections">
-        {(["overview", "catalog"] as const).map((value) => (
+        {(["overview", "catalog", "inventory"] as const).map((value) => (
           <Pressable
             key={value}
             accessibilityRole="tab"
-            accessibilityLabel={value === "overview" ? "Overview" : "Catalog"}
+            accessibilityLabel={SECTION_LABEL[value]}
             accessibilityState={{ selected: section === value }}
             onPress={() => {
               setSection(value);
             }}
             style={[styles.button, section === value ? styles.primary : styles.secondary]}
           >
-            <Text style={section === value ? styles.primaryText : styles.secondaryText}>
-              {value === "overview" ? "Overview" : "Catalog"}
-            </Text>
+            <Text style={section === value ? styles.primaryText : styles.secondaryText}>{SECTION_LABEL[value]}</Text>
           </Pressable>
         ))}
       </View>
       {section === "overview" ? (
         <OverviewSection businessId={businessId} />
-      ) : (
+      ) : section === "catalog" ? (
         <CatalogScreen businessId={businessId} role={summary?.membership.role} />
+      ) : (
+        <InventoryScreen businessId={businessId} role={summary?.membership.role} />
       )}
     </View>
   );

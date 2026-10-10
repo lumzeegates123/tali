@@ -75,7 +75,7 @@ export function Field({
   /** A password: masked, and excluded from keyboard learning and suggestions. */
   readonly secret?: boolean;
   readonly autoComplete?: "email" | "password" | "new-password" | "one-time-code";
-  readonly keyboardType?: "email-address" | "number-pad";
+  readonly keyboardType?: "email-address" | "number-pad" | "decimal-pad";
 }) {
   return (
     <View style={styles.field}>
@@ -132,6 +132,7 @@ export const styles = StyleSheet.create({
   screen: { gap: 12, paddingVertical: 12 },
   heading: { fontSize: 20, fontWeight: "600" },
   row: { flexDirection: "row", alignItems: "center", gap: 8 },
+  wrap: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8 },
   field: { gap: 4 },
   label: { fontWeight: "600" },
   hint: { color: "#4a4a45" },

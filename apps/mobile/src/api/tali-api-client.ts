@@ -24,6 +24,61 @@ import type {
   UnitsResponse,
   UpdateProductRequest,
 } from "@tali/shared";
+import type {
+  AdjustmentResponse,
+  AdjustmentReversalResponse,
+  CancelStocktakeRequest,
+  CancelStocktakeResponse,
+  ClearLowStockThresholdRequest,
+  CreateStocktakeRequest,
+  GoodsReceiptResponse,
+  GoodsReceiptReversalResponse,
+  InventoryItemListParams,
+  InventoryItemResponse,
+  InventoryItemsResponse,
+  InventoryMovementsResponse,
+  LowStockThresholdResponse,
+  OpeningBatchResponse,
+  PackListParams,
+  PacksResponse,
+  PostGoodsReceiptRequest,
+  PostStocktakeRequest,
+  PostStocktakeResponse,
+  RecordAdjustmentRequest,
+  RecordOpeningStockRequest,
+  RecordStocktakeCountRequest,
+  RecordWriteOffRequest,
+  RemoveStocktakeLineRequest,
+  ReverseDocumentRequest,
+  SetLowStockThresholdRequest,
+  StocktakeCreationResponse,
+  StocktakeLineChangeResponse,
+  StocktakeLinesResponse,
+  StocktakeListParams,
+  StocktakeResponse,
+  StocktakesResponse,
+  StocktakeStaleDetails,
+} from "@tali/shared";
+import {
+  AdjustmentResponseSchema,
+  AdjustmentReversalResponseSchema,
+  CancelStocktakeResponseSchema,
+  GoodsReceiptResponseSchema,
+  GoodsReceiptReversalResponseSchema,
+  InventoryItemResponseSchema,
+  InventoryItemsResponseSchema,
+  InventoryMovementsResponseSchema,
+  LowStockThresholdResponseSchema,
+  OpeningBatchResponseSchema,
+  PacksResponseSchema,
+  PostStocktakeResponseSchema,
+  StocktakeCreationResponseSchema,
+  StocktakeLineChangeResponseSchema,
+  StocktakeLinesResponseSchema,
+  StocktakeResponseSchema,
+  StocktakesResponseSchema,
+  StocktakeStaleErrorEnvelopeSchema,
+} from "@tali/shared";
 import {
   AcceptInvitationResponseSchema,
   BusinessCurrencyResponseSchema,
@@ -64,6 +119,8 @@ export type ApiFailure =
       readonly correlationId: string | undefined;
       /** Request fields named by a VALIDATION_FAILED response (last path segment only). */
       readonly fields: readonly string[];
+      /** The strict details of a STOCKTAKE_STALE response; absent for every other code. */
+      readonly stale?: StocktakeStaleDetails;
     }
   | { readonly kind: "invalid-response"; readonly status: number; readonly correlationId: string | undefined };
 
@@ -460,6 +517,424 @@ export class TaliApiClient {
     );
   }
 
+  /** `GET .../products/:id/packs` (`product:read`): pack choices for counting and stock lines. */
+  async listPacks(
+    token: AccessToken,
+    businessId: string,
+    productId: string,
+    params: PackListParams = {},
+    device?: DeviceHeaders,
+  ): Promise<ApiResult<PacksResponse>> {
+    const query = searchQuery({ limit: params.limit, after: params.after, status: params.status });
+    return this.#call(
+      {
+        method: "GET",
+        path: `${businessPath(businessId)}/products/${segment(productId)}/packs${query}`,
+        token,
+        headers: deviceHeaders(device),
+      },
+      [200],
+      PacksResponseSchema,
+    );
+  }
+
+  // ---- Inventory (Slice 6 routes; the location is the business default, resolved server-side) ----
+
+  /** `GET .../inventory/balances` (`inventory:read`): `lowStock` and the LOW STOCK flag are computed by the API. */
+  async listInventoryItems(
+    token: AccessToken,
+    businessId: string,
+    params: InventoryItemListParams = {},
+    device?: DeviceHeaders,
+  ): Promise<ApiResult<InventoryItemsResponse>> {
+    const query = searchQuery({
+      limit: params.limit,
+      after: params.after,
+      q: params.q,
+      lowStock: params.lowStock === true ? "true" : undefined,
+    });
+    return this.#inventory(
+      token,
+      businessId,
+      { method: "GET", path: `balances${query}` },
+      device,
+      InventoryItemsResponseSchema,
+    );
+  }
+
+  async getInventoryItem(
+    token: AccessToken,
+    businessId: string,
+    variantId: string,
+    device?: DeviceHeaders,
+  ): Promise<ApiResult<InventoryItemResponse>> {
+    return this.#inventory(
+      token,
+      businessId,
+      { method: "GET", path: `items/${segment(variantId)}` },
+      device,
+      InventoryItemResponseSchema,
+    );
+  }
+
+  /** Newest first. */
+  async listInventoryMovements(
+    token: AccessToken,
+    businessId: string,
+    variantId: string,
+    page: PageRequest = {},
+    device?: DeviceHeaders,
+  ): Promise<ApiResult<InventoryMovementsResponse>> {
+    return this.#inventory(
+      token,
+      businessId,
+      { method: "GET", path: `items/${segment(variantId)}/movements${pageQuery(page)}` },
+      device,
+      InventoryMovementsResponseSchema,
+    );
+  }
+
+  /** `inventory:opening`; keyed: one logical submission keeps one key across uncertain retries. */
+  async recordOpeningStock(
+    token: AccessToken,
+    businessId: string,
+    command: RecordOpeningStockRequest,
+    idempotencyKey: string,
+    device?: DeviceHeaders,
+  ): Promise<ApiResult<OpeningBatchResponse>> {
+    return this.#inventory(
+      token,
+      businessId,
+      { method: "POST", path: "opening-stock", body: command, idempotencyKey },
+      device,
+      OpeningBatchResponseSchema,
+    );
+  }
+
+  async getOpeningBatch(
+    token: AccessToken,
+    businessId: string,
+    openingBatchId: string,
+    device?: DeviceHeaders,
+  ): Promise<ApiResult<OpeningBatchResponse>> {
+    return this.#inventory(
+      token,
+      businessId,
+      { method: "GET", path: `opening-batches/${segment(openingBatchId)}` },
+      device,
+      OpeningBatchResponseSchema,
+    );
+  }
+
+  /** `inventory:receive`; keyed. Reference and note only: no supplier, cost or tax. */
+  async postGoodsReceipt(
+    token: AccessToken,
+    businessId: string,
+    command: PostGoodsReceiptRequest,
+    idempotencyKey: string,
+    device?: DeviceHeaders,
+  ): Promise<ApiResult<GoodsReceiptResponse>> {
+    return this.#inventory(
+      token,
+      businessId,
+      { method: "POST", path: "goods-receipts", body: command, idempotencyKey },
+      device,
+      GoodsReceiptResponseSchema,
+    );
+  }
+
+  async getGoodsReceipt(
+    token: AccessToken,
+    businessId: string,
+    goodsReceiptId: string,
+    device?: DeviceHeaders,
+  ): Promise<ApiResult<GoodsReceiptResponse>> {
+    return this.#inventory(
+      token,
+      businessId,
+      { method: "GET", path: `goods-receipts/${segment(goodsReceiptId)}` },
+      device,
+      GoodsReceiptResponseSchema,
+    );
+  }
+
+  /** `inventory:adjust`; state-setting: a repeat answers `changed: false`. */
+  async reverseGoodsReceipt(
+    token: AccessToken,
+    businessId: string,
+    goodsReceiptId: string,
+    command: ReverseDocumentRequest,
+    device?: DeviceHeaders,
+  ): Promise<ApiResult<GoodsReceiptReversalResponse>> {
+    return this.#inventory(
+      token,
+      businessId,
+      { method: "POST", path: `goods-receipts/${segment(goodsReceiptId)}/reverse`, body: command },
+      device,
+      GoodsReceiptReversalResponseSchema,
+    );
+  }
+
+  /** `inventory:adjust`; keyed. */
+  async recordAdjustment(
+    token: AccessToken,
+    businessId: string,
+    command: RecordAdjustmentRequest,
+    idempotencyKey: string,
+    device?: DeviceHeaders,
+  ): Promise<ApiResult<AdjustmentResponse>> {
+    return this.#inventory(
+      token,
+      businessId,
+      { method: "POST", path: "adjustments", body: command, idempotencyKey },
+      device,
+      AdjustmentResponseSchema,
+    );
+  }
+
+  /** `inventory:adjust`; keyed. Lines are positive magnitudes; the API records them as decreases. */
+  async recordWriteOff(
+    token: AccessToken,
+    businessId: string,
+    command: RecordWriteOffRequest,
+    idempotencyKey: string,
+    device?: DeviceHeaders,
+  ): Promise<ApiResult<AdjustmentResponse>> {
+    return this.#inventory(
+      token,
+      businessId,
+      { method: "POST", path: "write-offs", body: command, idempotencyKey },
+      device,
+      AdjustmentResponseSchema,
+    );
+  }
+
+  async getAdjustment(
+    token: AccessToken,
+    businessId: string,
+    adjustmentId: string,
+    device?: DeviceHeaders,
+  ): Promise<ApiResult<AdjustmentResponse>> {
+    return this.#inventory(
+      token,
+      businessId,
+      { method: "GET", path: `adjustments/${segment(adjustmentId)}` },
+      device,
+      AdjustmentResponseSchema,
+    );
+  }
+
+  /** `inventory:adjust`; reverses an adjustment or a write-off. */
+  async reverseAdjustment(
+    token: AccessToken,
+    businessId: string,
+    adjustmentId: string,
+    command: ReverseDocumentRequest,
+    device?: DeviceHeaders,
+  ): Promise<ApiResult<AdjustmentReversalResponse>> {
+    return this.#inventory(
+      token,
+      businessId,
+      { method: "POST", path: `adjustments/${segment(adjustmentId)}/reverse`, body: command },
+      device,
+      AdjustmentReversalResponseSchema,
+    );
+  }
+
+  /** `PUT .../threshold` (`inventory:threshold`): `expectedVersion` 0 sets the first threshold. */
+  async setLowStockThreshold(
+    token: AccessToken,
+    businessId: string,
+    variantId: string,
+    command: SetLowStockThresholdRequest,
+    device?: DeviceHeaders,
+  ): Promise<ApiResult<LowStockThresholdResponse>> {
+    return this.#inventory(
+      token,
+      businessId,
+      { method: "PUT", path: `items/${segment(variantId)}/threshold`, body: command },
+      device,
+      LowStockThresholdResponseSchema,
+    );
+  }
+
+  async clearLowStockThreshold(
+    token: AccessToken,
+    businessId: string,
+    variantId: string,
+    command: ClearLowStockThresholdRequest,
+    device?: DeviceHeaders,
+  ): Promise<ApiResult<LowStockThresholdResponse>> {
+    return this.#inventory(
+      token,
+      businessId,
+      { method: "POST", path: `items/${segment(variantId)}/threshold/clear`, body: command },
+      device,
+      LowStockThresholdResponseSchema,
+    );
+  }
+
+  /** `inventory:count`; keyed. One DRAFT per location: a second create answers CONFLICT. */
+  async createStocktake(
+    token: AccessToken,
+    businessId: string,
+    command: CreateStocktakeRequest,
+    idempotencyKey: string,
+    device?: DeviceHeaders,
+  ): Promise<ApiResult<StocktakeCreationResponse>> {
+    return this.#inventory(
+      token,
+      businessId,
+      { method: "POST", path: "stocktakes", body: command, idempotencyKey },
+      device,
+      StocktakeCreationResponseSchema,
+    );
+  }
+
+  async listStocktakes(
+    token: AccessToken,
+    businessId: string,
+    params: StocktakeListParams = {},
+    device?: DeviceHeaders,
+  ): Promise<ApiResult<StocktakesResponse>> {
+    const query = searchQuery({ limit: params.limit, after: params.after, status: params.status });
+    return this.#inventory(
+      token,
+      businessId,
+      { method: "GET", path: `stocktakes${query}` },
+      device,
+      StocktakesResponseSchema,
+    );
+  }
+
+  /** FULL or BLIND, decided by the API from the caller's permissions. */
+  async getStocktake(
+    token: AccessToken,
+    businessId: string,
+    stocktakeId: string,
+    device?: DeviceHeaders,
+  ): Promise<ApiResult<StocktakeResponse>> {
+    return this.#inventory(
+      token,
+      businessId,
+      { method: "GET", path: `stocktakes/${segment(stocktakeId)}` },
+      device,
+      StocktakeResponseSchema,
+    );
+  }
+
+  /** Variant-ID order, REMOVED lines included. */
+  async listStocktakeLines(
+    token: AccessToken,
+    businessId: string,
+    stocktakeId: string,
+    page: PageRequest = {},
+    device?: DeviceHeaders,
+  ): Promise<ApiResult<StocktakeLinesResponse>> {
+    return this.#inventory(
+      token,
+      businessId,
+      { method: "GET", path: `stocktakes/${segment(stocktakeId)}/lines${pageQuery(page)}` },
+      device,
+      StocktakeLinesResponseSchema,
+    );
+  }
+
+  /** `PUT .../lines/:variantId` (`inventory:count`): omit `expectedVersion` for a first count, else the line version. */
+  async recordStocktakeCount(
+    token: AccessToken,
+    businessId: string,
+    stocktakeId: string,
+    variantId: string,
+    command: RecordStocktakeCountRequest,
+    device?: DeviceHeaders,
+  ): Promise<ApiResult<StocktakeLineChangeResponse>> {
+    return this.#inventory(
+      token,
+      businessId,
+      { method: "PUT", path: `stocktakes/${segment(stocktakeId)}/lines/${segment(variantId)}`, body: command },
+      device,
+      StocktakeLineChangeResponseSchema,
+    );
+  }
+
+  async removeStocktakeLine(
+    token: AccessToken,
+    businessId: string,
+    stocktakeId: string,
+    variantId: string,
+    command: RemoveStocktakeLineRequest,
+    device?: DeviceHeaders,
+  ): Promise<ApiResult<StocktakeLineChangeResponse>> {
+    return this.#inventory(
+      token,
+      businessId,
+      { method: "POST", path: `stocktakes/${segment(stocktakeId)}/lines/${segment(variantId)}/remove`, body: command },
+      device,
+      StocktakeLineChangeResponseSchema,
+    );
+  }
+
+  /** `inventory:count-post`: posting a POSTED stocktake answers the posted result (`changed: false`). */
+  async postStocktake(
+    token: AccessToken,
+    businessId: string,
+    stocktakeId: string,
+    command: PostStocktakeRequest,
+    device?: DeviceHeaders,
+  ): Promise<ApiResult<PostStocktakeResponse>> {
+    return this.#inventory(
+      token,
+      businessId,
+      { method: "POST", path: `stocktakes/${segment(stocktakeId)}/post`, body: command },
+      device,
+      PostStocktakeResponseSchema,
+    );
+  }
+
+  async cancelStocktake(
+    token: AccessToken,
+    businessId: string,
+    stocktakeId: string,
+    command: CancelStocktakeRequest,
+    device?: DeviceHeaders,
+  ): Promise<ApiResult<CancelStocktakeResponse>> {
+    return this.#inventory(
+      token,
+      businessId,
+      { method: "POST", path: `stocktakes/${segment(stocktakeId)}/cancel`, body: command },
+      device,
+      CancelStocktakeResponseSchema,
+    );
+  }
+
+  /** One inventory route under `.../inventory/`; keyed creates answer 201, everything else 200. */
+  async #inventory<T>(
+    token: AccessToken,
+    businessId: string,
+    request: {
+      readonly method: "GET" | "POST" | "PUT";
+      readonly path: string;
+      readonly body?: unknown;
+      readonly idempotencyKey?: string;
+    },
+    device: DeviceHeaders | undefined,
+    schema: ResponseSchema<T>,
+  ): Promise<ApiResult<T>> {
+    const key = request.idempotencyKey;
+    return this.#call(
+      {
+        method: request.method,
+        path: `${businessPath(businessId)}/inventory/${request.path}`,
+        token,
+        ...(request.body === undefined ? {} : { body: request.body }),
+        headers: { ...deviceHeaders(device), ...(key === undefined ? {} : { [IDEMPOTENCY_KEY_HEADER]: key }) },
+      },
+      [key === undefined ? 200 : 201],
+      schema,
+    );
+  }
+
   async #call<T>(spec: RequestSpec, statuses: readonly number[], schema: ResponseSchema<T>): Promise<ApiResult<T>> {
     const exchange = await this.#send(spec);
     if (!("status" in exchange)) return exchange;
@@ -550,6 +1025,10 @@ function interpret<T>(exchange: Exchange, statuses: readonly number[], schema: R
 function toFailure(exchange: Exchange): ApiFailure {
   const envelope = ErrorEnvelopeSchema.safeParse(exchange.body);
   if (envelope.success) {
+    const stale =
+      envelope.data.error.code === "STOCKTAKE_STALE"
+        ? StocktakeStaleErrorEnvelopeSchema.safeParse(exchange.body)
+        : undefined;
     return {
       kind: "api-error",
       status: exchange.status,
@@ -557,6 +1036,7 @@ function toFailure(exchange: Exchange): ApiFailure {
       message: envelope.data.error.message,
       correlationId: exchange.correlationId,
       fields: fieldNames(envelope.data.error.details),
+      ...(stale?.success === true ? { stale: stale.data.error.details } : {}),
     };
   }
   return { kind: "invalid-response", status: exchange.status, correlationId: exchange.correlationId };

@@ -33,6 +33,14 @@ const API_ERROR_MESSAGES: Readonly<Record<string, FailureMessage>> = {
   },
   DEPENDENCY_UNAVAILABLE: { text: "Tali is temporarily unavailable. Try again shortly.", retryable: true },
   RATE_LIMITED: { text: "Too many attempts. Wait a minute, then try again.", retryable: true },
+  INSUFFICIENT_STOCK: {
+    text: "There is not enough stock for this change. Check the quantities and try again.",
+    retryable: false,
+  },
+  STOCKTAKE_STALE: {
+    text: "Some stock changed while you were counting. Recount the affected items before posting.",
+    retryable: false,
+  },
   // The local registration is cleared when this arrives, so trying again proceeds without the device.
   DEVICE_NOT_TRUSTED: { text: "This device needs to be registered again.", retryable: true },
 };
