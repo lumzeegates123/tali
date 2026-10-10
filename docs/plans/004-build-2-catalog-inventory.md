@@ -9,8 +9,9 @@ shared contracts) COMPLETE (2026-10-05)**, with all gates passed, pending human 
 (`docs/audits/build-2-slice-3.md`). **Slice 4 (catalog clients) COMPLETE (2026-10-06)**, with all gates passed,
 pending human review (`docs/audits/build-2-slice-4.md`). **Slice 5 (inventory core) COMPLETE (2026-10-08)**, with
 all gates passed, pending human review (`docs/audits/build-2-slice-5.md`). **Slice 6 (stocktake and inventory API)
-COMPLETE (2026-10-09)**, with all gates passed, pending human review (`docs/audits/build-2-slice-6.md`). Slice 7 is
-not started. Where this plan
+COMPLETE (2026-10-09)**, with all gates passed, pending human review (`docs/audits/build-2-slice-6.md`). **Slice 7
+(inventory clients) COMPLETE (2026-10-09)**, with all gates passed, pending human review
+(`docs/audits/build-2-slice-7.md`). Slice 8 is not started. Where this plan
 and an ADR differ, the ADR is authoritative (`AGENTS.md` section 4).
 
 Scope: implementation steps 3 (product catalog) and 4 (inventory) of `docs/product/mvp-scope.md`, quantity-only.
@@ -35,7 +36,7 @@ Not in Build 2:
 | 4     | Catalog clients (web and mobile)                                                              | **COMPLETE** (2026-10-06; `docs/audits/build-2-slice-4.md`) |
 | 5     | Inventory core: movements, balances, opening, goods receipts, adjustments, write-offs, reversals, low-stock thresholds and the derived low-stock state (domain, application, schema, repositories) | **COMPLETE** (2026-10-08; `docs/audits/build-2-slice-5.md`) |
 | 6     | Stocktake (domain, application, schema) and the inventory API, including threshold endpoints  | **COMPLETE** (2026-10-09; `docs/audits/build-2-slice-6.md`) |
-| 7     | Inventory clients (web and mobile), including threshold management and the LOW STOCK indicator | Not started                   |
+| 7     | Inventory clients (web and mobile), including threshold management and the LOW STOCK indicator | **COMPLETE** (2026-10-09; `docs/audits/build-2-slice-7.md`) |
 | 8     | Hardening and final acceptance                                                                | Not started                    |
 
 ## 1. Delivery sequence
@@ -48,7 +49,7 @@ flowchart TD
   S3 --> S4["S4 Catalog clients (COMPLETE)"]
   S3 --> S5["S5 Inventory core (COMPLETE)"]
   S5 --> S6["S6 Inventory and stocktake API (COMPLETE)"]
-  S6 --> S7["S7 Inventory clients"]
+  S6 --> S7["S7 Inventory clients (COMPLETE)"]
   S4 --> S8["S8 Hardening and acceptance"]
   S7 --> S8
 ```
@@ -394,7 +395,20 @@ process-startup or resource failure in which no assertion failed, and it is docu
   - every API end-to-end case from S3.
 - Stop: the staleness rule proves unusable in pilot walkthroughs (revise the ADR rather than weaken it silently).
 
-### S7. Inventory clients
+### S7. Inventory clients: COMPLETE (2026-10-09)
+
+- Outcome: all gates passed (`pnpm verify` exit 0 after a format fix and an unchanged retry of a host-load mobile test
+  timeout, and exit 0 again on the final tree; `pnpm test:integration` exit 0; web Playwright 12 and 5 passed,
+  including `inventory.spec.ts` against the real API; client bundle check clean; Expo Android export exit 0;
+  `pnpm boundaries` clean; gitleaks clean); audit in `docs/audits/build-2-slice-7.md`, pending human review. No new
+  dependency; no server, schema or migration change.
+  - web and mobile inventory over the 22 Slice 6 routes, every response validated with the shared schemas;
+  - LOW STOCK from the API flag only, never for archived items; threshold controls hidden without
+    `inventory:threshold`; version conflicts shown and reloaded, never retried;
+  - BLIND counters never see `expectedAtCount` or `variance`; `STOCKTAKE_STALE` marks the stale lines and reloads
+    without resubmitting;
+  - keyed commands keep their idempotency key across uncertain retries; no `locationId`, no client stock arithmetic,
+    no persistence.
 
 - Content: web and mobile stock list (with archived residual stock labelled), movement history, receive, adjust and
   write off, reversals, opening stock, the stocktake count, review and post flow, setting and clearing the low-stock

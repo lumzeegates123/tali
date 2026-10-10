@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { CatalogSection } from "../catalog/catalog-section";
+import { InventorySection } from "../inventory/inventory-section";
 import type { BusinessOverview, ResourceResult } from "../lib/auth/session-store";
 import { useSession, useSessionStore } from "../lib/auth/session-context";
 import { FailureAlert } from "./failure-alert";
@@ -11,9 +12,15 @@ import { LoadingState, ScreenHeading } from "./screen-heading";
 type OverviewState =
   { readonly phase: "loading" } | { readonly phase: "done"; readonly result: ResourceResult<BusinessOverview> };
 
-type BusinessSection = "overview" | "catalog";
+type BusinessSection = "overview" | "catalog" | "inventory";
 
-/** The selected business: an Overview | Catalog switch. Role-based visibility is UX only. */
+const SECTION_LABEL: Readonly<Record<BusinessSection, string>> = {
+  overview: "Overview",
+  catalog: "Catalog",
+  inventory: "Inventory",
+};
+
+/** The selected business: an Overview | Catalog | Inventory switch. Role-based visibility is UX only. */
 export function BusinessOverviewScreen({ businessId }: { readonly businessId: string }) {
   const session = useSession();
   const [section, setSection] = useState<BusinessSection>("overview");
@@ -22,7 +29,7 @@ export function BusinessOverviewScreen({ businessId }: { readonly businessId: st
   return (
     <>
       <nav aria-label="Business sections" className="section-nav">
-        {(["overview", "catalog"] as const).map((value) => (
+        {(["overview", "catalog", "inventory"] as const).map((value) => (
           <button
             key={value}
             type="button"
@@ -32,14 +39,16 @@ export function BusinessOverviewScreen({ businessId }: { readonly businessId: st
               setSection(value);
             }}
           >
-            {value === "overview" ? "Overview" : "Catalog"}
+            {SECTION_LABEL[value]}
           </button>
         ))}
       </nav>
       {section === "overview" ? (
         <OverviewSection businessId={businessId} />
-      ) : (
+      ) : section === "catalog" ? (
         <CatalogSection businessId={businessId} role={summary?.membership.role} />
+      ) : (
+        <InventorySection businessId={businessId} role={summary?.membership.role} />
       )}
     </>
   );

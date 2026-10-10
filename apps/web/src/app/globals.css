@@ -246,3 +246,25 @@ td {
   padding: 0.25rem 1rem 0.25rem 0;
   text-align: left;
 }
+
+.badge-low {
+  padding: 0 0.5rem;
+  border: 1px solid #a11d1d;
+  border-radius: 0.25rem;
+  color: #a11d1d;
+}
+
+tr.removed {
+  color: #6a6a65;
+  text-decoration: line-through;
+}
+
+tr.stale {
+  background: #fbeeee;
+}
+
+fieldset.line {
+  padding: 0.75rem;
+  border: 1px solid #d8d8d2;
+  border-radius: 0.25rem;
+}

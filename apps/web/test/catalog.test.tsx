@@ -86,7 +86,7 @@ describe("catalog navigation", () => {
       within(nav)
         .getAllByRole("button")
         .map((button) => button.textContent),
-    ).toEqual(["Overview", "Catalog"]);
+    ).toEqual(["Overview", "Catalog", "Inventory"]);
     expect(within(nav).getByRole("button", { name: "Catalog" }).getAttribute("aria-current")).toBe("page");
     expect(screen.getByRole("heading", { name: "Catalog" })).toBeDefined();
     expect(screen.getByRole("list", { name: "Products" }).textContent).toContain("Malt 33cl");
