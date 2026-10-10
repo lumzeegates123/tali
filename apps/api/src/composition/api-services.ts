@@ -5,46 +5,71 @@ import {
   type ArchiveProduct,
   AuditRecorder,
   type BusinessContextResolver,
+  type CancelStocktake,
   type ChangeMemberRole,
+  type ClearLowStockThreshold,
   type Clock,
   type CreateBusiness,
   type CreateCategory,
   type CreateInvitation,
   type CreateProduct,
+  type CreateStocktake,
   createAcceptInvitation,
   createAddPack,
   createArchiveCategory,
   createArchiveProduct,
   createBusinessContextResolver,
+  createCancelStocktake,
   createChangeMemberRole,
+  createClearLowStockThreshold,
   createCreateBusiness,
   createCreateCategory,
   createCreateInvitation,
   createCreateProduct,
+  createCreateStocktake,
   createDefaultLocationCreation,
   createDefaultLocationResolver,
   createDeviceVerifier,
+  createGetAdjustment,
   createGetBusiness,
   createGetBusinessCurrency,
   createGetCategory,
   createGetCurrentUser,
+  createGetGoodsReceipt,
+  createGetInventoryItem,
+  createGetOpeningBatch,
   createGetProduct,
+  createGetStocktake,
   createListCategories,
   createListDevices,
+  createListInventoryItems,
+  createListItemMovements,
   createListLocations,
   createListMembers,
   createListMyBusinesses,
   createListProductPacks,
   createListProductPriceHistory,
   createListProducts,
+  createListStocktakeLines,
+  createListStocktakes,
   createListUnitsOfMeasure,
+  createPostGoodsReceipt,
+  createPostStocktake,
   createReactivateMember,
   createReactivateProduct,
+  createRecordAdjustment,
+  createRecordOpeningStock,
+  createRecordStocktakeCount,
+  createRecordWriteOff,
   createRegisterCurrentUser,
   createRegisterDevice,
+  createRemoveStocktakeLine,
   createRetirePack,
+  createReverseAdjustment,
+  createReverseGoodsReceipt,
   createRevokeDevice,
   createRevokeInvitation,
+  createSetLowStockThreshold,
   createSetSellingPrice,
   createSuspendMember,
   createUpdateBusinessName,
@@ -54,31 +79,50 @@ import {
   type DefaultLocationResolver,
   type DeviceVerifier,
   type FingerprintHasher,
+  type GetAdjustment,
   type GetBusiness,
   type GetBusinessCurrency,
   type GetCategory,
   type GetCurrentUser,
+  type GetGoodsReceipt,
+  type GetInventoryItem,
+  type GetOpeningBatch,
   type GetProduct,
+  type GetStocktake,
   type IdGenerator,
   KeyedIdempotency,
   type ListCategories,
   type ListDevices,
+  type ListInventoryItems,
+  type ListItemMovements,
   type ListLocations,
   type ListMembers,
   type ListMyBusinesses,
   type ListProductPacks,
   type ListProductPriceHistory,
   type ListProducts,
+  type ListStocktakeLines,
+  type ListStocktakes,
   type ListUnitsOfMeasure,
   type OneTimeSecretGenerator,
+  type PostGoodsReceipt,
+  type PostStocktake,
   type ReactivateMember,
   type ReactivateProduct,
+  type RecordAdjustment,
+  type RecordOpeningStock,
+  type RecordStocktakeCount,
+  type RecordWriteOff,
   type RegisterCurrentUser,
   type RegisterDevice,
+  type RemoveStocktakeLine,
   type RetirePack,
+  type ReverseAdjustment,
+  type ReverseGoodsReceipt,
   type RevokeDevice,
   type RevokeInvitation,
   type SecretHasher,
+  type SetLowStockThreshold,
   type SetSellingPrice,
   type SuspendMember,
   taliAuditRegistry,
@@ -133,7 +177,55 @@ export interface ApiServices {
   readonly listProductPacks: ListProductPacks;
   readonly listProductPriceHistory: ListProductPriceHistory;
   readonly listUnitsOfMeasure: ListUnitsOfMeasure;
+  readonly recordOpeningStock: RecordOpeningStock;
+  readonly postGoodsReceipt: PostGoodsReceipt;
+  readonly recordAdjustment: RecordAdjustment;
+  readonly recordWriteOff: RecordWriteOff;
+  readonly reverseGoodsReceipt: ReverseGoodsReceipt;
+  readonly reverseAdjustment: ReverseAdjustment;
+  readonly setLowStockThreshold: SetLowStockThreshold;
+  readonly clearLowStockThreshold: ClearLowStockThreshold;
+  readonly createStocktake: CreateStocktake;
+  readonly recordStocktakeCount: RecordStocktakeCount;
+  readonly removeStocktakeLine: RemoveStocktakeLine;
+  readonly postStocktake: PostStocktake;
+  readonly cancelStocktake: CancelStocktake;
+  readonly listInventoryItems: ListInventoryItems;
+  readonly getInventoryItem: GetInventoryItem;
+  readonly listItemMovements: ListItemMovements;
+  readonly getOpeningBatch: GetOpeningBatch;
+  readonly getGoodsReceipt: GetGoodsReceipt;
+  readonly getAdjustment: GetAdjustment;
+  readonly listStocktakes: ListStocktakes;
+  readonly getStocktake: GetStocktake;
+  readonly listStocktakeLines: ListStocktakeLines;
 }
+
+/** The ApiServices keys of the Build 2 inventory and stocktake use cases, in route order. */
+export const INVENTORY_SERVICE_KEYS = [
+  "recordOpeningStock",
+  "postGoodsReceipt",
+  "recordAdjustment",
+  "recordWriteOff",
+  "reverseGoodsReceipt",
+  "reverseAdjustment",
+  "setLowStockThreshold",
+  "clearLowStockThreshold",
+  "createStocktake",
+  "recordStocktakeCount",
+  "removeStocktakeLine",
+  "postStocktake",
+  "cancelStocktake",
+  "listInventoryItems",
+  "getInventoryItem",
+  "listItemMovements",
+  "getOpeningBatch",
+  "getGoodsReceipt",
+  "getAdjustment",
+  "listStocktakes",
+  "getStocktake",
+  "listStocktakeLines",
+] as const satisfies readonly (keyof ApiServices)[];
 
 /**
  * Composes the Build 1 and Build 2 catalog use cases over the PostgreSQL adapters: one unit of
@@ -144,6 +236,13 @@ export interface ApiServices {
  * reads the authoritative inventory tables through the database's
  * variantInventoryState reader (movements, balances and configured low-stock
  * thresholds at every location).
+ *
+ * The Slice 5 stock documents, reversals and thresholds, the Slice 6
+ * stocktakes and every stock read use the database's own inventory
+ * repositories and readers under the same unit of work, the business-scoped
+ * keyed idempotency, the fingerprint hasher, the audit recorder, the clock
+ * and the ID generator. Controllers bind each request to the business's
+ * default location before calling them.
  */
 export function composeApiServices(dependencies: {
   readonly database: Database;
@@ -175,6 +274,31 @@ export function composeApiServices(dependencies: {
   const audit = new AuditRecorder({ registry: taliAuditRegistry, writer: auditWriter, clock, ids });
   const userContexts = createUserContextResolver({ unitOfWork, users });
   const businessScoped = new KeyedIdempotency({ businessStore: businessIdempotency, clock, ids });
+  const repos = database.repositories;
+  const stock = {
+    unitOfWork,
+    memberships,
+    products,
+    packs,
+    units,
+    movements: repos.inventoryMovements,
+    balances: repos.inventoryBalances,
+    idempotency: businessScoped,
+    hasher,
+    audit,
+    ids,
+    clock,
+  };
+  const stocktaking = { ...stock, stocktakes: repos.stocktakes, stocktakeLines: repos.stocktakeLines };
+  const stocktakeQueries = { unitOfWork, stocktakes: repos.stocktakes, stocktakeLines: repos.stocktakeLines };
+  const stockReads = {
+    unitOfWork,
+    items: repos.inventoryItems,
+    movements: repos.inventoryMovements,
+    openings: repos.inventoryOpeningBatches,
+    receipts: repos.goodsReceipts,
+    adjustments: repos.inventoryAdjustments,
+  };
 
   return Object.freeze({
     userContexts,
@@ -301,5 +425,27 @@ export function composeApiServices(dependencies: {
     listProductPacks: createListProductPacks({ unitOfWork, products, packs }),
     listProductPriceHistory: createListProductPriceHistory({ unitOfWork, products, prices }),
     listUnitsOfMeasure: createListUnitsOfMeasure({ unitOfWork, units }),
+    recordOpeningStock: createRecordOpeningStock({ ...stock, openings: repos.inventoryOpeningBatches }),
+    postGoodsReceipt: createPostGoodsReceipt({ ...stock, receipts: repos.goodsReceipts }),
+    recordAdjustment: createRecordAdjustment({ ...stock, adjustments: repos.inventoryAdjustments }),
+    recordWriteOff: createRecordWriteOff({ ...stock, adjustments: repos.inventoryAdjustments }),
+    reverseGoodsReceipt: createReverseGoodsReceipt({ ...stock, receipts: repos.goodsReceipts }),
+    reverseAdjustment: createReverseAdjustment({ ...stock, adjustments: repos.inventoryAdjustments }),
+    setLowStockThreshold: createSetLowStockThreshold({ ...stock, thresholds: repos.inventoryThresholds }),
+    clearLowStockThreshold: createClearLowStockThreshold({ ...stock, thresholds: repos.inventoryThresholds }),
+    createStocktake: createCreateStocktake(stocktaking),
+    recordStocktakeCount: createRecordStocktakeCount(stocktaking),
+    removeStocktakeLine: createRemoveStocktakeLine(stocktaking),
+    postStocktake: createPostStocktake(stocktaking),
+    cancelStocktake: createCancelStocktake(stocktaking),
+    listInventoryItems: createListInventoryItems(stockReads),
+    getInventoryItem: createGetInventoryItem(stockReads),
+    listItemMovements: createListItemMovements(stockReads),
+    getOpeningBatch: createGetOpeningBatch(stockReads),
+    getGoodsReceipt: createGetGoodsReceipt(stockReads),
+    getAdjustment: createGetAdjustment(stockReads),
+    listStocktakes: createListStocktakes(stocktakeQueries),
+    getStocktake: createGetStocktake(stocktakeQueries),
+    listStocktakeLines: createListStocktakeLines(stocktakeQueries),
   });
 }

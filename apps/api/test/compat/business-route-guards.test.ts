@@ -4,6 +4,20 @@ import { NestFactory } from "@nestjs/core";
 import { FakeIdentityProvider, FixedClock } from "@tali/application/testing";
 import { loadServerConfig } from "@tali/config/server";
 import { createDatabase } from "@tali/database";
+import {
+  CancelStocktakeRequestSchema,
+  ClearLowStockThresholdRequestSchema,
+  CreateStocktakeRequestSchema,
+  PostGoodsReceiptRequestSchema,
+  PostStocktakeRequestSchema,
+  RecordAdjustmentRequestSchema,
+  RecordOpeningStockRequestSchema,
+  RecordStocktakeCountRequestSchema,
+  RecordWriteOffRequestSchema,
+  RemoveStocktakeLineRequestSchema,
+  ReverseDocumentRequestSchema,
+  SetLowStockThresholdRequestSchema,
+} from "@tali/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { AppModule } from "../../src/app.module.js";
 import { AuthenticationGuard } from "../../src/auth/authentication.guard.js";
@@ -30,6 +44,94 @@ import { type GuardRef, metadataRoutes, registeredRoutes, type RouteInfo } from 
 
 const REQUIRED_BUSINESS_GUARDS: readonly GuardRef[] = [AuthenticationGuard, BusinessContextGuard, DeviceContextGuard];
 const BUSINESS_PREFIX = `/${BUSINESS_SCOPED_PATH}`;
+
+const TENANCY_AND_CATALOG_ROUTES = [
+  "GET /v1/businesses/:businessId",
+  "GET /v1/businesses/:businessId/catalog/units",
+  "GET /v1/businesses/:businessId/categories",
+  "GET /v1/businesses/:businessId/categories/:categoryId",
+  "GET /v1/businesses/:businessId/currency",
+  "GET /v1/businesses/:businessId/devices",
+  "GET /v1/businesses/:businessId/locations",
+  "GET /v1/businesses/:businessId/members",
+  "GET /v1/businesses/:businessId/products",
+  "GET /v1/businesses/:businessId/products/:productId",
+  "GET /v1/businesses/:businessId/products/:productId/packs",
+  "GET /v1/businesses/:businessId/products/:productId/prices",
+  "PATCH /v1/businesses/:businessId",
+  "PATCH /v1/businesses/:businessId/categories/:categoryId",
+  "PATCH /v1/businesses/:businessId/products/:productId",
+  "POST /v1/businesses/:businessId/categories",
+  "POST /v1/businesses/:businessId/categories/:categoryId/archive",
+  "POST /v1/businesses/:businessId/devices",
+  "POST /v1/businesses/:businessId/devices/:deviceId/revoke",
+  "POST /v1/businesses/:businessId/invitations",
+  "POST /v1/businesses/:businessId/invitations/:invitationId/revoke",
+  "POST /v1/businesses/:businessId/members/:membershipId/reactivate",
+  "POST /v1/businesses/:businessId/members/:membershipId/role",
+  "POST /v1/businesses/:businessId/members/:membershipId/suspend",
+  "POST /v1/businesses/:businessId/packs/:packId/retire",
+  "POST /v1/businesses/:businessId/products",
+  "POST /v1/businesses/:businessId/products/:productId/archive",
+  "POST /v1/businesses/:businessId/products/:productId/packs",
+  "POST /v1/businesses/:businessId/products/:productId/reactivate",
+  "PUT /v1/businesses/:businessId/products/:productId/price",
+];
+
+/** Build 2 Slices 5 and 6: the only stock routes, all at the server-resolved default location. */
+const INVENTORY_ROUTES = [
+  "GET /v1/businesses/:businessId/inventory/balances",
+  "GET /v1/businesses/:businessId/inventory/items/:variantId",
+  "GET /v1/businesses/:businessId/inventory/items/:variantId/movements",
+  "GET /v1/businesses/:businessId/inventory/opening-batches/:openingBatchId",
+  "GET /v1/businesses/:businessId/inventory/goods-receipts/:goodsReceiptId",
+  "GET /v1/businesses/:businessId/inventory/adjustments/:adjustmentId",
+  "GET /v1/businesses/:businessId/inventory/stocktakes",
+  "GET /v1/businesses/:businessId/inventory/stocktakes/:stocktakeId",
+  "GET /v1/businesses/:businessId/inventory/stocktakes/:stocktakeId/lines",
+  "POST /v1/businesses/:businessId/inventory/opening-stock",
+  "POST /v1/businesses/:businessId/inventory/goods-receipts",
+  "POST /v1/businesses/:businessId/inventory/adjustments",
+  "POST /v1/businesses/:businessId/inventory/write-offs",
+  "POST /v1/businesses/:businessId/inventory/stocktakes",
+  "POST /v1/businesses/:businessId/inventory/goods-receipts/:goodsReceiptId/reverse",
+  "POST /v1/businesses/:businessId/inventory/adjustments/:adjustmentId/reverse",
+  "PUT /v1/businesses/:businessId/inventory/items/:variantId/threshold",
+  "POST /v1/businesses/:businessId/inventory/items/:variantId/threshold/clear",
+  "PUT /v1/businesses/:businessId/inventory/stocktakes/:stocktakeId/lines/:variantId",
+  "POST /v1/businesses/:businessId/inventory/stocktakes/:stocktakeId/lines/:variantId/remove",
+  "POST /v1/businesses/:businessId/inventory/stocktakes/:stocktakeId/post",
+  "POST /v1/businesses/:businessId/inventory/stocktakes/:stocktakeId/cancel",
+];
+
+const VARIANT = "019a0000-0000-7000-8000-000000000001";
+const DIRECT = { variantId: VARIANT, quantityMinor: "1", unit: "PIECE" };
+/** Every inventory mutation body schema with a minimal valid body. */
+interface BodySchema {
+  safeParse(value: unknown): { readonly success: boolean };
+}
+const INVENTORY_MUTATION_BODIES: readonly (readonly [string, BodySchema, Record<string, unknown>])[] = [
+  ["opening stock", RecordOpeningStockRequestSchema, { lines: [DIRECT] }],
+  ["goods receipt", PostGoodsReceiptRequestSchema, { lines: [DIRECT] }],
+  [
+    "adjustment",
+    RecordAdjustmentRequestSchema,
+    { lines: [{ ...DIRECT, direction: "INCREASE" }], reasonCode: "FOUND_STOCK" },
+  ],
+  ["write-off", RecordWriteOffRequestSchema, { lines: [DIRECT], reasonCode: "DAMAGED" }],
+  ["reversal", ReverseDocumentRequestSchema, { reason: "entered twice" }],
+  [
+    "set threshold",
+    SetLowStockThresholdRequestSchema,
+    { expectedVersion: 0, threshold: { quantityMinor: "1", unit: "PIECE" } },
+  ],
+  ["clear threshold", ClearLowStockThresholdRequestSchema, { expectedVersion: 1 }],
+  ["create stocktake", CreateStocktakeRequestSchema, {}],
+  ["count", RecordStocktakeCountRequestSchema, { count: { quantityMinor: "1", unit: "PIECE" } }],
+  ["remove line", RemoveStocktakeLineRequestSchema, { expectedVersion: 1 }],
+  ["post stocktake", PostStocktakeRequestSchema, { expectedVersion: 1 }],
+  ["cancel stocktake", CancelStocktakeRequestSchema, { expectedVersion: 1 }],
+];
 
 const guardName = (guard: GuardRef) => (typeof guard === "function" ? guard.name : guard.constructor.name);
 
@@ -106,44 +208,32 @@ describe.each(["test", "local"] as const)("business route guards (TALI_ENV=%s)",
     expect(fromMetadata).toEqual(registeredRoutes(app).sort());
   });
 
-  it("finds the Build 1 and Build 2 catalog business-scoped routes", () => {
+  it("finds the Build 1 and Build 2 catalog and inventory business-scoped routes", () => {
     const business = routes.filter((route) => route.path.startsWith(BUSINESS_PREFIX));
-    expect(business.map((route) => `${route.method} ${route.path}`).sort()).toEqual([
-      "GET /v1/businesses/:businessId",
-      "GET /v1/businesses/:businessId/catalog/units",
-      "GET /v1/businesses/:businessId/categories",
-      "GET /v1/businesses/:businessId/categories/:categoryId",
-      "GET /v1/businesses/:businessId/currency",
-      "GET /v1/businesses/:businessId/devices",
-      "GET /v1/businesses/:businessId/locations",
-      "GET /v1/businesses/:businessId/members",
-      "GET /v1/businesses/:businessId/products",
-      "GET /v1/businesses/:businessId/products/:productId",
-      "GET /v1/businesses/:businessId/products/:productId/packs",
-      "GET /v1/businesses/:businessId/products/:productId/prices",
-      "PATCH /v1/businesses/:businessId",
-      "PATCH /v1/businesses/:businessId/categories/:categoryId",
-      "PATCH /v1/businesses/:businessId/products/:productId",
-      "POST /v1/businesses/:businessId/categories",
-      "POST /v1/businesses/:businessId/categories/:categoryId/archive",
-      "POST /v1/businesses/:businessId/devices",
-      "POST /v1/businesses/:businessId/devices/:deviceId/revoke",
-      "POST /v1/businesses/:businessId/invitations",
-      "POST /v1/businesses/:businessId/invitations/:invitationId/revoke",
-      "POST /v1/businesses/:businessId/members/:membershipId/reactivate",
-      "POST /v1/businesses/:businessId/members/:membershipId/role",
-      "POST /v1/businesses/:businessId/members/:membershipId/suspend",
-      "POST /v1/businesses/:businessId/packs/:packId/retire",
-      "POST /v1/businesses/:businessId/products",
-      "POST /v1/businesses/:businessId/products/:productId/archive",
-      "POST /v1/businesses/:businessId/products/:productId/packs",
-      "POST /v1/businesses/:businessId/products/:productId/reactivate",
-      "PUT /v1/businesses/:businessId/products/:productId/price",
-    ]);
+    expect(business.map((route) => `${route.method} ${route.path}`).sort()).toEqual(
+      [...TENANCY_AND_CATALOG_ROUTES, ...INVENTORY_ROUTES].sort(),
+    );
   });
 
-  it("mounts no inventory route: no stock, movement, balance or stocktake path", () => {
-    expect(routes.filter((route) => /inventor|stock|movement|balance|count/i.test(route.path))).toEqual([]);
+  it("mounts exactly the 22 inventory and stocktake routes", () => {
+    const inventory = routes.filter((route) => /inventor|stock|movement|balance|count/i.test(route.path));
+    expect(inventory.map((route) => `${route.method} ${route.path}`).sort()).toEqual([...INVENTORY_ROUTES].sort());
+    expect(INVENTORY_ROUTES).toHaveLength(22);
+  });
+
+  it("guards every inventory route with exactly AuthenticationGuard, BusinessContextGuard, DeviceContextGuard", () => {
+    const inventory = routes.filter((route) => route.path.startsWith(`${BUSINESS_PREFIX}/inventory`));
+    expect(inventory).toHaveLength(22);
+    for (const route of inventory) {
+      expect({ route: `${route.method} ${route.path}`, guards: route.guards }).toEqual({
+        route: `${route.method} ${route.path}`,
+        guards: REQUIRED_BUSINESS_GUARDS,
+      });
+    }
+  });
+
+  it("names no location in any inventory path", () => {
+    expect(routes.filter((route) => route.path.includes(":locationId"))).toEqual([]);
   });
 
   it("serves invitation acceptance as a user-level route with no business or device guard", () => {
@@ -163,6 +253,13 @@ describe.each(["test", "local"] as const)("business route guards (TALI_ENV=%s)",
         first: AuthenticationGuard,
       });
     }
+  });
+});
+
+describe("inventory mutation bodies", () => {
+  it.each(INVENTORY_MUTATION_BODIES)("%s rejects a client locationId", (_name, schema, valid) => {
+    expect(schema.safeParse(valid).success).toBe(true);
+    expect(schema.safeParse({ ...valid, locationId: VARIANT }).success).toBe(false);
   });
 });
 

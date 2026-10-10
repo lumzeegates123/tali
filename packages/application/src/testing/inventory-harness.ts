@@ -5,21 +5,49 @@ import { taliAuditRegistry } from "../audit/tali-audit-registry.js";
 import type { LocationBoundContext } from "../context/business-context.js";
 import { KeyedIdempotency } from "../idempotency/keyed-idempotency.js";
 import type {
+  CancelStocktake,
   ClearLowStockThreshold,
+  CreateStocktake,
+  GetAdjustment,
+  GetGoodsReceipt,
+  GetInventoryItem,
+  GetOpeningBatch,
+  GetStocktake,
+  ListInventoryItems,
+  ListItemMovements,
+  ListStocktakeLines,
+  ListStocktakes,
   PostGoodsReceipt,
+  PostStocktake,
   RecordAdjustment,
   RecordOpeningStock,
+  RecordStocktakeCount,
   RecordWriteOff,
+  RemoveStocktakeLine,
   ReverseAdjustment,
   ReverseGoodsReceipt,
   SetLowStockThreshold,
 } from "../modules/inventory/index.js";
 import {
+  createCancelStocktake,
   createClearLowStockThreshold,
+  createCreateStocktake,
+  createGetAdjustment,
+  createGetGoodsReceipt,
+  createGetInventoryItem,
+  createGetOpeningBatch,
+  createGetStocktake,
+  createListInventoryItems,
+  createListItemMovements,
+  createListStocktakeLines,
+  createListStocktakes,
   createPostGoodsReceipt,
+  createPostStocktake,
   createRecordAdjustment,
   createRecordOpeningStock,
+  createRecordStocktakeCount,
   createRecordWriteOff,
+  createRemoveStocktakeLine,
   createReverseAdjustment,
   createReverseGoodsReceipt,
   createSetLowStockThreshold,
@@ -46,7 +74,10 @@ function logged<T extends object>(name: string, target: T, log: string[]): T {
   });
 }
 
-/** Every Slice 5 inventory use case composed over the catalog harness's fakes, with a call log of every port call. */
+/**
+ * Every Slice 5 and Slice 6 inventory use case composed over the catalog
+ * harness's fakes, with a call log of every port call.
+ */
 export interface InventoryHarness {
   readonly catalog: CatalogHarness;
   readonly inventory: InMemoryInventoryStore;
@@ -64,6 +95,20 @@ export interface InventoryHarness {
   readonly reverseAdjustment: ReverseAdjustment;
   readonly setLowStockThreshold: SetLowStockThreshold;
   readonly clearLowStockThreshold: ClearLowStockThreshold;
+  readonly createStocktake: CreateStocktake;
+  readonly recordStocktakeCount: RecordStocktakeCount;
+  readonly removeStocktakeLine: RemoveStocktakeLine;
+  readonly postStocktake: PostStocktake;
+  readonly cancelStocktake: CancelStocktake;
+  readonly listStocktakes: ListStocktakes;
+  readonly getStocktake: GetStocktake;
+  readonly listStocktakeLines: ListStocktakeLines;
+  readonly listInventoryItems: ListInventoryItems;
+  readonly getInventoryItem: GetInventoryItem;
+  readonly listItemMovements: ListItemMovements;
+  readonly getOpeningBatch: GetOpeningBatch;
+  readonly getGoodsReceipt: GetGoodsReceipt;
+  readonly getAdjustment: GetAdjustment;
   /** A business with one ACTIVE member per role, each context bound to the business's default location. */
   businessWithRoles(
     name: string,
@@ -120,6 +165,17 @@ export function createInventoryHarness(options: {
   const receipts = logged("goodsReceipts", inventory.receiptRepository, calls);
   const adjustments = logged("adjustments", inventory.adjustmentRepository, calls);
   const thresholds = logged("thresholds", inventory.thresholdRepository, calls);
+  const stocktakes = logged("stocktakes", inventory.stocktakeRepository, calls);
+  const stocktakeLines = logged("stocktakeLines", inventory.stocktakeLineRepository, calls);
+  const stocktakeDependencies = { ...shared, stocktakes, stocktakeLines };
+  const reads = {
+    unitOfWork,
+    items: logged("items", inventory.itemReader, calls),
+    movements: shared.movements,
+    openings,
+    receipts,
+    adjustments,
+  };
   let productSequence = 0;
 
   return {
@@ -134,6 +190,20 @@ export function createInventoryHarness(options: {
     reverseAdjustment: createReverseAdjustment({ ...shared, adjustments }),
     setLowStockThreshold: createSetLowStockThreshold({ ...shared, thresholds }),
     clearLowStockThreshold: createClearLowStockThreshold({ ...shared, thresholds }),
+    createStocktake: createCreateStocktake(stocktakeDependencies),
+    recordStocktakeCount: createRecordStocktakeCount(stocktakeDependencies),
+    removeStocktakeLine: createRemoveStocktakeLine(stocktakeDependencies),
+    postStocktake: createPostStocktake(stocktakeDependencies),
+    cancelStocktake: createCancelStocktake(stocktakeDependencies),
+    listStocktakes: createListStocktakes({ unitOfWork, stocktakes, stocktakeLines }),
+    getStocktake: createGetStocktake({ unitOfWork, stocktakes, stocktakeLines }),
+    listStocktakeLines: createListStocktakeLines({ unitOfWork, stocktakes, stocktakeLines }),
+    listInventoryItems: createListInventoryItems(reads),
+    getInventoryItem: createGetInventoryItem(reads),
+    listItemMovements: createListItemMovements(reads),
+    getOpeningBatch: createGetOpeningBatch(reads),
+    getGoodsReceipt: createGetGoodsReceipt(reads),
+    getAdjustment: createGetAdjustment(reads),
     async businessWithRoles(name, currencyCode) {
       const contexts = await catalog.businessWithRoles(name, currencyCode);
       const bound: Partial<Record<MembershipRole, LocationBoundContext>> = {};
@@ -167,6 +237,18 @@ export function createInventoryHarness(options: {
         receipts: inventory.receipts.map((r) => [r.id, r.status]),
         adjustments: inventory.adjustments.map((a) => [a.id, a.status]),
         thresholds: inventory.thresholds.map((t) => [t.id, t.version, t.threshold?.toMinorUnitsString() ?? null]),
+        stocktakes: inventory.stocktakes.map((s) => [s.id, s.status, s.version]),
+        stocktakeLines: inventory.stocktakeLines.map((l) => [
+          l.stocktakeId,
+          l.variantId,
+          l.status,
+          l.version,
+          l.countedQuantity.toMinorUnitsString(),
+          l.stockUnitAtCount,
+          l.expectedAtCount.toMinorUnitsString(),
+          l.balanceVersionAtCount,
+          l.variance?.toMinorUnitsString() ?? null,
+        ]),
         audit: tenancy.auditWriter.businessRecords.length,
         keys: tenancy.businessIdempotencyStore.records.length,
       });

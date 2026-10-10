@@ -11,27 +11,46 @@ import type {
   ProductVariantId,
   StockBalance,
   StockThreshold,
+  Stocktake,
+  StocktakeId,
+  StocktakeLine,
 } from "@tali/domain";
-import { emptyStockBalance, Quantity } from "@tali/domain";
+import { deriveLowStock, emptyStockBalance, Quantity, restoreStocktakeLine } from "@tali/domain";
 import { ConcurrentModificationError, ConflictError } from "../errors/application-error.js";
 import type {
   GoodsReceiptRepository,
   InventoryAdjustmentRepository,
+  InventoryItemReader,
+  InventoryItemRow,
   InventoryMovementRepository,
   LockedBalances,
   OpeningBatchRepository,
   StockBalanceRepository,
   StockThresholdRepository,
+  StocktakeLineCounts,
+  StocktakeLineRepository,
+  StocktakeRepository,
 } from "../modules/inventory/index.js";
-import { assertDocumentReversal, assertThresholdTransition, sealLockedBalances } from "../modules/inventory/index.js";
+import {
+  assertDocumentReversal,
+  assertStocktakeLineTransition,
+  assertStocktakeTransition,
+  assertThresholdTransition,
+  isVisibleInventoryItem,
+  sealLockedBalances,
+  STOCKTAKE_IN_PROGRESS,
+} from "../modules/inventory/index.js";
 import type { TransactionScope } from "../ports/unit-of-work.js";
 import { FailureInjection } from "./failure-injection.js";
 import type { InMemoryCatalogStore } from "./in-memory-catalog-store.js";
 import type { InMemoryTenancyStore } from "./in-memory-tenancy-store.js";
+import { page } from "./in-memory-tenancy-store.js";
 import type { InMemoryUnitOfWork, RollbackParticipant } from "./in-memory-unit-of-work.js";
 
 const stockItemKey = (businessId: BusinessId, locationId: LocationId, variantId: ProductVariantId) =>
   `${businessId}|${locationId}|${variantId}`;
+
+const lineKey = (stocktakeId: StocktakeId, variantId: ProductVariantId) => `${stocktakeId}|${variantId}`;
 
 const sourceKey = (source: InventoryMovementSource) => `${source.kind}|${source.id}`;
 
@@ -41,13 +60,16 @@ const byVariant = <T extends { readonly variantId: ProductVariantId }>(a: T, b: 
 type ReversibleDocument = GoodsReceipt | InventoryAdjustment;
 
 /**
- * In-memory inventory documents, movements, balances and thresholds,
- * implementing the Build 2 Slice 5 inventory ports. It models the invariants
- * the W3 schema will enforce (business and location ownership, unique
- * movement IDs, one OPENING per stock item, one reversal per original, gap-free
- * balance versions, balances equal to the sum of their movements) so use case
- * tests fail on the same mistakes. It does not replace the database constraint
- * and concurrency tests: it has no isolation between concurrent runs.
+ * In-memory inventory documents, movements, balances, thresholds and
+ * stocktakes, implementing the Build 2 Slice 5 and Slice 6 inventory ports.
+ * It models the invariants the schema enforces (business and location
+ * ownership, unique movement IDs, one OPENING per stock item, one reversal per
+ * original, gap-free balance versions, balances equal to the sum of their
+ * movements, one DRAFT stocktake per location, one line per stocktake and
+ * variant, versioned stocktake and line updates) so use case tests fail on the
+ * same mistakes. Like the database, a balance reads in the variant's current
+ * stock unit. It does not replace the database constraint and concurrency
+ * tests: it has no isolation between concurrent runs.
  */
 export class InMemoryInventoryStore implements RollbackParticipant {
   readonly failures = new FailureInjection();
@@ -63,6 +85,8 @@ export class InMemoryInventoryStore implements RollbackParticipant {
   #receipts = new Map<string, GoodsReceipt>();
   #adjustments = new Map<string, InventoryAdjustment>();
   #thresholds = new Map<string, StockThreshold>();
+  #stocktakes = new Map<string, Stocktake>();
+  #lines = new Map<string, StocktakeLine>();
   readonly #committedElsewhere: StockThreshold[] = [];
 
   constructor(options: {
@@ -83,6 +107,8 @@ export class InMemoryInventoryStore implements RollbackParticipant {
     const receipts = new Map(this.#receipts);
     const adjustments = new Map(this.#adjustments);
     const thresholds = new Map(this.#thresholds);
+    const stocktakes = new Map(this.#stocktakes);
+    const lines = new Map(this.#lines);
     const committedElsewhere = this.#committedElsewhere.length;
     return () => {
       this.#movements = movements;
@@ -91,6 +117,8 @@ export class InMemoryInventoryStore implements RollbackParticipant {
       this.#receipts = receipts;
       this.#adjustments = adjustments;
       this.#thresholds = thresholds;
+      this.#stocktakes = stocktakes;
+      this.#lines = lines;
       for (const threshold of this.#committedElsewhere.slice(committedElsewhere)) this.#storeThreshold(threshold);
     };
   }
@@ -137,6 +165,14 @@ export class InMemoryInventoryStore implements RollbackParticipant {
     return [...this.#thresholds.values()];
   }
 
+  get stocktakes(): readonly Stocktake[] {
+    return [...this.#stocktakes.values()];
+  }
+
+  get stocktakeLines(): readonly StocktakeLine[] {
+    return [...this.#lines.values()];
+  }
+
   balanceOf(businessId: BusinessId, locationId: LocationId, variantId: ProductVariantId): StockBalance | undefined {
     return this.#balances.get(stockItemKey(businessId, locationId, variantId));
   }
@@ -177,6 +213,23 @@ export class InMemoryInventoryStore implements RollbackParticipant {
       const expected = document.status === "REVERSED" ? originals.length : 0;
       if (reversals.length !== expected) throw new Error("a document's reversal movements do not match its status");
     }
+    for (const stocktake of this.#stocktakes.values()) {
+      const corrections = this.#movements.filter((m) => m.source.kind === "STOCKTAKE" && m.source.id === stocktake.id);
+      const lines = [...this.#lines.values()].filter((line) => line.stocktakeId === stocktake.id);
+      const nonZero = lines.filter((line) => line.variance !== undefined && !line.variance.isZero());
+      const withVariance = lines.filter((line) => line.variance !== undefined);
+      const counted = lines.filter((line) => line.status === "COUNTED");
+      const posted = stocktake.status === "POSTED";
+      if (
+        corrections.length !== nonZero.length ||
+        (posted ? withVariance.length !== counted.length : withVariance.length !== 0) ||
+        corrections.some(
+          (m) => m.type !== "COUNT_CORRECTION" || !nonZero.some((line) => line.variance?.equals(m.delta) === true),
+        )
+      ) {
+        throw new Error("a stocktake's corrections and variances do not match its status");
+      }
+    }
   }
 
   #keyOf(balance: StockBalance): string {
@@ -186,6 +239,17 @@ export class InMemoryInventoryStore implements RollbackParticipant {
   #enter(scope: TransactionScope, operation: string): void {
     this.#unitOfWork?.assertActive(scope);
     this.failures.check(operation);
+  }
+
+  #leave(operation: string): void {
+    this.failures.checkAfter(operation);
+  }
+
+  /** The balance as the database reads it: quantity in the variant's current stock unit. */
+  #presented(balance: StockBalance): StockBalance {
+    const { stockUnit } = this.#variantOf(balance.businessId, balance.variantId);
+    if (balance.quantity.unit === stockUnit) return balance;
+    return Object.freeze({ ...balance, quantity: Quantity.ofMinor(balance.quantity.amountMinor, stockUnit) });
   }
 
   #requireMemberOf(businessId: BusinessId, membershipId: MembershipId): void {
@@ -210,7 +274,9 @@ export class InMemoryInventoryStore implements RollbackParticipant {
         ? this.#openings.get(source.id)
         : source.kind === "GOODS_RECEIPT"
           ? this.#receipts.get(source.id)
-          : this.#adjustments.get(source.id);
+          : source.kind === "ADJUSTMENT"
+            ? this.#adjustments.get(source.id)
+            : this.#stocktakes.get(source.id);
     if (document === undefined) throw new Error("a movement must reference an existing document");
     return document;
   }
@@ -273,6 +339,7 @@ export class InMemoryInventoryStore implements RollbackParticipant {
         pending.push(movement);
       }
       this.#movements.push(...pending);
+      this.#leave("movements.insertMany");
     },
     listOriginals: async (scope, businessId, source) => {
       this.#enter(scope, "movements.listOriginals");
@@ -284,6 +351,34 @@ export class InMemoryInventoryStore implements RollbackParticipant {
             sourceKey(m.source) === sourceKey(source),
         )
         .sort(byVariant);
+    },
+    listForSource: async (scope, businessId, source) => {
+      this.#enter(scope, "movements.listForSource");
+      const mine = this.#movements.filter(
+        (m) => m.businessId === businessId && sourceKey(m.source) === sourceKey(source),
+      );
+      return [
+        ...mine.filter((m) => m.reversesMovementId === undefined).sort(byVariant),
+        ...mine.filter((m) => m.reversesMovementId !== undefined).sort(byVariant),
+      ];
+    },
+    listForItem: async (scope, businessId, locationId, variantId, request) => {
+      this.#enter(scope, "movements.listForItem");
+      const history = this.#movements
+        .filter(
+          (m) =>
+            stockItemKey(m.businessId, m.locationId, m.variantId) === stockItemKey(businessId, locationId, variantId),
+        )
+        .sort((a, b) => b.balanceVersion - a.balanceVersion);
+      let remaining = history;
+      if (request.after !== undefined) {
+        const cursor = history.find((m) => m.id === request.after);
+        if (cursor === undefined) return undefined;
+        remaining = history.filter((m) => m.balanceVersion < cursor.balanceVersion);
+      }
+      const items = remaining.slice(0, request.limit);
+      const last = items.at(-1);
+      return { items, nextCursor: remaining.length > request.limit && last !== undefined ? last.id : null };
     },
   };
 
@@ -300,7 +395,7 @@ export class InMemoryInventoryStore implements RollbackParticipant {
           balance = emptyStockBalance({ businessId, locationId, variantId, stockUnit });
           this.#balances.set(key, balance);
         }
-        balances.push(balance);
+        balances.push(this.#presented(balance));
       }
       const locked = sealLockedBalances({ businessId, locationId, balances });
       this.#lockTokens.set(locked, scope);
@@ -338,10 +433,12 @@ export class InMemoryInventoryStore implements RollbackParticipant {
         }
         this.#balances.set(key, balance);
       }
+      this.#leave("balances.apply");
     },
     find: async (scope, businessId, locationId, variantId) => {
       this.#enter(scope, "balances.find");
-      return this.#balances.get(stockItemKey(businessId, locationId, variantId));
+      const balance = this.#balances.get(stockItemKey(businessId, locationId, variantId));
+      return balance === undefined ? undefined : this.#presented(balance);
     },
   };
 
@@ -450,6 +547,220 @@ export class InMemoryInventoryStore implements RollbackParticipant {
     find: async (scope, businessId, locationId, variantId) => {
       this.#enter(scope, "thresholds.find");
       return this.#thresholds.get(stockItemKey(businessId, locationId, variantId));
+    },
+  };
+
+  #stocktakeOf(businessId: BusinessId, id: StocktakeId): Stocktake | undefined {
+    const stocktake = this.#stocktakes.get(id);
+    return stocktake?.businessId === businessId ? stocktake : undefined;
+  }
+
+  #linesOf(businessId: BusinessId, stocktakeId: StocktakeId): StocktakeLine[] {
+    return [...this.#lines.values()]
+      .filter((line) => line.businessId === businessId && line.stocktakeId === stocktakeId)
+      .sort(byVariant);
+  }
+
+  #countsOf(businessId: BusinessId, stocktakeId: StocktakeId): StocktakeLineCounts {
+    const lines = this.#linesOf(businessId, stocktakeId);
+    const counted = lines.filter((line) => line.status === "COUNTED");
+    return {
+      counted: counted.length,
+      removed: lines.length - counted.length,
+      nonZeroVariance: counted.filter((line) => line.variance !== undefined && !line.variance.isZero()).length,
+      zeroVariance: counted.filter((line) => line.variance?.isZero() === true).length,
+    };
+  }
+
+  readonly stocktakeRepository: StocktakeRepository = {
+    insert: async (scope, stocktake) => {
+      this.#enter(scope, "stocktakes.insert");
+      if (this.#stocktakes.has(stocktake.id)) throw new Error("duplicate stocktake id");
+      if (stocktake.status !== "DRAFT" || stocktake.version !== 1) {
+        throw new Error("a stocktake is inserted DRAFT at version 1");
+      }
+      this.#requireLocationOf(stocktake.businessId, stocktake.locationId);
+      this.#requireMemberOf(stocktake.businessId, stocktake.createdByMembershipId);
+      const inProgress = [...this.#stocktakes.values()].some(
+        (other) =>
+          other.businessId === stocktake.businessId &&
+          other.locationId === stocktake.locationId &&
+          other.status === "DRAFT",
+      );
+      if (inProgress) throw new ConflictError(STOCKTAKE_IN_PROGRESS);
+      this.#stocktakes.set(stocktake.id, stocktake);
+      this.#leave("stocktakes.insert");
+    },
+    findById: async (scope, businessId, id) => {
+      this.#enter(scope, "stocktakes.findById");
+      return this.#stocktakeOf(businessId, id);
+    },
+    findByIdForUpdate: async (scope, businessId, id) => {
+      this.#enter(scope, "stocktakes.findByIdForUpdate");
+      return this.#stocktakeOf(businessId, id);
+    },
+    list: async (scope, businessId, locationId, query, request) => {
+      this.#enter(scope, "stocktakes.list");
+      const matches = [...this.#stocktakes.values()].filter(
+        (stocktake) =>
+          stocktake.businessId === businessId &&
+          stocktake.locationId === locationId &&
+          (query.status === undefined || stocktake.status === query.status),
+      );
+      const selected = page(matches, (stocktake) => stocktake.id, request);
+      return {
+        items: selected.items.map((stocktake) => ({
+          stocktake,
+          lineCounts: this.#countsOf(businessId, stocktake.id),
+        })),
+        nextCursor: selected.nextCursor,
+      };
+    },
+    update: async (scope, previous, next) => {
+      this.#enter(scope, "stocktakes.update");
+      assertStocktakeTransition(previous, next);
+      const stored = this.#stocktakeOf(previous.businessId, previous.id);
+      if (stored?.version !== previous.version || stored.status !== "DRAFT") throw new ConcurrentModificationError();
+      if (next.postedByMembershipId !== undefined) this.#requireMemberOf(next.businessId, next.postedByMembershipId);
+      if (next.cancelledByMembershipId !== undefined) {
+        this.#requireMemberOf(next.businessId, next.cancelledByMembershipId);
+      }
+      this.#stocktakes.set(next.id, next);
+      this.#leave("stocktakes.update");
+    },
+  };
+
+  readonly stocktakeLineRepository: StocktakeLineRepository = {
+    find: async (scope, businessId, stocktakeId, variantId) => {
+      this.#enter(scope, "stocktakeLines.find");
+      const line = this.#lines.get(lineKey(stocktakeId, variantId));
+      return line?.businessId === businessId ? line : undefined;
+    },
+    insert: async (scope, line) => {
+      this.#enter(scope, "stocktakeLines.insert");
+      const stocktake = this.#stocktakeOf(line.businessId, line.stocktakeId);
+      if (stocktake === undefined) throw new Error("a stocktake line must reference a stocktake of its business");
+      if (line.version !== 1 || line.status !== "COUNTED" || line.variance !== undefined) {
+        throw new Error("a stocktake line is inserted COUNTED at version 1 without a variance");
+      }
+      this.#variantOf(line.businessId, line.variantId);
+      this.#requireMemberOf(line.businessId, line.countedByMembershipId);
+      const key = lineKey(line.stocktakeId, line.variantId);
+      if (this.#lines.has(key)) {
+        throw new ConflictError("unique violation: stocktake_lines (business_id, stocktake_id, variant_id)");
+      }
+      this.#lines.set(key, line);
+      this.#leave("stocktakeLines.insert");
+    },
+    update: async (scope, previous, next) => {
+      this.#enter(scope, "stocktakeLines.update");
+      assertStocktakeLineTransition(previous, next);
+      const key = lineKey(previous.stocktakeId, previous.variantId);
+      const stored = this.#lines.get(key);
+      if (stored?.businessId !== previous.businessId || stored.version !== previous.version) {
+        throw new ConcurrentModificationError();
+      }
+      this.#requireMemberOf(next.businessId, next.countedByMembershipId);
+      this.#lines.set(key, next);
+      this.#leave("stocktakeLines.update");
+    },
+    listCounted: async (scope, businessId, stocktakeId) => {
+      this.#enter(scope, "stocktakeLines.listCounted");
+      return this.#linesOf(businessId, stocktakeId).filter((line) => line.status === "COUNTED");
+    },
+    listPage: async (scope, businessId, stocktakeId, request) => {
+      this.#enter(scope, "stocktakeLines.listPage");
+      return page(this.#linesOf(businessId, stocktakeId), (line) => line.variantId, request);
+    },
+    countForStocktake: async (scope, businessId, stocktakeId) => {
+      this.#enter(scope, "stocktakeLines.countForStocktake");
+      return this.#linesOf(businessId, stocktakeId).length;
+    },
+    countByStatus: async (scope, businessId, stocktakeId) => {
+      this.#enter(scope, "stocktakeLines.countByStatus");
+      return this.#countsOf(businessId, stocktakeId);
+    },
+    applyPostingVariances: async (scope, businessId, stocktakeId, variances) => {
+      this.#enter(scope, "stocktakeLines.applyPostingVariances");
+      const next = new Map<string, StocktakeLine>();
+      for (const row of variances) {
+        const key = lineKey(stocktakeId, row.variantId);
+        const stored = this.#lines.get(key);
+        if (
+          stored?.businessId !== businessId ||
+          stored.status !== "COUNTED" ||
+          stored.version !== row.lineVersion ||
+          stored.variance !== undefined ||
+          next.has(key)
+        ) {
+          throw new ConcurrentModificationError();
+        }
+        next.set(key, restoreStocktakeLine({ ...stored, variance: row.variance }));
+      }
+      for (const [key, line] of next) this.#lines.set(key, line);
+      this.#leave("stocktakeLines.applyPostingVariances");
+    },
+  };
+
+  #itemRow(businessId: BusinessId, locationId: LocationId, variant: ProductVariant): InventoryItemRow | undefined {
+    const item = this.#catalog.products.find((candidate) => candidate.variant.id === variant.id);
+    if (item?.product.businessId !== businessId) return undefined;
+    const balance = this.#balances.get(stockItemKey(businessId, locationId, variant.id));
+    const threshold = this.#thresholds.get(stockItemKey(businessId, locationId, variant.id));
+    return Object.freeze({
+      productId: item.product.id,
+      variantId: variant.id,
+      name: item.product.name,
+      ...(variant.sku === undefined ? {} : { sku: variant.sku }),
+      ...(variant.barcode === undefined ? {} : { barcode: variant.barcode }),
+      productStatus: item.product.status,
+      stockUnit: variant.stockUnit,
+      trackInventory: variant.trackInventory,
+      onHand: Quantity.ofMinor(balance?.quantity.amountMinor ?? 0n, variant.stockUnit),
+      balanceVersion: balance?.version ?? 0,
+      ...(threshold?.threshold === undefined ? {} : { threshold: threshold.threshold }),
+      thresholdVersion: threshold?.version ?? 0,
+    });
+  }
+
+  readonly itemReader: InventoryItemReader = {
+    listItems: async (scope, businessId, locationId, query, request) => {
+      this.#enter(scope, "items.listItems");
+      const search = query.search;
+      const needle = search?.nameContains.toLowerCase();
+      const rows = this.#catalog.products
+        .filter(({ product }) => product.businessId === businessId)
+        .filter(({ product, variant }) => {
+          if (search === undefined || needle === undefined) return true;
+          return (
+            product.name.toLowerCase().includes(needle) ||
+            (search.skuKey !== undefined && variant.sku?.normalized === search.skuKey) ||
+            (search.barcodeKey !== undefined && variant.barcode?.normalized === search.barcodeKey)
+          );
+        })
+        .flatMap(({ variant }) => {
+          const row = this.#itemRow(businessId, locationId, variant);
+          return row === undefined ? [] : [row];
+        })
+        .filter(isVisibleInventoryItem)
+        .filter(
+          (row) =>
+            query.lowStockOnly !== true ||
+            deriveLowStock({
+              variantStatus: row.productStatus,
+              trackInventory: row.trackInventory,
+              stockUnit: row.stockUnit,
+              threshold: row.threshold,
+              onHand: row.onHand,
+            }),
+        );
+      return page(rows, (row) => row.variantId, request);
+    },
+    getItem: async (scope, businessId, locationId, variantId) => {
+      this.#enter(scope, "items.getItem");
+      const variant = this.#catalog.products.find((candidate) => candidate.variant.id === variantId)?.variant;
+      const row = variant?.businessId === businessId ? this.#itemRow(businessId, locationId, variant) : undefined;
+      return row !== undefined && isVisibleInventoryItem(row) ? row : undefined;
     },
   };
 }

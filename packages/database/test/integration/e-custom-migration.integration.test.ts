@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { testDatabaseUrls } from "../../src/testing/index.js";
 import { insertConstraintProbe } from "../support/fixture-repositories.js";
@@ -14,6 +16,7 @@ const COMMITTED_MIGRATIONS = [
   "20260930165547_build1_invitations_devices",
   "20261005120000_build2_catalog",
   "20261006120000_build2_inventory_core",
+  "20261008120000_build2_stocktake",
 ];
 
 const BUILD_1_TABLES = [
@@ -41,7 +44,7 @@ const BUILD_2_CATALOG_TABLES = [
   "public.units_of_measure",
 ];
 
-/** Build 2 Slice 5 adds the inventory core: three document headers, movements, balances and thresholds; no stocktakes. */
+/** Build 2 Slice 5 adds the inventory core: three document headers, movements, balances and thresholds. */
 const BUILD_2_INVENTORY_TABLES = [
   "public.goods_receipts",
   "public.inventory_adjustments",
@@ -51,13 +54,25 @@ const BUILD_2_INVENTORY_TABLES = [
   "public.inventory_stock_thresholds",
 ];
 
+/** Build 2 Slice 6 adds stocktake headers and lines. */
+const BUILD_2_STOCKTAKE_TABLES = ["public.stocktake_lines", "public.stocktakes"];
+
+const STOCKTAKE_MIGRATION_SQL = readFileSync(
+  fileURLToPath(new URL("../../prisma/migrations/20261008120000_build2_stocktake/migration.sql", import.meta.url)),
+  "utf8",
+);
+/** The migration's SQL with comments removed, so prose cannot satisfy or trip a check. */
+const STOCKTAKE_MIGRATION_CODE = STOCKTAKE_MIGRATION_SQL.split("\n")
+  .map((line) => line.replace(/--.*$/, ""))
+  .join("\n");
+
 /**
  * Criterion E and the migration chain. The global setup has already run
  * `migrate deploy` against this database from empty: the spike migration, the
  * approved cleanup migration that removes the temporary foundation_spike
  * schema, the two Build 1 identity and tenancy migrations, the Slice 5
- * invitations and devices migration, the Build 2 catalog migration and the
- * Build 2 inventory core migration.
+ * invitations and devices migration, the Build 2 catalog migration, the
+ * Build 2 inventory core migration and the Build 2 stocktake migration.
  */
 describe("E. migration chain", () => {
   const { owner } = useFixtureHarness();
@@ -108,17 +123,23 @@ describe("E. migration chain", () => {
     expect(objects.rows).toEqual([]);
   });
 
-  it("the migration chain creates exactly the Build 1, catalog and inventory tables (and Prisma's migration table)", async () => {
+  it("the migration chain creates exactly the Build 1, catalog, inventory and stocktake tables (and Prisma's migration table)", async () => {
     const { rows } = await owner.query<{ name: string }>(
       `SELECT schemaname || '.' || tablename AS name FROM pg_tables
        WHERE schemaname NOT IN ('pg_catalog', 'information_schema', 'test_fixtures') ORDER BY (schemaname || '.' || tablename) COLLATE "C"`,
     );
     expect(rows.map((row) => row.name)).toEqual(
-      ["public._prisma_migrations", ...BUILD_1_TABLES, ...BUILD_2_CATALOG_TABLES, ...BUILD_2_INVENTORY_TABLES].sort(),
+      [
+        "public._prisma_migrations",
+        ...BUILD_1_TABLES,
+        ...BUILD_2_CATALOG_TABLES,
+        ...BUILD_2_INVENTORY_TABLES,
+        ...BUILD_2_STOCKTAKE_TABLES,
+      ].sort(),
     );
   });
 
-  it("the inventory migration adds no trigger, function, RLS policy or CASCADE", async () => {
+  it("no migration adds a trigger, function, RLS policy or CASCADE", async () => {
     const triggers = await owner.query(
       `SELECT tgname FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace
        WHERE NOT t.tgisinternal AND n.nspname = 'public'`,
@@ -133,6 +154,38 @@ describe("E. migration chain", () => {
        AND connamespace = 'public'::regnamespace`,
     );
     expect(cascades.rows).toEqual([]);
+    const rls = await owner.query(
+      `SELECT relname FROM pg_class WHERE relnamespace = 'public'::regnamespace AND (relrowsecurity OR relforcerowsecurity)`,
+    );
+    expect(rls.rows).toEqual([]);
+    const policies = await owner.query(`SELECT policyname FROM pg_policies WHERE schemaname = 'public'`);
+    expect(policies.rows).toEqual([]);
+  });
+
+  it("the stocktake migration has no CASCADE, RLS, trigger or function statement", () => {
+    expect(STOCKTAKE_MIGRATION_CODE).not.toMatch(/\bCASCADE\b/i);
+    expect(STOCKTAKE_MIGRATION_CODE).not.toMatch(/\b(ROW LEVEL SECURITY|CREATE\s+POLICY)\b/i);
+    expect(STOCKTAKE_MIGRATION_CODE).not.toMatch(/\b(TRIGGER|FUNCTION|PROCEDURE)\b/i);
+  });
+
+  it("every constraint the stocktake migration drops it re-adds, under the same name", () => {
+    const dropped = [...STOCKTAKE_MIGRATION_CODE.matchAll(/DROP\s+CONSTRAINT\s+"([a-z_]+)"/gi)].map((m) => m[1]);
+    const added = new Set([...STOCKTAKE_MIGRATION_CODE.matchAll(/ADD\s+CONSTRAINT\s+"([a-z_]+)"/gi)].map((m) => m[1]));
+    expect(dropped.sort()).toEqual([
+      "inventory_movements_direction",
+      "inventory_movements_one_source",
+      "inventory_movements_reason_shape",
+      "inventory_movements_type_valid",
+    ]);
+    for (const name of dropped) expect(added).toContain(name);
+    expect(STOCKTAKE_MIGRATION_CODE).not.toMatch(/DROP\s+(INDEX|COLUMN)\b/i);
+  });
+
+  it("the stocktake migration never drops, truncates, deletes from or rewrites movements", () => {
+    expect(STOCKTAKE_MIGRATION_CODE).not.toMatch(/\b(DROP\s+TABLE|TRUNCATE|DELETE\s+FROM|UPDATE\s+"?inventory_)/i);
+    expect(STOCKTAKE_MIGRATION_CODE).not.toMatch(/\bGRANT\b[^;]*\b(DELETE|TRUNCATE|ALL)\b/i);
+    expect(STOCKTAKE_MIGRATION_CODE).not.toMatch(/\bGRANT\b[^;]*\bON\s+"?inventory_movements"?/i);
+    expect(STOCKTAKE_MIGRATION_CODE).not.toMatch(/\bTO\s+PUBLIC\b/i);
   });
 
   it("the migrations seed NGN as the only reference currency (test currencies are fixtures)", async () => {

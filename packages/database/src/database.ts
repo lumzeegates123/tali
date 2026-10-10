@@ -7,6 +7,7 @@ import {
   type DeviceRepository,
   type GoodsReceiptRepository,
   type InventoryAdjustmentRepository,
+  type InventoryItemReader,
   type InventoryMovementRepository,
   type InvitationRepository,
   type LocationRepository,
@@ -18,6 +19,8 @@ import {
   type ProductRepository,
   type StockBalanceRepository,
   type StockThresholdRepository,
+  type StocktakeLineRepository,
+  type StocktakeRepository,
   type UnitOfWork,
   type UnitReferenceRepository,
   type UserIdempotencyStore,
@@ -32,6 +35,7 @@ import { createDeviceRepository } from "./repositories/device-repository.js";
 import { createGoodsReceiptRepository } from "./repositories/goods-receipt-repository.js";
 import { createInventoryAdjustmentRepository } from "./repositories/inventory-adjustment-repository.js";
 import { createInventoryBalanceRepository } from "./repositories/inventory-balance-repository.js";
+import { createInventoryItemReader } from "./repositories/inventory-item-reader.js";
 import { createInventoryMovementRepository } from "./repositories/inventory-movement-repository.js";
 import { createOpeningBatchRepository } from "./repositories/inventory-opening-batch-repository.js";
 import { createInventoryStockThresholdRepository } from "./repositories/inventory-stock-threshold-repository.js";
@@ -42,6 +46,8 @@ import { createProductCategoryRepository } from "./repositories/product-category
 import { createProductPackRepository } from "./repositories/product-pack-repository.js";
 import { createProductPriceHistoryRepository } from "./repositories/product-price-history-repository.js";
 import { createProductRepository } from "./repositories/product-repository.js";
+import { createStocktakeLineRepository } from "./repositories/stocktake-line-repository.js";
+import { createStocktakeRepository } from "./repositories/stocktake-repository.js";
 import { createUnitReferenceRepository } from "./repositories/unit-reference-repository.js";
 import { createUserIdempotencyStore } from "./repositories/user-idempotency-store.js";
 import { createUserRepository } from "./repositories/user-repository.js";
@@ -89,6 +95,9 @@ export interface DatabaseRepositories {
   readonly inventoryAdjustments: InventoryAdjustmentRepository;
   readonly inventoryThresholds: StockThresholdRepository;
   readonly variantInventoryState: VariantInventoryStateReader;
+  readonly stocktakes: StocktakeRepository;
+  readonly stocktakeLines: StocktakeLineRepository;
+  readonly inventoryItems: InventoryItemReader;
 }
 
 /**
@@ -127,6 +136,9 @@ export function createRepositories(): DatabaseRepositories {
     inventoryAdjustments: createInventoryAdjustmentRepository(),
     inventoryThresholds: createInventoryStockThresholdRepository(),
     variantInventoryState: createVariantInventoryStateReader(),
+    stocktakes: createStocktakeRepository(),
+    stocktakeLines: createStocktakeLineRepository(),
+    inventoryItems: createInventoryItemReader(),
   });
 }
 

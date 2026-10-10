@@ -193,6 +193,9 @@ describe("audit actions and registry", () => {
       ["inventory.opening_recorded", "business"],
       ["inventory.receipt_reversed", "business"],
       ["inventory.received", "business"],
+      ["inventory.stocktake_cancelled", "business"],
+      ["inventory.stocktake_posted", "business"],
+      ["inventory.stocktake_started", "business"],
       ["inventory.written_off", "business"],
       ["invitation.accepted", "business"],
       ["invitation.created", "business"],
@@ -216,13 +219,33 @@ describe("audit actions and registry", () => {
     ]);
   });
 
-  it("registers the eight Slice 5 inventory actions and no stocktake action (Build 2 Slice 6)", () => {
+  it("registers the eight Slice 5 inventory actions and the three Slice 6 stocktake actions", () => {
     const inventory = taliAuditRegistry.actions.filter((a) => a.name.startsWith("inventory."));
-    expect(inventory).toHaveLength(8);
-    expect(inventory.filter((a) => a.name.includes("stocktake") || a.name.includes("count"))).toEqual([]);
+    expect(inventory).toHaveLength(11);
+    expect(
+      inventory
+        .filter((a) => a.entityType === "stocktake")
+        .map((a) => a.name)
+        .sort(),
+    ).toEqual(["inventory.stocktake_cancelled", "inventory.stocktake_posted", "inventory.stocktake_started"]);
     expect(new Set(inventory.map((a) => a.entityType))).toEqual(
-      new Set(["inventory_opening_batch", "goods_receipt", "inventory_adjustment", "inventory_stock_threshold"]),
+      new Set([
+        "inventory_opening_batch",
+        "goods_receipt",
+        "inventory_adjustment",
+        "inventory_stock_threshold",
+        "stocktake",
+      ]),
     );
+  });
+
+  it("bounds stocktake audit payloads to line counts, with no quantity fields", () => {
+    const stocktake = taliAuditRegistry.actions.filter((a) => a.entityType === "stocktake");
+    expect(Object.fromEntries(stocktake.map((a) => [a.name, Object.keys(a.fields).sort()]))).toEqual({
+      "inventory.stocktake_started": [],
+      "inventory.stocktake_cancelled": ["countedLineCount"],
+      "inventory.stocktake_posted": ["correctionMovementCount", "countedLineCount", "zeroVarianceCount"],
+    });
   });
 
   /**

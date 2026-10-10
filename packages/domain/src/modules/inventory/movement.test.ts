@@ -16,6 +16,7 @@ import {
   parseInventoryMovementId,
   parseOpeningBatchId,
   parsePackSnapshot,
+  parseStocktakeId,
   restoreMovement,
   sourceKindFor,
 } from "./index.js";
@@ -44,6 +45,7 @@ const SOURCES: Readonly<Record<InventoryMovementType, InventoryMovementSource>> 
   PURCHASE_RECEIPT: { kind: "GOODS_RECEIPT", id: parseGoodsReceiptId(uuid(21)) },
   ADJUSTMENT: { kind: "ADJUSTMENT", id: parseInventoryAdjustmentId(uuid(22)) },
   WRITE_OFF: { kind: "ADJUSTMENT", id: parseInventoryAdjustmentId(uuid(22)) },
+  COUNT_CORRECTION: { kind: "STOCKTAKE", id: parseStocktakeId(uuid(23)) },
 };
 
 const ORIGINAL_REASON: Readonly<Record<InventoryMovementType, { reasonCode?: string; reasonNote?: string }>> = {
@@ -51,6 +53,7 @@ const ORIGINAL_REASON: Readonly<Record<InventoryMovementType, { reasonCode?: str
   PURCHASE_RECEIPT: {},
   ADJUSTMENT: { reasonCode: "FOUND_STOCK" },
   WRITE_OFF: { reasonCode: "DAMAGED" },
+  COUNT_CORRECTION: {},
 };
 
 const pieces = (minor: bigint): Quantity => Quantity.ofMinor(minor, PIECE);
@@ -95,9 +98,15 @@ function expectKernelError(action: () => unknown, code: KernelErrorCode): void {
 }
 
 describe("movement types", () => {
-  it("implements exactly the four Slice 5 types; COUNT_CORRECTION and the sales types do not exist yet", () => {
-    expect(INVENTORY_MOVEMENT_TYPES).toEqual(["OPENING", "PURCHASE_RECEIPT", "ADJUSTMENT", "WRITE_OFF"]);
-    for (const type of ["COUNT_CORRECTION", "SALE", "CUSTOMER_RETURN", "SUPPLIER_RETURN", "opening"]) {
+  it("implements the five Build 2 types; sales types do not exist yet", () => {
+    expect(INVENTORY_MOVEMENT_TYPES).toEqual([
+      "OPENING",
+      "PURCHASE_RECEIPT",
+      "ADJUSTMENT",
+      "WRITE_OFF",
+      "COUNT_CORRECTION",
+    ]);
+    for (const type of ["SALE", "CUSTOMER_RETURN", "SUPPLIER_RETURN", "opening"]) {
       expectDomainError(
         () => restoreMovement({ ...movementProps("PURCHASE_RECEIPT", 5n), type }),
         "INVALID_VALUE",
@@ -112,6 +121,7 @@ describe("movement types", () => {
       "GOODS_RECEIPT",
       "ADJUSTMENT",
       "ADJUSTMENT",
+      "STOCKTAKE",
     ]);
     expectDomainError(
       () => restoreMovement({ ...movementProps("PURCHASE_RECEIPT", 5n), source: SOURCES.OPENING }),
@@ -120,6 +130,11 @@ describe("movement types", () => {
     );
     expectDomainError(
       () => restoreMovement({ ...movementProps("OPENING", 5n), source: SOURCES.ADJUSTMENT }),
+      "INVALID_VALUE",
+      "source",
+    );
+    expectDomainError(
+      () => restoreMovement({ ...movementProps("COUNT_CORRECTION", 5n), source: SOURCES.ADJUSTMENT }),
       "INVALID_VALUE",
       "source",
     );
@@ -133,6 +148,8 @@ describe("movement direction", () => {
     ["ADJUSTMENT", 5n],
     ["ADJUSTMENT", -5n],
     ["WRITE_OFF", -5n],
+    ["COUNT_CORRECTION", 5n],
+    ["COUNT_CORRECTION", -5n],
   ] as const)("accepts an original %s of %s", (type, delta) => {
     const movement = restoreMovement(movementProps(type, delta));
     expect(movement.delta.amountMinor).toBe(delta);
@@ -170,6 +187,11 @@ describe("movement direction", () => {
   it("never reverses OPENING", () => {
     expectDomainError(() => restoreMovement(movementProps("OPENING", -5n, true)), "INVALID_TRANSITION");
     expectDomainError(() => restoreMovement(movementProps("OPENING", 5n, true)), "INVALID_TRANSITION");
+  });
+
+  it("never reverses COUNT_CORRECTION", () => {
+    expectDomainError(() => restoreMovement(movementProps("COUNT_CORRECTION", -5n, true)), "INVALID_TRANSITION");
+    expectDomainError(() => restoreMovement(movementProps("COUNT_CORRECTION", 5n, true)), "INVALID_TRANSITION");
   });
 
   it.each(INVENTORY_MOVEMENT_TYPES)("rejects a zero %s delta", (type) => {
@@ -253,6 +275,14 @@ describe("pack snapshots", () => {
     expect(movement.delta.amountMinor).toBe(1_000_000_000_000_000n);
   });
 
+  it("never puts a pack snapshot on a COUNT_CORRECTION", () => {
+    expectDomainError(
+      () => restoreMovement({ ...movementProps("COUNT_CORRECTION", 72n), pack }),
+      "INVALID_VALUE",
+      "pack",
+    );
+  });
+
   it("never puts a pack snapshot on a reversal", () => {
     expectDomainError(
       () => restoreMovement({ ...movementProps("PURCHASE_RECEIPT", -72n, true), pack }),
@@ -292,8 +322,8 @@ describe("pack snapshots", () => {
 });
 
 describe("movement reasons", () => {
-  it("OPENING and PURCHASE_RECEIPT originals carry no reason", () => {
-    for (const type of ["OPENING", "PURCHASE_RECEIPT"] as const) {
+  it("OPENING, PURCHASE_RECEIPT and COUNT_CORRECTION originals carry no reason", () => {
+    for (const type of ["OPENING", "PURCHASE_RECEIPT", "COUNT_CORRECTION"] as const) {
       expectDomainError(
         () => restoreMovement({ ...movementProps(type, 5n), reasonCode: "OTHER", reasonNote: "x" }),
         "INVALID_VALUE",

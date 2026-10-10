@@ -21,6 +21,7 @@ model BusinessLocation {
   inventoryMovements      InventoryMovement[]
   inventoryBalances       InventoryBalance[]
   inventoryThresholds     InventoryStockThreshold[]
+  stocktakes              Stocktake[]
 
   @@unique([businessId, id])
   @@map("business_locations")

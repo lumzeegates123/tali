@@ -2,6 +2,7 @@ import {
   ADJUSTMENT_REASON_CODES,
   INVENTORY_ADJUSTMENT_KINDS,
   MAX_INVENTORY_DOCUMENT_LINES,
+  MAX_STOCKTAKE_LINES,
   WRITE_OFF_REASON_CODES,
 } from "@tali/domain";
 import { defineAuditAction } from "../../audit/audit-action.js";
@@ -92,11 +93,48 @@ export const inventoryLowStockThresholdCleared = defineAuditAction({
   },
 });
 
+const stocktakeLineCount = auditField.integer(0, MAX_STOCKTAKE_LINES);
+
+/** Starting a stocktake records who opened it; there is nothing else to bound. */
+export const inventoryStocktakeStarted = defineAuditAction({
+  name: "inventory.stocktake_started",
+  stream: "business",
+  entityType: "stocktake",
+  payloadSchemaVersion: 1,
+  fields: {},
+});
+
+/** The optional cancellation reason is the audit record's reason. */
+export const inventoryStocktakeCancelled = defineAuditAction({
+  name: "inventory.stocktake_cancelled",
+  stream: "business",
+  entityType: "stocktake",
+  payloadSchemaVersion: 1,
+  fields: { countedLineCount: stocktakeLineCount },
+});
+
+/**
+ * `correctionMovementCount + zeroVarianceCount = countedLineCount`. Per-line
+ * quantities stay on the COUNT_CORRECTION movements and the stocktake lines.
+ */
+export const inventoryStocktakePosted = defineAuditAction({
+  name: "inventory.stocktake_posted",
+  stream: "business",
+  entityType: "stocktake",
+  payloadSchemaVersion: 1,
+  fields: {
+    countedLineCount: auditField.integer(1, MAX_STOCKTAKE_LINES),
+    correctionMovementCount: stocktakeLineCount,
+    zeroVarianceCount: stocktakeLineCount,
+  },
+});
+
 /**
  * Inventory audit actions (ADR-008 section 16). Payloads are bounded and built
  * explicitly: no quantities or movement history go into document audits, because
- * the append-only movements carry the per-line before and after values.
- * Stocktake actions arrive with stocktakes in Build 2 Slice 6.
+ * the append-only movements carry the per-line before and after values. Counting
+ * and removing stocktake lines is draft work and is not audited; starting,
+ * cancelling and posting are.
  */
 export const inventoryAuditActions = [
   inventoryOpeningRecorded,
@@ -107,4 +145,7 @@ export const inventoryAuditActions = [
   inventoryAdjustmentReversed,
   inventoryLowStockThresholdSet,
   inventoryLowStockThresholdCleared,
+  inventoryStocktakeStarted,
+  inventoryStocktakeCancelled,
+  inventoryStocktakePosted,
 ] as const;

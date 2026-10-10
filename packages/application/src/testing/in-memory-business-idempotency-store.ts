@@ -64,6 +64,7 @@ export class InMemoryBusinessIdempotencyStore implements BusinessIdempotencyStor
     const id = keyOf(record.businessId, record.actor, record.idempotencyKey);
     if (this.#records.has(id)) return "duplicate";
     this.#records.set(id, record);
+    this.failures.checkAfter("businessIdempotency.insert");
     return "inserted";
   }
 }

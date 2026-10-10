@@ -28,6 +28,9 @@ import { PACK_NOT_FOUND, PRODUCT_NOT_FOUND } from "../catalog/index.js";
 
 export const GOODS_RECEIPT_NOT_FOUND = "Goods receipt not found";
 export const ADJUSTMENT_NOT_FOUND = "Adjustment not found";
+export const OPENING_BATCH_NOT_FOUND = "Opening stock not found";
+export const STOCKTAKE_NOT_FOUND = "Stocktake not found";
+export const STOCKTAKE_LINE_NOT_FOUND = "Stocktake line not found";
 
 /**
  * One document line as received. Exactly one quantity form is required:
@@ -108,7 +111,7 @@ function parseUnit(value: unknown, path: readonly (string | number)[]): UnitCode
   }
 }
 
-function idOrNotFound<T>(parse: () => T, message: string): T {
+export function idOrNotFound<T>(parse: () => T, message: string): T {
   try {
     return parse();
   } catch {
@@ -256,6 +259,122 @@ export function parseOptionalReference(value: string | undefined): GoodsReceiptR
 /** The required reason for a reversal: 1 to 500 characters after trimming. */
 export function parseReversalReason(value: unknown): InventoryReasonNote {
   if (typeof value !== "string") throw invalid(["reason"], "a reversal reason is required");
+  return withDomainRules(() => parseInventoryReasonNote(value, "reason"), "reason");
+}
+
+/** A direct quantity of 0 or more: exactly one of `quantityMinor` or `decimal`, with `unit`. */
+export interface DirectQuantityInput {
+  readonly quantityMinor?: string;
+  readonly decimal?: string;
+  readonly unit: string;
+}
+
+/**
+ * A stocktake count (Slice 6 decision D3), exactly one form:
+ * - direct: `quantityMinor` or `decimal` with `unit`, 0 or more;
+ * - pack: `packId` with `packCount` (1 or more whole packs) and an optional
+ *   `loose` direct quantity of 0 or more in the stock unit.
+ * All amounts are strings; there are no JSON numbers.
+ */
+export interface StocktakeCountInput {
+  readonly quantityMinor?: string;
+  readonly decimal?: string;
+  readonly unit?: string;
+  readonly packId?: string;
+  readonly packCount?: string;
+  readonly loose?: DirectQuantityInput;
+}
+
+/** A count whose syntax is valid. Units and packs are resolved inside the transaction. */
+export type StocktakeCountSyntax =
+  | { readonly form: "direct"; readonly quantity: DirectQuantitySyntax }
+  | {
+      readonly form: "pack";
+      readonly packId: ProductPackId;
+      readonly packCount: bigint;
+      readonly loose?: DirectQuantitySyntax;
+    };
+
+export type DirectQuantitySyntax =
+  | { readonly form: "minor"; readonly quantityMinor: bigint; readonly unit: UnitCode }
+  | { readonly form: "decimal"; readonly decimal: string; readonly unit: UnitCode };
+
+const NON_NEGATIVE_INTEGER = /^(0|[1-9][0-9]*)$/;
+
+function parseDirectQuantitySyntax(value: unknown, path: readonly (string | number)[]): DirectQuantitySyntax {
+  if (typeof value !== "object" || value === null) throw invalid(path, "a quantity must be an object");
+  const source = value as Partial<StocktakeCountInput>;
+  if (source.packId !== undefined || source.packCount !== undefined || source.loose !== undefined) {
+    throw invalid(path, "a direct quantity takes no pack");
+  }
+  if ((source.quantityMinor === undefined) === (source.decimal === undefined)) {
+    throw invalid(path, "a quantity needs exactly one of quantityMinor or decimal, with unit");
+  }
+  const unit = parseUnit(source.unit, [...path, "unit"]);
+  if (source.quantityMinor !== undefined) {
+    const minor = source.quantityMinor;
+    if (typeof minor !== "string" || !NON_NEGATIVE_INTEGER.test(minor)) {
+      throw invalid([...path, "quantityMinor"], "quantityMinor must be a base-10 integer string of 0 or more");
+    }
+    const amount = BigInt(minor);
+    if (amount > MAX_QUANTITY_MINOR) throw invalid([...path, "quantityMinor"], "quantityMinor is out of range");
+    return { form: "minor", quantityMinor: amount, unit };
+  }
+  if (typeof source.decimal !== "string") throw invalid([...path, "decimal"], "decimal must be a decimal string");
+  return { form: "decimal", decimal: source.decimal, unit };
+}
+
+/**
+ * Count syntax that needs no state (outside the transaction). A malformed
+ * pack ID is NOT_FOUND, like a foreign one.
+ */
+export function parseStocktakeCount(value: unknown): StocktakeCountSyntax {
+  if (typeof value !== "object" || value === null) throw invalid(["count"], "count must be an object");
+  const count = value as StocktakeCountInput;
+  const pack = count.packId !== undefined || count.packCount !== undefined || count.loose !== undefined;
+  if (!pack) return { form: "direct", quantity: parseDirectQuantitySyntax(count, ["count"]) };
+  if (count.quantityMinor !== undefined || count.decimal !== undefined || count.unit !== undefined) {
+    throw invalid(["count"], "a count is either a direct quantity or packs with an optional loose quantity");
+  }
+  if (count.packId === undefined) throw invalid(["count", "packId"], "packId is required with packCount");
+  const packCount = parsePackCount(count.packCount, ["count", "packCount"]);
+  const packId = idOrNotFound(() => parseProductPackId(count.packId as string), PACK_NOT_FOUND);
+  return {
+    form: "pack",
+    packId,
+    packCount,
+    ...(count.loose === undefined ? {} : { loose: parseDirectQuantitySyntax(count.loose, ["count", "loose"]) }),
+  };
+}
+
+/**
+ * An exact direct quantity of 0 or more in the stock unit. Decimals use their
+ * unit's scale (more digits are rejected, never rounded); a unit other than
+ * the stock unit is a validation failure, never a conversion.
+ */
+export async function resolveDirectQuantity(
+  scope: TransactionScope,
+  units: UnitReferenceRepository,
+  syntax: DirectQuantitySyntax,
+  stockUnit: UnitCode,
+  path: readonly (string | number)[],
+): Promise<Quantity> {
+  if (syntax.unit !== stockUnit) {
+    throw invalid([...path, "unit"], `quantity must be in the product's stock unit ${stockUnit}`);
+  }
+  if (syntax.form === "minor") return Quantity.ofMinor(syntax.quantityMinor, stockUnit);
+  const definition = await units.findByCode(scope, syntax.unit);
+  if (definition === undefined) throw invalid([...path, "unit"], "unit is not a known unit of measure");
+  const exact = withDomainRules(() => Quantity.fromDecimalString(syntax.decimal, definition), "decimal");
+  if (exact.isNegative()) throw invalid([...path, "decimal"], "decimal must be 0 or more");
+  if (exact.amountMinor > MAX_QUANTITY_MINOR) throw invalid([...path, "decimal"], "decimal is out of range");
+  return exact;
+}
+
+/** The optional cancellation reason: 1 to 500 characters after trimming, recorded on the audit only. */
+export function parseOptionalCancelReason(value: unknown): InventoryReasonNote | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") throw invalid(["reason"], "reason must be text");
   return withDomainRules(() => parseInventoryReasonNote(value, "reason"), "reason");
 }
 

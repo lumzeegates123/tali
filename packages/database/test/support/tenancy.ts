@@ -1,6 +1,7 @@
 /**
- * Composes the Slice 1 use cases, the catalog write use cases and the Build 2
- * Slice 5 inventory use cases over the PostgreSQL repositories and the Prisma
+ * Composes the Slice 1 use cases, the catalog write use cases, the Build 2
+ * Slice 5 inventory use cases and the Slice 6 stocktake and inventory read
+ * use cases over the PostgreSQL repositories and the Prisma
  * unit of work, as the API composition root does. Test
  * inputs only: the fingerprint hasher is the application's deterministic fake
  * (the real SHA-256 adapter arrives in Slice 3), identities come from the fake
@@ -21,30 +22,46 @@ import {
   type CreateBusinessOutcome,
   type CreateInvitation,
   type CreateProduct,
+  type CancelStocktake,
+  type CreateStocktake,
   createAcceptInvitation,
   createAddPack,
   createArchiveProduct,
   createBusinessContextResolver,
+  createCancelStocktake,
   createChangeMemberRole,
   createClearLowStockThreshold,
   createCreateBusiness,
   createCreateInvitation,
   createCreateProduct,
+  createCreateStocktake,
   createDefaultLocationCreation,
   createDefaultLocationResolver,
   createDeviceVerifier,
+  createGetAdjustment,
+  createGetGoodsReceipt,
+  createGetInventoryItem,
+  createGetOpeningBatch,
+  createGetStocktake,
   createListDevices,
+  createListInventoryItems,
+  createListItemMovements,
   createListLocations,
   createListMembers,
   createListMyBusinesses,
+  createListStocktakeLines,
+  createListStocktakes,
   createPostGoodsReceipt,
+  createPostStocktake,
   createReactivateMember,
   createReactivateProduct,
   createRecordAdjustment,
   createRecordOpeningStock,
+  createRecordStocktakeCount,
   createRecordWriteOff,
   createRegisterCurrentUser,
   createRegisterDevice,
+  createRemoveStocktakeLine,
   createRetirePack,
   createReverseAdjustment,
   createReverseGoodsReceipt,
@@ -57,21 +74,33 @@ import {
   createUserContextResolver,
   type DefaultLocationResolver,
   type DeviceVerifier,
+  type GetAdjustment,
+  type GetGoodsReceipt,
+  type GetInventoryItem,
+  type GetOpeningBatch,
+  type GetStocktake,
   KeyedIdempotency,
   type ListDevices,
+  type ListInventoryItems,
+  type ListItemMovements,
   type ListLocations,
   type ListMembers,
   type ListMyBusinesses,
+  type ListStocktakeLines,
+  type ListStocktakes,
   type LocationBoundContext,
   parseCorrelationId,
   type PostGoodsReceipt,
+  type PostStocktake,
   type ReactivateMember,
   type ReactivateProduct,
   type RecordAdjustment,
   type RecordOpeningStock,
+  type RecordStocktakeCount,
   type RecordWriteOff,
   type RegisterCurrentUser,
   type RegisterDevice,
+  type RemoveStocktakeLine,
   type RetirePack,
   type ReverseAdjustment,
   type ReverseGoodsReceipt,
@@ -141,6 +170,20 @@ export interface Tenancy {
   readonly reverseAdjustment: ReverseAdjustment;
   readonly setLowStockThreshold: SetLowStockThreshold;
   readonly clearLowStockThreshold: ClearLowStockThreshold;
+  readonly createStocktake: CreateStocktake;
+  readonly recordStocktakeCount: RecordStocktakeCount;
+  readonly removeStocktakeLine: RemoveStocktakeLine;
+  readonly postStocktake: PostStocktake;
+  readonly cancelStocktake: CancelStocktake;
+  readonly listStocktakes: ListStocktakes;
+  readonly getStocktake: GetStocktake;
+  readonly listStocktakeLines: ListStocktakeLines;
+  readonly listInventoryItems: ListInventoryItems;
+  readonly getInventoryItem: GetInventoryItem;
+  readonly listItemMovements: ListItemMovements;
+  readonly getOpeningBatch: GetOpeningBatch;
+  readonly getGoodsReceipt: GetGoodsReceipt;
+  readonly getAdjustment: GetAdjustment;
   registeredUser(subject: string, displayName?: string): Promise<RegisteredUser>;
   create(user: RegisteredUser, input?: Partial<CreateBusinessInput>): Promise<CreateBusinessOutcome>;
   /** The server-resolved context of an ACTIVE member, as the API's BusinessContextGuard produces it. */
@@ -222,6 +265,16 @@ export function useTenancyHarness() {
       ids,
       clock,
     };
+    const stocktaking = { ...stock, stocktakes: repos.stocktakes, stocktakeLines: repos.stocktakeLines };
+    const stocktakeQueries = { unitOfWork: uow, stocktakes: repos.stocktakes, stocktakeLines: repos.stocktakeLines };
+    const reads = {
+      unitOfWork: uow,
+      items: repos.inventoryItems,
+      movements: repos.inventoryMovements,
+      openings: repos.inventoryOpeningBatches,
+      receipts: repos.goodsReceipts,
+      adjustments: repos.inventoryAdjustments,
+    };
     const createBusiness = createCreateBusiness({
       unitOfWork: uow,
       users: repos.users,
@@ -301,6 +354,20 @@ export function useTenancyHarness() {
       reverseAdjustment: createReverseAdjustment({ ...stock, adjustments: repos.inventoryAdjustments }),
       setLowStockThreshold: createSetLowStockThreshold({ ...stock, thresholds: repos.inventoryThresholds }),
       clearLowStockThreshold: createClearLowStockThreshold({ ...stock, thresholds: repos.inventoryThresholds }),
+      createStocktake: createCreateStocktake(stocktaking),
+      recordStocktakeCount: createRecordStocktakeCount(stocktaking),
+      removeStocktakeLine: createRemoveStocktakeLine(stocktaking),
+      postStocktake: createPostStocktake(stocktaking),
+      cancelStocktake: createCancelStocktake(stocktaking),
+      listStocktakes: createListStocktakes(stocktakeQueries),
+      getStocktake: createGetStocktake(stocktakeQueries),
+      listStocktakeLines: createListStocktakeLines(stocktakeQueries),
+      listInventoryItems: createListInventoryItems(reads),
+      getInventoryItem: createGetInventoryItem(reads),
+      listItemMovements: createListItemMovements(reads),
+      getOpeningBatch: createGetOpeningBatch(reads),
+      getGoodsReceipt: createGetGoodsReceipt(reads),
+      getAdjustment: createGetAdjustment(reads),
       contextFor(user, businessId) {
         return businessContexts.resolveForUser(user.context, businessId);
       },

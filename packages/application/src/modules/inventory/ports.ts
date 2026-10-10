@@ -1,5 +1,7 @@
 import type {
+  Barcode,
   BusinessId,
+  CatalogStatus,
   GoodsReceipt,
   GoodsReceiptId,
   InventoryAdjustment,
@@ -9,11 +11,22 @@ import type {
   LocationId,
   OpeningBatch,
   OpeningBatchId,
+  ProductId,
+  ProductName,
   ProductVariantId,
+  Quantity,
+  Sku,
   StockBalance,
   StockThreshold,
+  Stocktake,
+  StocktakeId,
+  StocktakeLine,
+  StocktakeStatus,
+  UnitCode,
 } from "@tali/domain";
 import type { TransactionScope } from "../../ports/unit-of-work.js";
+import type { Page, PageRequest } from "../../queries/pagination.js";
+import type { ProductSearch } from "../catalog/index.js";
 
 /**
  * The append-only movement ledger (ADR-008 section 7.1). There is no update
@@ -33,6 +46,31 @@ export interface InventoryMovementRepository {
     businessId: BusinessId,
     source: InventoryMovementSource,
   ): Promise<readonly InventoryMovement[]>;
+  /**
+   * Every movement of exactly one document, originals and reversals:
+   * originals first, then reversals, each in ascending variant order.
+   */
+  listForSource(
+    scope: TransactionScope,
+    businessId: BusinessId,
+    source: InventoryMovementSource,
+  ): Promise<readonly InventoryMovement[]>;
+  /**
+   * One stock item's movement history, newest first (`balance_version`
+   * descending, which is total per stock item). `page.after` is the ID of the
+   * last movement of the previous page; the page continues below that
+   * movement's `balance_version`. The cursor resolves only among the
+   * movements of this exact business, location and variant: any other
+   * cursor, whoever owns it, returns `undefined` and nothing else. A cursor
+   * that resolves but has nothing after it is an empty page.
+   */
+  listForItem(
+    scope: TransactionScope,
+    businessId: BusinessId,
+    locationId: LocationId,
+    variantId: ProductVariantId,
+    page: PageRequest,
+  ): Promise<Page<InventoryMovement> | undefined>;
 }
 
 declare const lockedBalancesBrand: unique symbol;
@@ -163,6 +201,187 @@ export interface StockThresholdRepository {
     locationId: LocationId,
     variantId: ProductVariantId,
   ): Promise<StockThreshold | undefined>;
+}
+
+/** A stocktake header with its line counts, read together so a list needs no query per stocktake. */
+export interface StocktakeSummary {
+  readonly stocktake: Stocktake;
+  readonly lineCounts: StocktakeLineCounts;
+}
+
+/**
+ * The line counts of one stocktake. `nonZeroVariance` and `zeroVariance`
+ * count COUNTED lines whose posting variance is stored; only a POSTED
+ * stocktake has any.
+ */
+export interface StocktakeLineCounts {
+  readonly counted: number;
+  readonly removed: number;
+  readonly nonZeroVariance: number;
+  readonly zeroVariance: number;
+}
+
+export const STOCKTAKE_IN_PROGRESS = "A stocktake is already in progress at this location";
+
+/** Stocktake headers (ADR-008 section 12): at most one DRAFT per business and location. */
+export interface StocktakeRepository {
+  /**
+   * Inserts a new DRAFT version-1 stocktake. Throws
+   * `ConflictError(STOCKTAKE_IN_PROGRESS)` when the location already has a
+   * DRAFT stocktake (the partial unique index in storage).
+   */
+  insert(scope: TransactionScope, stocktake: Stocktake): Promise<void>;
+  findById(scope: TransactionScope, businessId: BusinessId, id: StocktakeId): Promise<Stocktake | undefined>;
+  /** The stocktake of this business, locked FOR UPDATE until the transaction ends. */
+  findByIdForUpdate(scope: TransactionScope, businessId: BusinessId, id: StocktakeId): Promise<Stocktake | undefined>;
+  /** Stocktakes of one location with their line counts, ordered by stocktake ID ascending. */
+  list(
+    scope: TransactionScope,
+    businessId: BusinessId,
+    locationId: LocationId,
+    query: { readonly status?: StocktakeStatus },
+    page: PageRequest,
+  ): Promise<Page<StocktakeSummary>>;
+  /** Throws ConcurrentModificationError when the stored version is no longer `previous.version`. */
+  update(scope: TransactionScope, previous: Stocktake, next: Stocktake): Promise<void>;
+}
+
+/** The posting variance of one COUNTED line, stored without changing anything else on the line. */
+export interface StocktakeLineVariance {
+  readonly variantId: ProductVariantId;
+  /** The line version the variance was computed from; it is kept, not incremented. */
+  readonly lineVersion: number;
+  readonly variance: Quantity;
+}
+
+/** Stocktake lines, one row per (business, stocktake, variant); REMOVED rows are kept. */
+export interface StocktakeLineRepository {
+  find(
+    scope: TransactionScope,
+    businessId: BusinessId,
+    stocktakeId: StocktakeId,
+    variantId: ProductVariantId,
+  ): Promise<StocktakeLine | undefined>;
+  /** Inserts a version-1 COUNTED line without a variance. */
+  insert(scope: TransactionScope, line: StocktakeLine): Promise<void>;
+  /** Throws ConcurrentModificationError when the stored version is no longer `previous.version`. */
+  update(scope: TransactionScope, previous: StocktakeLine, next: StocktakeLine): Promise<void>;
+  /** The COUNTED lines of a stocktake, ordered by variant ID ascending. */
+  listCounted(
+    scope: TransactionScope,
+    businessId: BusinessId,
+    stocktakeId: StocktakeId,
+  ): Promise<readonly StocktakeLine[]>;
+  /** COUNTED and REMOVED lines, ordered by variant ID ascending; `page.after` is a variant ID. */
+  listPage(
+    scope: TransactionScope,
+    businessId: BusinessId,
+    stocktakeId: StocktakeId,
+    page: PageRequest,
+  ): Promise<Page<StocktakeLine>>;
+  /** Every distinct line row of the stocktake, REMOVED included (the 1,000-line bound, decision D9). */
+  countForStocktake(scope: TransactionScope, businessId: BusinessId, stocktakeId: StocktakeId): Promise<number>;
+  countByStatus(
+    scope: TransactionScope,
+    businessId: BusinessId,
+    stocktakeId: StocktakeId,
+  ): Promise<StocktakeLineCounts>;
+  /**
+   * Stores the posting variance of COUNTED lines. Only the variance column is
+   * written: each line must be COUNTED, at `lineVersion` and without a
+   * variance, and its version is kept. Any other stored state raises
+   * ConcurrentModificationError.
+   */
+  applyPostingVariances(
+    scope: TransactionScope,
+    businessId: BusinessId,
+    stocktakeId: StocktakeId,
+    variances: readonly StocktakeLineVariance[],
+  ): Promise<void>;
+}
+
+/**
+ * One stock item at a location, as the inventory read model sees it: a
+ * product's default variant with its balance and low-stock threshold. A
+ * missing balance row reads as zero at version 0; a missing threshold row as
+ * no threshold at version 0.
+ */
+export interface InventoryItemRow {
+  readonly productId: ProductId;
+  readonly variantId: ProductVariantId;
+  readonly name: ProductName;
+  readonly sku?: Sku;
+  readonly barcode?: Barcode;
+  readonly productStatus: CatalogStatus;
+  readonly stockUnit: UnitCode;
+  readonly trackInventory: boolean;
+  readonly onHand: Quantity;
+  readonly balanceVersion: number;
+  readonly threshold?: Quantity;
+  readonly thresholdVersion: number;
+}
+
+export interface InventoryItemQuery {
+  readonly search?: ProductSearch;
+  /** Only items whose stored state is low on stock: ACTIVE, tracked, with a threshold at or above on-hand. */
+  readonly lowStockOnly?: boolean;
+}
+
+/**
+ * Inventory list and detail reads across catalog, balances and thresholds,
+ * one query each. Rows are scoped to the business, the location's balances
+ * and thresholds, and the business's own products.
+ */
+export interface InventoryItemReader {
+  /**
+   * Visible stock items ordered by variant ID ascending (`page.after` is a
+   * variant ID): tracked ACTIVE items, and tracked ARCHIVED items whose
+   * on-hand is not zero. Untracked items are never listed.
+   */
+  listItems(
+    scope: TransactionScope,
+    businessId: BusinessId,
+    locationId: LocationId,
+    query: InventoryItemQuery,
+    page: PageRequest,
+  ): Promise<Page<InventoryItemRow>>;
+  /** The row of one visible variant of this business, by the listItems rule; undefined for any other variant. */
+  getItem(
+    scope: TransactionScope,
+    businessId: BusinessId,
+    locationId: LocationId,
+    variantId: ProductVariantId,
+  ): Promise<InventoryItemRow | undefined>;
+}
+
+/** Precondition of StocktakeRepository.update, shared by every adapter. */
+export function assertStocktakeTransition(previous: Stocktake, next: Stocktake): void {
+  if (
+    next.id !== previous.id ||
+    next.businessId !== previous.businessId ||
+    next.locationId !== previous.locationId ||
+    next.createdAt.getTime() !== previous.createdAt.getTime() ||
+    next.createdByMembershipId !== previous.createdByMembershipId ||
+    next.note !== previous.note ||
+    previous.status !== "DRAFT" ||
+    next.version !== previous.version + 1
+  ) {
+    throw new Error("a stocktake update must keep its identity, start from DRAFT and advance its version by one");
+  }
+}
+
+/** Precondition of StocktakeLineRepository.update, shared by every adapter. */
+export function assertStocktakeLineTransition(previous: StocktakeLine, next: StocktakeLine): void {
+  if (
+    next.businessId !== previous.businessId ||
+    next.stocktakeId !== previous.stocktakeId ||
+    next.variantId !== previous.variantId ||
+    next.version !== previous.version + 1 ||
+    previous.variance !== undefined ||
+    next.variance !== undefined
+  ) {
+    throw new Error("a stocktake line update must keep its identity, carry no variance and advance its version by one");
+  }
 }
 
 /** Precondition of the markReversed methods, shared by every adapter. */

@@ -30,6 +30,9 @@ import { ErrorEnvelopeFilter } from "./errors/error-envelope.filter.js";
 import { HealthController } from "./health/health.controller.js";
 import { InvitationAcceptanceController } from "./identity/invitation-acceptance.controller.js";
 import { MeController } from "./identity/me.controller.js";
+import { InventoryDocumentsController } from "./inventory/inventory-documents.controller.js";
+import { InventoryItemsController } from "./inventory/inventory-items.controller.js";
+import { StocktakesController } from "./inventory/stocktakes.controller.js";
 import { RuntimeShutdown } from "./lifecycle/runtime-shutdown.js";
 
 /**
@@ -56,6 +59,9 @@ export class AppModule {
       CategoriesController,
       PacksController,
       CatalogUnitsController,
+      InventoryItemsController,
+      InventoryDocumentsController,
+      StocktakesController,
     ];
     const providers: Provider[] = [
       { provide: SERVER_CONFIG, useValue: runtime.config },

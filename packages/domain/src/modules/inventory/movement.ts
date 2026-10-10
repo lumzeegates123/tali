@@ -8,21 +8,27 @@ import type { InventoryReasonCode } from "./adjustment.js";
 import { parseAdjustmentReason } from "./adjustment.js";
 import type { InventoryReasonNote, InventoryRecording } from "./common.js";
 import { parseInventoryReasonNote, restoreInventoryRecording, validPositiveVersion } from "./common.js";
-import type { GoodsReceiptId, InventoryAdjustmentId, InventoryMovementId, OpeningBatchId } from "./ids.js";
+import type { GoodsReceiptId, InventoryAdjustmentId, InventoryMovementId, OpeningBatchId, StocktakeId } from "./ids.js";
 
 /**
- * The movement types Build 2 Slice 5 implements (ADR-008 section 7.1, plan
- * decision D1). COUNT_CORRECTION arrives with stocktakes in Slice 6; SALE,
+ * The movement types Build 2 implements (ADR-008 section 7.1). SALE,
  * CUSTOMER_RETURN and SUPPLIER_RETURN arrive with their own use cases.
  */
-export const INVENTORY_MOVEMENT_TYPES = ["OPENING", "PURCHASE_RECEIPT", "ADJUSTMENT", "WRITE_OFF"] as const;
+export const INVENTORY_MOVEMENT_TYPES = [
+  "OPENING",
+  "PURCHASE_RECEIPT",
+  "ADJUSTMENT",
+  "WRITE_OFF",
+  "COUNT_CORRECTION",
+] as const;
 export type InventoryMovementType = (typeof INVENTORY_MOVEMENT_TYPES)[number];
 
 /** The document a movement belongs to: one typed reference per type (ADR-008 section 8). */
 export type InventoryMovementSource =
   | { readonly kind: "OPENING_BATCH"; readonly id: OpeningBatchId }
   | { readonly kind: "GOODS_RECEIPT"; readonly id: GoodsReceiptId }
-  | { readonly kind: "ADJUSTMENT"; readonly id: InventoryAdjustmentId };
+  | { readonly kind: "ADJUSTMENT"; readonly id: InventoryAdjustmentId }
+  | { readonly kind: "STOCKTAKE"; readonly id: StocktakeId };
 
 export type InventoryMovementSourceKind = InventoryMovementSource["kind"];
 
@@ -31,6 +37,7 @@ const SOURCE_KIND_BY_TYPE: Readonly<Record<InventoryMovementType, InventoryMovem
   PURCHASE_RECEIPT: "GOODS_RECEIPT",
   ADJUSTMENT: "ADJUSTMENT",
   WRITE_OFF: "ADJUSTMENT",
+  COUNT_CORRECTION: "STOCKTAKE",
 });
 
 export function parseInventoryMovementType(value: string): InventoryMovementType {
@@ -138,6 +145,15 @@ function requireDirection(type: InventoryMovementType, delta: Quantity, reversal
       return;
     case "ADJUSTMENT":
       return;
+    case "COUNT_CORRECTION":
+      if (reversal) {
+        throw new DomainError(
+          "INVALID_TRANSITION",
+          "a count correction is not reversed; count again or record an adjustment",
+          "reversesMovementId",
+        );
+      }
+      return;
   }
 }
 
@@ -166,7 +182,7 @@ function validMovementReason(props: {
     }
     return { reasonNote: parseInventoryReasonNote(props.reasonNote) };
   }
-  if (props.type === "OPENING" || props.type === "PURCHASE_RECEIPT") {
+  if (props.type === "OPENING" || props.type === "PURCHASE_RECEIPT" || props.type === "COUNT_CORRECTION") {
     if (props.reasonCode !== undefined || props.reasonNote !== undefined) {
       throw new DomainError("INVALID_VALUE", `a ${props.type} movement carries no reason`, "reasonCode");
     }
@@ -229,6 +245,9 @@ export function restoreMovement(props: {
   if (props.pack !== undefined) {
     if (reversal) {
       throw new DomainError("INVALID_VALUE", "a reversal movement carries no pack snapshot", "pack");
+    }
+    if (type === "COUNT_CORRECTION") {
+      throw new DomainError("INVALID_VALUE", "a COUNT_CORRECTION movement carries no pack snapshot", "pack");
     }
     pack = parsePackSnapshot(props.pack);
     if (props.delta.abs().amountMinor !== pack.count * pack.factorMinor) {

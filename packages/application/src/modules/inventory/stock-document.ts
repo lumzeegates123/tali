@@ -248,7 +248,11 @@ export async function runStockDocument<Header extends StockDocumentHeader, Snaps
   });
 }
 
-function planRecording(clock: Clock, context: LocationBoundContext, membershipId: MembershipId): InventoryRecording {
+export function planRecording(
+  clock: Clock,
+  context: LocationBoundContext,
+  membershipId: MembershipId,
+): InventoryRecording {
   return withDomainRules(() =>
     createInventoryRecording({
       actorMembershipId: membershipId,

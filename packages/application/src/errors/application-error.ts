@@ -1,8 +1,11 @@
+import { MAX_STOCKTAKE_LINES, type ProductVariantId } from "@tali/domain";
+
 /**
  * Foundational application errors. Transports map `code` to a response (for
  * example the HTTP error envelope); messages must not leak other tenants' data.
  * Build 1 codes follow ADR-005 section 13.1 (and ADR-004 section 11);
- * VERSION_CONFLICT and INSUFFICIENT_STOCK are added by ADR-008 sections 10 and 20.
+ * VERSION_CONFLICT and INSUFFICIENT_STOCK are added by ADR-008 sections 10 and 20,
+ * STOCKTAKE_STALE by ADR-008 section 12.4 (Build 2 Slice 6).
  */
 export type ApplicationErrorCode =
   | "VALIDATION_FAILED"
@@ -20,7 +23,8 @@ export type ApplicationErrorCode =
   | "IDEMPOTENCY_IN_PROGRESS"
   | "CONCURRENT_MODIFICATION"
   | "VERSION_CONFLICT"
-  | "INSUFFICIENT_STOCK";
+  | "INSUFFICIENT_STOCK"
+  | "STOCKTAKE_STALE";
 
 /** Whether a client may retry the same request unchanged (ADR-004 section 11; ADR-005 section 13.1). */
 const RETRYABLE: Readonly<Record<ApplicationErrorCode, boolean>> = {
@@ -40,6 +44,7 @@ const RETRYABLE: Readonly<Record<ApplicationErrorCode, boolean>> = {
   CONCURRENT_MODIFICATION: true,
   VERSION_CONFLICT: false,
   INSUFFICIENT_STOCK: false,
+  STOCKTAKE_STALE: false,
 };
 
 export interface ValidationIssue {
@@ -186,5 +191,39 @@ export class VersionConflictError extends ApplicationError {
 export class InsufficientStockError extends ApplicationError {
   constructor(message = "There is not enough stock on hand for this change") {
     super("INSUFFICIENT_STOCK", message);
+  }
+}
+
+/** At most this many stale variant IDs are exposed (Slice 6 decision D4). */
+export const STOCKTAKE_STALE_MAX_IDS = 50;
+
+/**
+ * Posting found counted lines whose stock item changed since it was counted:
+ * its balance version or stock unit is no longer the one captured at count
+ * time (Slice 6 decisions D4 and D8). Nothing was written. Not retryable
+ * unchanged: the stale lines must be recounted first.
+ *
+ * `staleVariantIds` are the first 50 stale variants of this stocktake in
+ * ascending ID order; `staleLineCount` is the total, from 1 to
+ * MAX_STOCKTAKE_LINES and never fewer than the IDs given. No quantity or version is
+ * exposed, and the message names no ID.
+ */
+export class StocktakeStaleError extends ApplicationError {
+  readonly staleVariantIds: readonly ProductVariantId[];
+  readonly staleLineCount: number;
+
+  constructor(staleVariantIds: readonly ProductVariantId[], staleLineCount: number) {
+    super("STOCKTAKE_STALE", "The stocktake is stale and must be recounted");
+    const sorted = [...new Set(staleVariantIds)].sort();
+    if (
+      sorted.length === 0 ||
+      !Number.isSafeInteger(staleLineCount) ||
+      staleLineCount < sorted.length ||
+      staleLineCount > MAX_STOCKTAKE_LINES
+    ) {
+      throw new Error("a stale stocktake needs 1 to MAX_STOCKTAKE_LINES stale lines and a total covering its IDs");
+    }
+    this.staleVariantIds = Object.freeze(sorted.slice(0, STOCKTAKE_STALE_MAX_IDS));
+    this.staleLineCount = staleLineCount;
   }
 }

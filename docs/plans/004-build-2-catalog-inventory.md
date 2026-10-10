@@ -8,7 +8,9 @@ schema and repositories) COMPLETE (2026-10-05)** (`docs/audits/build-2-slice-2.m
 shared contracts) COMPLETE (2026-10-05)**, with all gates passed, pending human review
 (`docs/audits/build-2-slice-3.md`). **Slice 4 (catalog clients) COMPLETE (2026-10-06)**, with all gates passed,
 pending human review (`docs/audits/build-2-slice-4.md`). **Slice 5 (inventory core) COMPLETE (2026-10-08)**, with
-all gates passed, pending human review (`docs/audits/build-2-slice-5.md`). Slice 6 is not started. Where this plan
+all gates passed, pending human review (`docs/audits/build-2-slice-5.md`). **Slice 6 (stocktake and inventory API)
+COMPLETE (2026-10-09)**, with all gates passed, pending human review (`docs/audits/build-2-slice-6.md`). Slice 7 is
+not started. Where this plan
 and an ADR differ, the ADR is authoritative (`AGENTS.md` section 4).
 
 Scope: implementation steps 3 (product catalog) and 4 (inventory) of `docs/product/mvp-scope.md`, quantity-only.
@@ -32,7 +34,7 @@ Not in Build 2:
 | 3     | Catalog API and shared contracts                                                              | **COMPLETE** (2026-10-05; `docs/audits/build-2-slice-3.md`) |
 | 4     | Catalog clients (web and mobile)                                                              | **COMPLETE** (2026-10-06; `docs/audits/build-2-slice-4.md`) |
 | 5     | Inventory core: movements, balances, opening, goods receipts, adjustments, write-offs, reversals, low-stock thresholds and the derived low-stock state (domain, application, schema, repositories) | **COMPLETE** (2026-10-08; `docs/audits/build-2-slice-5.md`) |
-| 6     | Stocktake (domain, application, schema) and the inventory API, including threshold endpoints  | Not started                    |
+| 6     | Stocktake (domain, application, schema) and the inventory API, including threshold endpoints  | **COMPLETE** (2026-10-09; `docs/audits/build-2-slice-6.md`) |
 | 7     | Inventory clients (web and mobile), including threshold management and the LOW STOCK indicator | Not started                   |
 | 8     | Hardening and final acceptance                                                                | Not started                    |
 
@@ -45,7 +47,7 @@ flowchart TD
   S2 --> S3["S3 Catalog API (COMPLETE)"]
   S3 --> S4["S4 Catalog clients (COMPLETE)"]
   S3 --> S5["S5 Inventory core (COMPLETE)"]
-  S5 --> S6["S6 Inventory and stocktake API"]
+  S5 --> S6["S6 Inventory and stocktake API (COMPLETE)"]
   S6 --> S7["S7 Inventory clients"]
   S4 --> S8["S8 Hardening and acceptance"]
   S7 --> S8
@@ -352,7 +354,21 @@ process-startup or resource failure in which no assertion failed, and it is docu
 - Stop: any need for cost or `SALE`, or any request to add alerts, forecasting or reorder suggestions (out of
   Build 2).
 
-### S6. Stocktake and inventory API
+### S6. Stocktake and inventory API: COMPLETE (2026-10-09)
+
+- Outcome: all gates passed (`pnpm verify` exit 0 on an unchanged retry after a web worker start-up failure, and
+  `pnpm test:integration` exit 0; migrate status, drift, verify-schema and the inventory consistency check clean
+  before and after integration; `pnpm boundaries` clean; gitleaks clean); audit in `docs/audits/build-2-slice-6.md`,
+  pending human review. No new dependency; no client UI.
+  - stocktake domain and application (create, count, remove, post, cancel), `COUNT_CORRECTION` planning, the
+    `STOCKTAKE_STALE` error with bounded details, and the item, balance, movement and stocktake reads;
+  - one atomic forward-only migration (explicit `BEGIN`/`COMMIT`, proven against a failure-injected copy):
+    `stocktakes`, `stocktake_lines`, the one-DRAFT-per-location partial unique, the movement `stocktake_id` with
+    composite FKs to the line and header, and the replaced and new movement CHECKs;
+  - exactly 22 inventory HTTP routes behind the authentication, business and device guards, with no client
+    location; BLIND stocktake lines never carry `expectedAtCount` or `variance`;
+  - business and location isolation and the nine concurrency scenario groups pass on a single attempt with no
+    deadlock.
 
 - Content:
   - stocktake domain, application and schema (`stocktakes`, `stocktake_lines`, the one-DRAFT-per-location partial

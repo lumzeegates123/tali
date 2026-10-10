@@ -23,6 +23,12 @@ export const INVENTORY_REASON_NOTE_MAX_LENGTH = 500;
 /** A document carries 1 to 200 lines, one per variant (ADR-008 section 9). */
 export const MAX_INVENTORY_DOCUMENT_LINES = 200;
 
+/**
+ * A stocktake may hold at most 1000 distinct line rows, COUNTED and REMOVED
+ * together (Slice 6 decision D9). This is not the 200-line document request cap.
+ */
+export const MAX_STOCKTAKE_LINES = 1000;
+
 export function parseInventoryNote(value: string): InventoryNote {
   return normalizeBoundedName(value, "note", INVENTORY_NOTE_MAX_LENGTH) as InventoryNote;
 }
