@@ -54,6 +54,8 @@ const NO_DELETE_TABLES = [
   "public.inventory_adjustments",
   "public.inventory_balances",
   "public.inventory_stock_thresholds",
+  "public.stocktakes",
+  "public.stocktake_lines",
 ];
 
 /**
@@ -78,11 +80,11 @@ const TEST_ONLY_SCHEMAS = ["test_fixtures"];
 
 /**
  * Exact table privileges expected for the application role (Build 1 Slice 2
- * and Slice 5, Build 2 Slice 2 and Slice 5 migrations). No table grants
- * DELETE or TRUNCATE; audit, idempotency, price-history, movement and
+ * and Slice 5, Build 2 Slice 2, Slice 5 and Slice 6 migrations). No table
+ * grants DELETE or TRUNCATE; audit, idempotency, price-history, movement and
  * opening-batch tables are insert-only; currencies and units of measure are
- * read-only. Receipt and adjustment headers have no table-level UPDATE: see
- * EXPECTED_APP_COLUMN_PRIVILEGES.
+ * read-only. Receipt and adjustment headers, stocktakes and stocktake lines
+ * have no table-level UPDATE: see EXPECTED_APP_COLUMN_PRIVILEGES.
  */
 const EXPECTED_APP_PRIVILEGES = {
   "public.currencies": ["SELECT"],
@@ -109,18 +111,45 @@ const EXPECTED_APP_PRIVILEGES = {
   "public.inventory_movements": ["INSERT", "SELECT"],
   "public.inventory_balances": ["INSERT", "SELECT", "UPDATE"],
   "public.inventory_stock_thresholds": ["INSERT", "SELECT", "UPDATE"],
+  "public.stocktakes": ["INSERT", "SELECT"],
+  "public.stocktake_lines": ["INSERT", "SELECT"],
 };
 
 /**
  * Exact column-level privileges expected for the application role, read from
  * pg_attribute.attacl. The only column grants are UPDATE on the four reversal
  * columns of the receipt and adjustment headers (POSTED to REVERSED; ADR-008
- * section 11); no other column of any table carries a grant to the role.
+ * section 11), on a stocktake's lifecycle columns and on a stocktake line's
+ * count and variance columns (ADR-008 section 12); no other column of any
+ * table carries a grant to the role.
  */
 const REVERSAL_COLUMNS = ["reversal_reason", "reversed_at", "reversed_by_membership_id", "status"];
+const STOCKTAKE_LIFECYCLE_COLUMNS = [
+  "business_date",
+  "cancelled_at",
+  "cancelled_by_membership_id",
+  "posted_at",
+  "posted_by_membership_id",
+  "status",
+  "version",
+];
+const STOCKTAKE_LINE_COUNT_COLUMNS = [
+  "balance_version_at_count",
+  "counted_at",
+  "counted_by_membership_id",
+  "counted_quantity_minor",
+  "expected_at_count_minor",
+  "status",
+  "stock_unit_code",
+  "variance_minor",
+  "version",
+];
+const updatable = (columns) => Object.fromEntries(columns.map((column) => [column, ["UPDATE"]]));
 const EXPECTED_APP_COLUMN_PRIVILEGES = {
-  "public.goods_receipts": Object.fromEntries(REVERSAL_COLUMNS.map((column) => [column, ["UPDATE"]])),
-  "public.inventory_adjustments": Object.fromEntries(REVERSAL_COLUMNS.map((column) => [column, ["UPDATE"]])),
+  "public.goods_receipts": updatable(REVERSAL_COLUMNS),
+  "public.inventory_adjustments": updatable(REVERSAL_COLUMNS),
+  "public.stocktakes": updatable(STOCKTAKE_LIFECYCLE_COLUMNS),
+  "public.stocktake_lines": updatable(STOCKTAKE_LINE_COUNT_COLUMNS),
 };
 
 const ENVELOPE_SOURCE_CHANNELS =
@@ -246,7 +275,11 @@ const ADJUSTMENT_REASON_CODES = "ARRAY['FOUND_STOCK'::text, 'DATA_ENTRY_CORRECTI
 const WRITE_OFF_REASON_CODES =
   "ARRAY['DAMAGED'::text, 'EXPIRED'::text, 'SPOILED'::text, 'THEFT_OR_LOSS'::text, 'OTHER'::text]";
 
-/** The Build 2 Slice 5 inventory CHECKs (ADR-008 sections 7, 8 and 11; plan section O). */
+/**
+ * The Build 2 Slice 5 inventory CHECKs (ADR-008 sections 7, 8 and 11; plan
+ * section O), with the four movement CHECKs that Slice 6 replaced to admit
+ * COUNT_CORRECTION (ADR-008 section 12).
+ */
 const INVENTORY_CHECKS = [
   ...inventoryRecordingChecks("inventory_opening_batches"),
   trimmedTextCheck("inventory_opening_batches", "note", 500),
@@ -278,7 +311,7 @@ const INVENTORY_CHECKS = [
     table: "inventory_movements",
     name: "inventory_movements_type_valid",
     definition:
-      "CHECK ((type = ANY (ARRAY['OPENING'::text, 'PURCHASE_RECEIPT'::text, 'ADJUSTMENT'::text, 'WRITE_OFF'::text])))",
+      "CHECK ((type = ANY (ARRAY['OPENING'::text, 'PURCHASE_RECEIPT'::text, 'ADJUSTMENT'::text, 'WRITE_OFF'::text, 'COUNT_CORRECTION'::text])))",
   },
   {
     table: "inventory_movements",
@@ -298,7 +331,7 @@ const INVENTORY_CHECKS = [
   {
     table: "inventory_movements",
     name: "inventory_movements_one_source",
-    definition: "CHECK ((num_nonnulls(opening_batch_id, goods_receipt_id, adjustment_id) = 1))",
+    definition: "CHECK ((num_nonnulls(opening_batch_id, goods_receipt_id, adjustment_id, stocktake_id) = 1))",
   },
   {
     table: "inventory_movements",
@@ -319,7 +352,7 @@ const INVENTORY_CHECKS = [
     table: "inventory_movements",
     name: "inventory_movements_direction",
     definition:
-      "CHECK ((((type = 'OPENING'::text) AND (reverses_movement_id IS NULL) AND (quantity_delta_minor > 0)) OR ((type = 'PURCHASE_RECEIPT'::text) AND ((reverses_movement_id IS NULL) = (quantity_delta_minor > 0))) OR ((type = 'WRITE_OFF'::text) AND ((reverses_movement_id IS NULL) = (quantity_delta_minor < 0))) OR (type = 'ADJUSTMENT'::text)))",
+      "CHECK ((((type = 'OPENING'::text) AND (reverses_movement_id IS NULL) AND (quantity_delta_minor > 0)) OR ((type = 'PURCHASE_RECEIPT'::text) AND ((reverses_movement_id IS NULL) = (quantity_delta_minor > 0))) OR ((type = 'WRITE_OFF'::text) AND ((reverses_movement_id IS NULL) = (quantity_delta_minor < 0))) OR (type = 'ADJUSTMENT'::text) OR ((type = 'COUNT_CORRECTION'::text) AND (reverses_movement_id IS NULL))))",
   },
   {
     table: "inventory_movements",
@@ -348,7 +381,22 @@ const INVENTORY_CHECKS = [
   {
     table: "inventory_movements",
     name: "inventory_movements_reason_shape",
-    definition: `CHECK ((((reverses_movement_id IS NULL) AND (type = ANY (ARRAY['OPENING'::text, 'PURCHASE_RECEIPT'::text])) AND (reason_code IS NULL) AND (reason_note IS NULL)) OR ((reverses_movement_id IS NULL) AND (type = 'ADJUSTMENT'::text) AND (reason_code = ANY (${ADJUSTMENT_REASON_CODES})) AND ((reason_code <> 'OTHER'::text) OR (reason_note IS NOT NULL))) OR ((reverses_movement_id IS NULL) AND (type = 'WRITE_OFF'::text) AND (reason_code = ANY (${WRITE_OFF_REASON_CODES})) AND ((reason_code <> 'OTHER'::text) OR (reason_note IS NOT NULL))) OR ((reverses_movement_id IS NOT NULL) AND (reason_code IS NULL) AND (reason_note IS NOT NULL))))`,
+    definition: `CHECK ((((reverses_movement_id IS NULL) AND (type = ANY (ARRAY['OPENING'::text, 'PURCHASE_RECEIPT'::text, 'COUNT_CORRECTION'::text])) AND (reason_code IS NULL) AND (reason_note IS NULL)) OR ((reverses_movement_id IS NULL) AND (type = 'ADJUSTMENT'::text) AND (reason_code IS NOT NULL) AND (reason_code = ANY (${ADJUSTMENT_REASON_CODES})) AND ((reason_code <> 'OTHER'::text) OR (reason_note IS NOT NULL))) OR ((reverses_movement_id IS NULL) AND (type = 'WRITE_OFF'::text) AND (reason_code IS NOT NULL) AND (reason_code = ANY (${WRITE_OFF_REASON_CODES})) AND ((reason_code <> 'OTHER'::text) OR (reason_note IS NOT NULL))) OR ((reverses_movement_id IS NOT NULL) AND (type <> 'COUNT_CORRECTION'::text) AND (reason_code IS NULL) AND (reason_note IS NOT NULL))))`,
+  },
+  {
+    table: "inventory_movements",
+    name: "inventory_movements_count_correction_source",
+    definition: "CHECK (((type = 'COUNT_CORRECTION'::text) = (stocktake_id IS NOT NULL)))",
+  },
+  {
+    table: "inventory_movements",
+    name: "inventory_movements_count_correction_not_reversible",
+    definition: "CHECK (((type <> 'COUNT_CORRECTION'::text) OR (reverses_movement_id IS NULL)))",
+  },
+  {
+    table: "inventory_movements",
+    name: "inventory_movements_count_correction_no_pack",
+    definition: "CHECK (((type <> 'COUNT_CORRECTION'::text) OR (pack_id IS NULL)))",
   },
   {
     table: "inventory_balances",
@@ -384,6 +432,70 @@ const INVENTORY_CHECKS = [
     table: "inventory_stock_thresholds",
     name: "inventory_stock_thresholds_updated_after_created",
     definition: "CHECK ((updated_at >= created_at))",
+  },
+];
+
+/** The Build 2 Slice 6 stocktake CHECKs (ADR-008 section 12; plan 005, W3). */
+const STOCKTAKE_CHECKS = [
+  {
+    table: "stocktakes",
+    name: "stocktakes_status_valid",
+    definition: "CHECK ((status = ANY (ARRAY['DRAFT'::text, 'POSTED'::text, 'CANCELLED'::text])))",
+  },
+  { table: "stocktakes", name: "stocktakes_version_positive", definition: "CHECK ((version >= 1))" },
+  trimmedTextCheck("stocktakes", "note", 500),
+  {
+    table: "stocktakes",
+    name: "stocktakes_posted_shape",
+    definition:
+      "CHECK ((((status = 'POSTED'::text) = (posted_at IS NOT NULL)) AND ((posted_at IS NULL) = (posted_by_membership_id IS NULL)) AND ((posted_at IS NULL) = (business_date IS NULL))))",
+  },
+  {
+    table: "stocktakes",
+    name: "stocktakes_cancelled_shape",
+    definition:
+      "CHECK ((((status = 'CANCELLED'::text) = (cancelled_at IS NOT NULL)) AND ((cancelled_at IS NULL) = (cancelled_by_membership_id IS NULL))))",
+  },
+  {
+    table: "stocktakes",
+    name: "stocktakes_posted_after_created",
+    definition: "CHECK (((posted_at IS NULL) OR (posted_at >= created_at)))",
+  },
+  {
+    table: "stocktakes",
+    name: "stocktakes_cancelled_after_created",
+    definition: "CHECK (((cancelled_at IS NULL) OR (cancelled_at >= created_at)))",
+  },
+  {
+    table: "stocktake_lines",
+    name: "stocktake_lines_status_valid",
+    definition: "CHECK ((status = ANY (ARRAY['COUNTED'::text, 'REMOVED'::text])))",
+  },
+  {
+    table: "stocktake_lines",
+    name: "stocktake_lines_counted_quantity_range",
+    definition: `CHECK (((counted_quantity_minor >= 0) AND (counted_quantity_minor <= ${QUANTITY_BOUND})))`,
+  },
+  {
+    table: "stocktake_lines",
+    name: "stocktake_lines_expected_at_count_range",
+    definition: `CHECK (((expected_at_count_minor >= '-1000000000000000'::bigint) AND (expected_at_count_minor <= ${QUANTITY_BOUND})))`,
+  },
+  {
+    table: "stocktake_lines",
+    name: "stocktake_lines_balance_version_non_negative",
+    definition: "CHECK ((balance_version_at_count >= 0))",
+  },
+  { table: "stocktake_lines", name: "stocktake_lines_version_positive", definition: "CHECK ((version >= 1))" },
+  {
+    table: "stocktake_lines",
+    name: "stocktake_lines_variance_range",
+    definition: `CHECK (((variance_minor IS NULL) OR ((variance_minor >= '-1000000000000000'::bigint) AND (variance_minor <= ${QUANTITY_BOUND}))))`,
+  },
+  {
+    table: "stocktake_lines",
+    name: "stocktake_lines_variance_counted_only",
+    definition: "CHECK (((variance_minor IS NULL) OR (status = 'COUNTED'::text)))",
   },
 ];
 
@@ -721,6 +833,7 @@ const EXPECTED_CHECKS = [
       "CHECK (((reason IS NULL) OR (((char_length(reason) >= 1) AND (char_length(reason) <= 500)) AND (reason ~ '[^[:space:]]'::text))))",
   },
   ...INVENTORY_CHECKS,
+  ...STOCKTAKE_CHECKS,
 ];
 
 /** @type {{ schema: string; name: string; columns: string; predicate: string }[]} */
@@ -772,6 +885,19 @@ const EXPECTED_PARTIAL_UNIQUE_INDEXES = [
     columns: `business_id,${column},variant_id`,
     predicate: `((${column} IS NOT NULL) AND (reverses_movement_id IS NULL))`,
   })),
+  // One DRAFT stocktake per location; one COUNT_CORRECTION per stocktake line (ADR-008 section 12).
+  {
+    schema: "public",
+    name: "stocktakes_one_draft",
+    columns: "business_id,location_id",
+    predicate: "(status = 'DRAFT'::text)",
+  },
+  {
+    schema: "public",
+    name: "inventory_movements_count_correction_unique",
+    columns: "business_id,stocktake_id,variant_id",
+    predicate: "(stocktake_id IS NOT NULL)",
+  },
 ];
 
 /**
@@ -854,6 +980,14 @@ const EXPECTED_TENANT_FOREIGN_KEYS = [
     ["inventory_balances", "variant_id", "product_variants"],
     ["inventory_stock_thresholds", "location_id", "business_locations"],
     ["inventory_stock_thresholds", "variant_id", "product_variants"],
+    // Stocktakes (ADR-008 section 12).
+    ["stocktakes", "location_id", "business_locations"],
+    ["stocktakes", "created_by_membership_id", "business_memberships"],
+    ["stocktakes", "posted_by_membership_id", "business_memberships"],
+    ["stocktakes", "cancelled_by_membership_id", "business_memberships"],
+    ["stocktake_lines", "stocktake_id", "stocktakes"],
+    ["stocktake_lines", "variant_id", "product_variants"],
+    ["stocktake_lines", "counted_by_membership_id", "business_memberships"],
   ].map(([table, column, target]) => ({
     table,
     name: `${table}_business_id_${column}_fkey`,
@@ -885,6 +1019,20 @@ const EXPECTED_TENANT_FOREIGN_KEYS = [
     name: "inventory_movements_reversal_fkey",
     definition:
       "FOREIGN KEY (business_id, reverses_movement_id, location_id, variant_id, type) REFERENCES inventory_movements(business_id, id, location_id, variant_id, type) ON UPDATE RESTRICT ON DELETE RESTRICT",
+  },
+  // A COUNT_CORRECTION names a line of its own stocktake for the movement's own variant,
+  // and is recorded at that stocktake's location.
+  {
+    table: "inventory_movements",
+    name: "inventory_movements_business_id_stocktake_id_variant_id_fkey",
+    definition:
+      "FOREIGN KEY (business_id, stocktake_id, variant_id) REFERENCES stocktake_lines(business_id, stocktake_id, variant_id) ON UPDATE RESTRICT ON DELETE RESTRICT",
+  },
+  {
+    table: "inventory_movements",
+    name: "inventory_movements_business_id_stocktake_id_location_id_fkey",
+    definition:
+      "FOREIGN KEY (business_id, stocktake_id, location_id) REFERENCES stocktakes(business_id, id, location_id) ON UPDATE RESTRICT ON DELETE RESTRICT",
   },
   // A balance's last movement belongs to the same stock item (plan decision D18).
   {
@@ -956,6 +1104,11 @@ const EXPECTED_UNIQUE_INDEXES = [
     name: "inventory_stock_thresholds_stock_item_key",
     columns: "business_id,location_id,variant_id",
   },
+  // Stocktakes (ADR-008 section 12): the line and movement-location foreign-key
+  // targets, and one line per variant per stocktake.
+  { schema: "public", name: "stocktakes_business_id_id_key", columns: "business_id,id" },
+  { schema: "public", name: "stocktakes_business_id_id_location_id_key", columns: "business_id,id,location_id" },
+  { schema: "public", name: "stocktake_lines_pkey", columns: "business_id,stocktake_id,variant_id" },
 ];
 
 /** Reference rows every migrated database must contain (ADR-005 section 5: the pilot currency). */

@@ -47,6 +47,8 @@ export {
   LocationRequiredError,
   NotFoundError,
   PermissionDeniedError,
+  STOCKTAKE_STALE_MAX_IDS,
+  StocktakeStaleError,
   UserDisabledError,
   UserNotRegisteredError,
   ValidationError,

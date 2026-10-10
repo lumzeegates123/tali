@@ -1,6 +1,6 @@
 import { type ArgumentsHost, Catch, type ExceptionFilter, HttpException, HttpStatus, Inject } from "@nestjs/common";
-import { ApplicationError, type ApplicationErrorCode, ValidationError } from "@tali/application";
-import type { ErrorEnvelope } from "@tali/shared";
+import { ApplicationError, type ApplicationErrorCode, StocktakeStaleError, ValidationError } from "@tali/application";
+import { type ErrorEnvelope, StocktakeStaleDetailsSchema } from "@tali/shared";
 import type { NextFunction, Request, Response } from "express";
 import { LOGGER } from "../composition/tokens.js";
 import type { Logger } from "../observability/logger.js";
@@ -22,6 +22,7 @@ const APPLICATION_STATUS: Record<ApplicationErrorCode, number> = {
   CONCURRENT_MODIFICATION: HttpStatus.CONFLICT,
   VERSION_CONFLICT: HttpStatus.CONFLICT,
   INSUFFICIENT_STOCK: HttpStatus.CONFLICT,
+  STOCKTAKE_STALE: HttpStatus.CONFLICT,
 };
 
 const HTTP_CODE: Readonly<Record<number, string>> = {
@@ -64,11 +65,37 @@ function bodyParserError(exception: unknown): ApplicationError | HttpException |
   }
 }
 
+const INTERNAL_ERROR: MappedError = {
+  status: HttpStatus.INTERNAL_SERVER_ERROR,
+  envelope: { error: { code: "INTERNAL_ERROR", message: "An unexpected error occurred" } },
+};
+
+/**
+ * The details an application error may carry: validation issues, or the
+ * strict STOCKTAKE_STALE details (variant IDs and a count, nothing else).
+ * Any other property of an error never reaches the client. Stale details that
+ * fail the shared schema are a server fault, answered as INTERNAL_ERROR.
+ */
+function detailsOf(exception: ApplicationError): { readonly valid: boolean; readonly details?: unknown } {
+  if (exception instanceof ValidationError) {
+    return exception.issues.length > 0 ? { valid: true, details: exception.issues } : { valid: true };
+  }
+  if (exception instanceof StocktakeStaleError) {
+    const parsed = StocktakeStaleDetailsSchema.safeParse({
+      staleVariantIds: [...exception.staleVariantIds],
+      staleLineCount: exception.staleLineCount,
+    });
+    return parsed.success ? { valid: true, details: parsed.data } : { valid: false };
+  }
+  return { valid: true };
+}
+
 /** The only mapping from errors to HTTP responses; the filter and the body-parser handler both use it. */
 export function mapError(raw: unknown): MappedError {
   const exception = bodyParserError(raw) ?? raw;
   if (exception instanceof ApplicationError) {
-    const details = exception instanceof ValidationError && exception.issues.length > 0 ? exception.issues : undefined;
+    const { valid, details } = detailsOf(exception);
+    if (!valid) return INTERNAL_ERROR;
     return {
       status: APPLICATION_STATUS[exception.code],
       envelope: {
@@ -80,10 +107,7 @@ export function mapError(raw: unknown): MappedError {
     const status = exception.getStatus();
     return { status, envelope: { error: { code: HTTP_CODE[status] ?? "BAD_REQUEST", message: exception.message } } };
   }
-  return {
-    status: HttpStatus.INTERNAL_SERVER_ERROR,
-    envelope: { error: { code: "INTERNAL_ERROR", message: "An unexpected error occurred" } },
-  };
+  return INTERNAL_ERROR;
 }
 
 /** Logs and writes the envelope for an error (status and code only below 500; the full error server-side at 500). */

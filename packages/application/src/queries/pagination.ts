@@ -32,8 +32,17 @@ export function parsePageRequest(input: { readonly limit?: number; readonly afte
   try {
     return { limit, after: parseUuid(input.after) };
   } catch {
-    throw new ValidationError("after must be a cursor returned by a previous page", [
-      { path: ["after"], message: "invalid cursor" },
-    ]);
+    throw invalidCursorError();
   }
+}
+
+/**
+ * A malformed cursor, or one that does not resolve within the listed
+ * collection. One error for every cause, so a cursor never reveals whether it
+ * belongs to another business, location or record.
+ */
+export function invalidCursorError(): ValidationError {
+  return new ValidationError("after must be a cursor returned by a previous page", [
+    { path: ["after"], message: "invalid cursor" },
+  ]);
 }

@@ -1,12 +1,15 @@
-// Inventory module (ADR-008 sections 7, 8, 9 and 11; Build 2 Slice 5). Every
-// table is tenant-owned: business_id NOT NULL, UNIQUE (business_id, id) for
-// composite references, and composite foreign keys so a reference never
-// crosses businesses. Quantities are BIGINT minor units of the variant's stock
-// unit. Type, source, direction, reason, pack, range and shape CHECKs, the
-// partial unique indexes (one OPENING per stock item, one original line per
-// document and variant) and the privileges live in the migration SQL. No row
-// is ever deleted. Movements and opening batches are append-only; the only
-// header change is POSTED to REVERSED (a column-level UPDATE grant).
+// Inventory module (ADR-008 sections 7, 8, 9, 11 and 12; Build 2 Slices 5
+// and 6). Every table is tenant-owned: business_id NOT NULL, UNIQUE
+// (business_id, id) for composite references, and composite foreign keys so a
+// reference never crosses businesses. Quantities are BIGINT minor units of the
+// variant's stock unit. Type, source, direction, reason, pack, range and shape
+// CHECKs, the partial unique indexes (one OPENING per stock item, one original
+// line per document and variant, one DRAFT stocktake per location, one
+// COUNT_CORRECTION per stocktake line) and the privileges live in the
+// migration SQL. No row is ever deleted. Movements and opening batches are
+// append-only; receipt and adjustment headers change only POSTED to REVERSED,
+// and stocktakes and their lines only through their lifecycle and count
+// columns (column-level UPDATE grants).
 
 // Opening-stock headers. Never reversed, so never updated.
 model InventoryOpeningBatch {
@@ -101,7 +104,9 @@ model InventoryAdjustment {
 }
 
 // The append-only movement ledger (ADR-008 section 7.1). Exactly one document
-// reference per row, matching its type. A reversal references its original
+// reference per row, matching its type; a COUNT_CORRECTION references its
+// stocktake line, so it carries that line's variant, and its stocktake, so it
+// is recorded at the stocktake's location. A reversal references its original
 // through a composite key that pins the same location, variant and type, and
 // an original is reversed at most once. (business_id, location_id, variant_id,
 // balance_version) is the stock item's gap-free sequence.
@@ -131,17 +136,20 @@ model InventoryMovement {
   occurredAt         DateTime @map("occurred_at") @db.Timestamptz(3)
   businessDate       DateTime @map("business_date") @db.Date
   recordedAt         DateTime @map("recorded_at") @db.Timestamptz(3)
+  stocktakeId        String?  @map("stocktake_id") @db.Uuid
 
-  business     Business               @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  location     BusinessLocation       @relation(fields: [businessId, locationId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
-  variant      ProductVariant         @relation(fields: [businessId, variantId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
-  actor        BusinessMembership     @relation("InventoryMovementActor", fields: [businessId, actorMembershipId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
-  device       Device?                @relation(fields: [businessId, deviceId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
-  openingBatch InventoryOpeningBatch? @relation(fields: [businessId, openingBatchId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
-  goodsReceipt GoodsReceipt?          @relation(fields: [businessId, goodsReceiptId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
-  adjustment   InventoryAdjustment?   @relation(fields: [businessId, adjustmentId, type], references: [businessId, id, kind], onDelete: Restrict, onUpdate: Restrict)
-  pack         ProductPack?           @relation(fields: [businessId, packId, variantId], references: [businessId, id, variantId], onDelete: Restrict, onUpdate: Restrict)
-  reverses     InventoryMovement?     @relation("MovementReversal", fields: [businessId, reversesMovementId, locationId, variantId, type], references: [businessId, id, locationId, variantId, type], onDelete: Restrict, onUpdate: Restrict, map: "inventory_movements_reversal_fkey")
+  business      Business               @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  location      BusinessLocation       @relation(fields: [businessId, locationId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  variant       ProductVariant         @relation(fields: [businessId, variantId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  actor         BusinessMembership     @relation("InventoryMovementActor", fields: [businessId, actorMembershipId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  device        Device?                @relation(fields: [businessId, deviceId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  openingBatch  InventoryOpeningBatch? @relation(fields: [businessId, openingBatchId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  goodsReceipt  GoodsReceipt?          @relation(fields: [businessId, goodsReceiptId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  adjustment    InventoryAdjustment?   @relation(fields: [businessId, adjustmentId, type], references: [businessId, id, kind], onDelete: Restrict, onUpdate: Restrict)
+  stocktakeLine StocktakeLine?         @relation(fields: [businessId, stocktakeId, variantId], references: [businessId, stocktakeId, variantId], onDelete: Restrict, onUpdate: Restrict)
+  stocktake     Stocktake?             @relation(fields: [businessId, stocktakeId, locationId], references: [businessId, id, locationId], onDelete: Restrict, onUpdate: Restrict)
+  pack          ProductPack?           @relation(fields: [businessId, packId, variantId], references: [businessId, id, variantId], onDelete: Restrict, onUpdate: Restrict)
+  reverses      InventoryMovement?     @relation("MovementReversal", fields: [businessId, reversesMovementId, locationId, variantId, type], references: [businessId, id, locationId, variantId, type], onDelete: Restrict, onUpdate: Restrict, map: "inventory_movements_reversal_fkey")
 
   reversals      InventoryMovement[] @relation("MovementReversal")
   lastOfBalances InventoryBalance[]
@@ -197,4 +205,68 @@ model InventoryStockThreshold {
   @@unique([businessId, locationId, variantId], map: "inventory_stock_thresholds_stock_item_key")
   @@index([businessId, variantId])
   @@map("inventory_stock_thresholds")
+}
+
+// Stocktake headers (ADR-008 section 12; Build 2 Slice 6): DRAFT, then POSTED
+// or CANCELLED, each with who and when (POSTED also with its business date).
+// At most one DRAFT per location (a partial unique index in the migration).
+// The application role may update only the lifecycle columns.
+model Stocktake {
+  businessId              String    @map("business_id") @db.Uuid
+  id                      String    @id @db.Uuid
+  locationId              String    @map("location_id") @db.Uuid
+  status                  String
+  version                 Int
+  note                    String?
+  createdByMembershipId   String    @map("created_by_membership_id") @db.Uuid
+  createdAt               DateTime  @map("created_at") @db.Timestamptz(3)
+  postedByMembershipId    String?   @map("posted_by_membership_id") @db.Uuid
+  postedAt                DateTime? @map("posted_at") @db.Timestamptz(3)
+  businessDate            DateTime? @map("business_date") @db.Date
+  cancelledByMembershipId String?   @map("cancelled_by_membership_id") @db.Uuid
+  cancelledAt             DateTime? @map("cancelled_at") @db.Timestamptz(3)
+
+  business    Business            @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  location    BusinessLocation    @relation(fields: [businessId, locationId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  createdBy   BusinessMembership  @relation("StocktakeCreatedBy", fields: [businessId, createdByMembershipId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  postedBy    BusinessMembership? @relation("StocktakePostedBy", fields: [businessId, postedByMembershipId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  cancelledBy BusinessMembership? @relation("StocktakeCancelledBy", fields: [businessId, cancelledByMembershipId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  lines     StocktakeLine[]
+  movements InventoryMovement[]
+
+  @@unique([businessId, id])
+  @@unique([businessId, id, locationId])
+  @@map("stocktakes")
+}
+
+// One counted line per stocktake and variant, keyed by both (no surrogate
+// ID). The counted and expected quantities are minor units of the stock unit
+// at count time; the variance is written once, when the stocktake posts. A
+// COUNT_CORRECTION movement references its line. Never deleted: a removed
+// line is status REMOVED.
+model StocktakeLine {
+  businessId            String   @map("business_id") @db.Uuid
+  stocktakeId           String   @map("stocktake_id") @db.Uuid
+  variantId             String   @map("variant_id") @db.Uuid
+  status                String
+  countedQuantityMinor  BigInt   @map("counted_quantity_minor")
+  stockUnitCode         String   @map("stock_unit_code") @db.VarChar(16)
+  expectedAtCountMinor  BigInt   @map("expected_at_count_minor")
+  balanceVersionAtCount Int      @map("balance_version_at_count")
+  version               Int
+  countedByMembershipId String   @map("counted_by_membership_id") @db.Uuid
+  countedAt             DateTime @map("counted_at") @db.Timestamptz(3)
+  varianceMinor         BigInt?  @map("variance_minor")
+
+  business  Business           @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  stocktake Stocktake          @relation(fields: [businessId, stocktakeId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  variant   ProductVariant     @relation(fields: [businessId, variantId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  stockUnit UnitOfMeasure      @relation(fields: [stockUnitCode], references: [code], onDelete: Restrict, onUpdate: Restrict)
+  countedBy BusinessMembership @relation("StocktakeLineCountedBy", fields: [businessId, countedByMembershipId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  movements InventoryMovement[]
+
+  @@id([businessId, stocktakeId, variantId])
+  @@map("stocktake_lines")
 }

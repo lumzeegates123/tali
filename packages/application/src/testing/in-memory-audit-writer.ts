@@ -40,6 +40,7 @@ export class InMemoryAuditWriter implements AuditWriter, RollbackParticipant {
     this.#unitOfWork?.assertActive(scope);
     this.failures.check(`audit.${record.action}`);
     this.#business.push(record);
+    this.failures.checkAfter(`audit.${record.action}`);
   }
 
   async recordPlatformEvent(scope: TransactionScope, record: PlatformAuditRecord): Promise<void> {

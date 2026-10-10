@@ -13,12 +13,14 @@ import {
   LocationRequiredError,
   NotFoundError,
   PermissionDeniedError,
+  StocktakeStaleError,
   UserDisabledError,
   UserNotRegisteredError,
   ValidationError,
   VersionConflictError,
 } from "@tali/application";
-import { ErrorEnvelopeSchema } from "@tali/shared";
+import { parseProductVariantId } from "@tali/domain";
+import { ErrorEnvelopeSchema, StocktakeStaleErrorEnvelopeSchema } from "@tali/shared";
 import { describe, expect, it } from "vitest";
 import { JsonLogger } from "../observability/logger.js";
 import { ErrorEnvelopeFilter, mapError, preRoutingErrorHandler } from "./error-envelope.filter.js";
@@ -64,6 +66,11 @@ describe("ErrorEnvelopeFilter", () => {
     [new ConcurrentModificationError(), 409, "CONCURRENT_MODIFICATION"],
     [new VersionConflictError(), 409, "VERSION_CONFLICT"],
     [new InsufficientStockError(), 409, "INSUFFICIENT_STOCK"],
+    [
+      new StocktakeStaleError([parseProductVariantId("019a0000-0000-7000-8000-000000000001")], 1),
+      409,
+      "STOCKTAKE_STALE",
+    ],
   ] as const)("maps %s to %i %s", (error: ApplicationError, status, code) => {
     const result = run(error);
     expect(result.status).toBe(status);
@@ -73,6 +80,46 @@ describe("ErrorEnvelopeFilter", () => {
   it("includes validation issues as details", () => {
     const result = run(new ValidationError("bad", [{ path: ["name"], message: "required" }]));
     expect(result.body.error.details).toEqual([{ path: ["name"], message: "required" }]);
+  });
+
+  describe("STOCKTAKE_STALE details", () => {
+    const first = parseProductVariantId("019a0000-0000-7000-8000-000000000002");
+    const second = parseProductVariantId("019a0000-0000-7000-8000-000000000001");
+
+    it("carries exactly the sorted stale variant IDs and the stale line count, validated by the shared schema", () => {
+      const result = run(new StocktakeStaleError([first, second], 7));
+      expect(result.status).toBe(409);
+      expect(StocktakeStaleErrorEnvelopeSchema.parse(result.body)).toEqual({
+        error: {
+          code: "STOCKTAKE_STALE",
+          message: "The stocktake is stale and must be recounted",
+          details: { staleVariantIds: [second, first], staleLineCount: 7 },
+        },
+      });
+    });
+
+    it("never passes other properties of an application error to the client", () => {
+      const stale = Object.assign(new StocktakeStaleError([first], 1), {
+        balanceVersions: [3],
+        quantities: ["10"],
+        businessId: "019a0000-0000-7000-8000-00000000000b",
+      });
+      const conflict = Object.assign(new ConflictError("already exists"), { staleVariantIds: [first], secret: "x" });
+      expect(run(stale).body.error.details).toEqual({ staleVariantIds: [first], staleLineCount: 1 });
+      expect(run(conflict).body.error).toEqual({ code: "CONFLICT", message: "already exists" });
+    });
+
+    it("answers stale details that break the shared schema as a generic 500", () => {
+      const corrupt = new StocktakeStaleError([first], 1);
+      Object.defineProperty(corrupt, "staleVariantIds", { value: ["not-a-uuid"] });
+      const result = run(corrupt);
+      expect(result.status).toBe(500);
+      expect(result.body).toEqual({ error: { code: "INTERNAL_ERROR", message: "An unexpected error occurred" } });
+    });
+  });
+
+  it("keeps validation details unchanged and omits empty ones", () => {
+    expect(run(new ValidationError("bad")).body.error).toEqual({ code: "VALIDATION_FAILED", message: "bad" });
   });
 
   it("maps framework 4xx HttpExceptions to envelope codes", () => {

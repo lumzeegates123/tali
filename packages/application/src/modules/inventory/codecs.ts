@@ -12,6 +12,8 @@ import type {
   LocationId,
   OpeningBatch,
   OpeningBatchId,
+  Stocktake,
+  StocktakeId,
 } from "@tali/domain";
 import {
   BusinessDate,
@@ -23,6 +25,7 @@ import {
   parseInventoryNote,
   parseLocationId,
   parseOpeningBatchId,
+  parseStocktakeId,
 } from "@tali/domain";
 import type { IdempotentResultCodec } from "../../idempotency/keyed-idempotency.js";
 import type { JsonObject } from "../../idempotency/result-json.js";
@@ -170,6 +173,62 @@ export const goodsReceiptSnapshotCodec: IdempotentResultCodec<GoodsReceiptSnapsh
       id: parseGoodsReceiptId(textAt(root, "id")),
       ...(reference === undefined ? {} : { reference: parseGoodsReceiptReference(reference) }),
       ...common,
+    });
+  },
+};
+
+/**
+ * The immutable creation snapshot CreateStocktake stores for replay (Slice 6
+ * plan section 8): the DRAFT version-1 header as created. A replay returns it
+ * unchanged after counts, posting or cancellation; current state is read with
+ * GetStocktake, never through the creation key.
+ */
+export interface StocktakeCreationSnapshot {
+  readonly stocktakeId: StocktakeId;
+  readonly locationId: LocationId;
+  readonly status: "DRAFT";
+  readonly version: 1;
+  readonly note?: InventoryNote;
+  readonly createdAt: Date;
+}
+
+export function stocktakeCreationSnapshot(stocktake: Stocktake): StocktakeCreationSnapshot {
+  if (stocktake.status !== "DRAFT" || stocktake.version !== 1) {
+    throw new Error("a stocktake creation snapshot is taken of the new DRAFT version 1");
+  }
+  return Object.freeze({
+    stocktakeId: stocktake.id,
+    locationId: stocktake.locationId,
+    status: "DRAFT",
+    version: 1,
+    ...(stocktake.note === undefined ? {} : { note: stocktake.note }),
+    createdAt: stocktake.createdAt,
+  });
+}
+
+export const stocktakeCreationSnapshotCodec: IdempotentResultCodec<StocktakeCreationSnapshot> = {
+  encode: (snapshot) => ({
+    stocktake: {
+      stocktakeId: snapshot.stocktakeId,
+      locationId: snapshot.locationId,
+      status: snapshot.status,
+      version: snapshot.version,
+      ...(snapshot.note === undefined ? {} : { note: snapshot.note }),
+      createdAt: snapshot.createdAt.toISOString(),
+    },
+  }),
+  decode(stored) {
+    const root = objectAt(objectAt(stored, "result")["stocktake"], "stocktake");
+    if (textAt(root, "status") !== "DRAFT") throw new Error('stored result "status" is not DRAFT');
+    if (integerAt(root, "version") !== 1) throw new Error('stored result "version" is not 1');
+    const note = optionalTextAt(root, "note");
+    return Object.freeze({
+      stocktakeId: parseStocktakeId(textAt(root, "stocktakeId")),
+      locationId: parseLocationId(textAt(root, "locationId")),
+      status: "DRAFT",
+      version: 1,
+      ...(note === undefined ? {} : { note: parseInventoryNote(note) }),
+      createdAt: instantAt(root, "createdAt"),
     });
   },
 };

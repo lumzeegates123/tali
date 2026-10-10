@@ -26,7 +26,10 @@ import {
   parseInventoryReasonNote,
   parseOpeningBatchId,
   parsePackSnapshot,
+  parseStocktakeId,
+  planCountCorrections,
   planStockChange,
+  restoreMovement,
   restoreStockBalance,
   reverseDocumentMovements,
 } from "./index.js";
@@ -62,6 +65,7 @@ const SOURCES: Readonly<Record<InventoryMovementType, InventoryMovementSource>> 
   PURCHASE_RECEIPT: { kind: "GOODS_RECEIPT", id: parseGoodsReceiptId(uuid(0x21)) },
   ADJUSTMENT: { kind: "ADJUSTMENT", id: parseInventoryAdjustmentId(uuid(0x22)) },
   WRITE_OFF: { kind: "ADJUSTMENT", id: parseInventoryAdjustmentId(uuid(0x23)) },
+  COUNT_CORRECTION: { kind: "STOCKTAKE", id: parseStocktakeId(uuid(0x24)) },
 };
 
 const REASONS: Readonly<Record<InventoryMovementType, AdjustmentReason | undefined>> = {
@@ -69,6 +73,7 @@ const REASONS: Readonly<Record<InventoryMovementType, AdjustmentReason | undefin
   PURCHASE_RECEIPT: undefined,
   ADJUSTMENT: parseAdjustmentReason({ kind: "ADJUSTMENT", reasonCode: "DATA_ENTRY_CORRECTION" }),
   WRITE_OFF: parseAdjustmentReason({ kind: "WRITE_OFF", reasonCode: "SPOILED" }),
+  COUNT_CORRECTION: undefined,
 };
 
 const reversalReason = parseInventoryReasonNote("Posted against the wrong delivery", "reason");
@@ -509,14 +514,14 @@ describe("planStockChange: lines and balances", () => {
     );
   });
 
-  it("rejects COUNT_CORRECTION, which arrives in Slice 6", () => {
+  it("rejects COUNT_CORRECTION: that type is planned by planCountCorrections", () => {
     expectDomainError(
       () =>
         planStockChange({
           businessId,
           locationId,
-          type: "COUNT_CORRECTION" as InventoryMovementType,
-          source: SOURCES.ADJUSTMENT,
+          type: "COUNT_CORRECTION",
+          source: SOURCES.COUNT_CORRECTION,
           lines: [line(1, variantA, 1n)],
           balances: [balance(variantA, 0n, 0)],
           recording,
@@ -577,6 +582,41 @@ describe("reverseDocumentMovements", () => {
     const restored = reverse(writeOff.movements, writeOff.balances);
     expect(restored.movements[0]?.delta.amountMinor).toBe(2n);
     expect(restored.balances[0]?.quantity.amountMinor).toBe(2n);
+  });
+
+  it("never reverses a COUNT_CORRECTION", () => {
+    const planned = planCountCorrections({
+      businessId,
+      locationId,
+      stocktakeId: parseStocktakeId(uuid(0x24)),
+      lines: [
+        { variantId: variantA, counted: quantity(7n), balance: balance(variantA, 10n, 1), movementId: movementId(1) },
+      ],
+      recording,
+    });
+    expectDomainError(() => reverse(planned.movements, planned.balances), "INVALID_TRANSITION", "originals");
+    expectDomainError(
+      () =>
+        reverse(
+          [
+            restoreMovement({
+              id: movementId(2),
+              businessId,
+              locationId,
+              variantId: variantA,
+              type: "COUNT_CORRECTION",
+              delta: quantity(-3n),
+              balanceAfter: quantity(7n),
+              balanceVersion: 2,
+              source: SOURCES.COUNT_CORRECTION,
+              ...recording,
+            }),
+          ],
+          [balance(variantA, 7n, 2)],
+        ),
+      "INVALID_TRANSITION",
+      "originals",
+    );
   });
 
   it("never reverses a reversal", () => {

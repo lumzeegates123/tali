@@ -9,6 +9,7 @@ import {
   parseOpeningBatchId,
   parseProductPackId,
   parseProductVariantId,
+  parseStocktakeId,
   parseUnitCode,
   Quantity,
   restoreMovement,
@@ -16,6 +17,7 @@ import {
 import type { InventoryMovement as InventoryMovementRow } from "../generated/prisma/client.js";
 import { transactionClient } from "../unit-of-work/transaction-scope.js";
 import { recordingColumns, recordingProps } from "./inventory-rows.js";
+import { toPage } from "./pagination.js";
 
 /** Exactly one typed document column is set per movement (ADR-008 section 8). */
 function sourceColumns(source: InventoryMovementSource) {
@@ -23,6 +25,7 @@ function sourceColumns(source: InventoryMovementSource) {
     openingBatchId: source.kind === "OPENING_BATCH" ? source.id : null,
     goodsReceiptId: source.kind === "GOODS_RECEIPT" ? source.id : null,
     adjustmentId: source.kind === "ADJUSTMENT" ? source.id : null,
+    stocktakeId: source.kind === "STOCKTAKE" ? source.id : null,
   };
 }
 
@@ -34,16 +37,21 @@ function sourceFilter(source: InventoryMovementSource) {
       return { goodsReceiptId: source.id };
     case "ADJUSTMENT":
       return { adjustmentId: source.id };
+    case "STOCKTAKE":
+      return { stocktakeId: source.id };
   }
 }
 
 function toSource(row: InventoryMovementRow): InventoryMovementSource {
-  const set = [row.openingBatchId, row.goodsReceiptId, row.adjustmentId].filter((id) => id !== null);
+  const set = [row.openingBatchId, row.goodsReceiptId, row.adjustmentId, row.stocktakeId].filter((id) => id !== null);
   if (set.length !== 1) throw new Error("a stored movement must reference exactly one document");
   if (row.openingBatchId !== null) return { kind: "OPENING_BATCH", id: parseOpeningBatchId(row.openingBatchId) };
   if (row.goodsReceiptId !== null) return { kind: "GOODS_RECEIPT", id: parseGoodsReceiptId(row.goodsReceiptId) };
-  return { kind: "ADJUSTMENT", id: parseInventoryAdjustmentId(row.adjustmentId as string) };
+  if (row.adjustmentId !== null) return { kind: "ADJUSTMENT", id: parseInventoryAdjustmentId(row.adjustmentId) };
+  return { kind: "STOCKTAKE", id: parseStocktakeId(row.stocktakeId as string) };
 }
+
+const withStockUnit = { variant: { select: { stockUnitCode: true } } } as const;
 
 function toPack(row: InventoryMovementRow) {
   const { packId, packName, packCount, packFactorMinor } = row;
@@ -114,10 +122,52 @@ export function createInventoryMovementRepository(): InventoryMovementRepository
     async listOriginals(scope, businessId, source) {
       const rows = await transactionClient(scope).inventoryMovement.findMany({
         where: { businessId, ...sourceFilter(source), reversesMovementId: null },
-        include: { variant: { select: { stockUnitCode: true } } },
+        include: withStockUnit,
         orderBy: { variantId: "asc" },
       });
       return rows.map((row) => toMovement(row, row.variant.stockUnitCode));
+    },
+
+    async listForSource(scope, businessId, source) {
+      const client = transactionClient(scope);
+      const where = { businessId, ...sourceFilter(source) };
+      const originals = await client.inventoryMovement.findMany({
+        where: { ...where, reversesMovementId: null },
+        include: withStockUnit,
+        orderBy: { variantId: "asc" },
+      });
+      const reversals = await client.inventoryMovement.findMany({
+        where: { ...where, reversesMovementId: { not: null } },
+        include: withStockUnit,
+        orderBy: { variantId: "asc" },
+      });
+      return [...originals, ...reversals].map((row) => toMovement(row, row.variant.stockUnitCode));
+    },
+
+    async listForItem(scope, businessId, locationId, variantId, request) {
+      const client = transactionClient(scope);
+      const item = { businessId, locationId, variantId };
+      let below: { readonly balanceVersion: { readonly lt: number } } | undefined;
+      if (request.after !== undefined) {
+        const cursor = await client.inventoryMovement.findFirst({
+          where: { ...item, id: request.after },
+          select: { balanceVersion: true },
+        });
+        if (cursor === null) return undefined;
+        below = { balanceVersion: { lt: cursor.balanceVersion } };
+      }
+      const rows = await client.inventoryMovement.findMany({
+        where: { ...item, ...below },
+        include: withStockUnit,
+        orderBy: { balanceVersion: "desc" },
+        take: request.limit + 1,
+      });
+      return toPage(
+        rows,
+        request,
+        (row) => row.id,
+        (row) => toMovement(row, row.variant.stockUnitCode),
+      );
     },
   };
 }

@@ -37,6 +37,8 @@ model Business {
   inventoryMovements      InventoryMovement[]
   inventoryBalances       InventoryBalance[]
   inventoryThresholds     InventoryStockThreshold[]
+  stocktakes              Stocktake[]
+  stocktakeLines          StocktakeLine[]
 
   // Target of the catalog's composite currency foreign keys (ADR-008 section
   // 3.4): a stored price is always in its business's currency.
@@ -71,6 +73,10 @@ model BusinessMembership {
   adjustments         InventoryAdjustment[]   @relation("InventoryAdjustmentActor")
   reversedAdjustments InventoryAdjustment[]   @relation("InventoryAdjustmentReversedBy")
   inventoryMovements  InventoryMovement[]     @relation("InventoryMovementActor")
+  createdStocktakes   Stocktake[]             @relation("StocktakeCreatedBy")
+  postedStocktakes    Stocktake[]             @relation("StocktakePostedBy")
+  cancelledStocktakes Stocktake[]             @relation("StocktakeCancelledBy")
+  countedLines        StocktakeLine[]         @relation("StocktakeLineCountedBy")
 
   @@unique([businessId, id])
   @@unique([businessId, userId])

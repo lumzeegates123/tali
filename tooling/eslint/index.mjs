@@ -279,6 +279,8 @@ const NO_DELETE_MODEL_DELEGATES = [
   "inventoryAdjustment",
   "inventoryBalance",
   "inventoryStockThreshold",
+  "stocktake",
+  "stocktakeLine",
 ];
 const BANNED_PROTECTED_MUTATIONS = [
   ...(PROTECTED_MODEL_DELEGATES.length === 0

@@ -14,7 +14,8 @@ model UnitOfMeasure {
   kind  String
   scale Int    @db.SmallInt
 
-  variants ProductVariant[]
+  variants       ProductVariant[]
+  stocktakeLines StocktakeLine[]
 
   @@map("units_of_measure")
 }
@@ -103,6 +104,7 @@ model ProductVariant {
   inventoryMovements  InventoryMovement[]
   inventoryBalances   InventoryBalance[]
   inventoryThresholds InventoryStockThreshold[]
+  stocktakeLines      StocktakeLine[]
 
   @@unique([businessId, id])
   @@unique([businessId, skuNormalized])

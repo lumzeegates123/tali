@@ -32,6 +32,8 @@ export const TENANCY_TABLES = [
   "inventory_balances",
   "inventory_stock_thresholds",
   "inventory_movements",
+  "stocktake_lines",
+  "stocktakes",
   "inventory_opening_batches",
   "goods_receipts",
   "inventory_adjustments",
@@ -420,6 +422,7 @@ export interface InventorySnapshot {
     openingBatchId: string | null;
     goodsReceiptId: string | null;
     adjustmentId: string | null;
+    stocktakeId: string | null;
     packId: string | null;
     packCountText: string | null;
     reversesMovementId: string | null;
@@ -444,6 +447,29 @@ export interface InventorySnapshot {
     variantId: string;
     thresholdText: string | null;
     version: number;
+  }[];
+  readonly stocktakes: readonly {
+    id: string;
+    businessId: string;
+    locationId: string;
+    status: string;
+    version: number;
+    note: string | null;
+    postedByMembershipId: string | null;
+    businessDate: string | null;
+    cancelledByMembershipId: string | null;
+  }[];
+  readonly stocktakeLines: readonly {
+    businessId: string;
+    stocktakeId: string;
+    variantId: string;
+    status: string;
+    countedText: string;
+    stockUnitCode: string;
+    expectedText: string;
+    balanceVersionAtCount: number;
+    version: number;
+    varianceText: string | null;
   }[];
 }
 
@@ -470,7 +496,8 @@ export async function readInventorySnapshot(env: Env = process.env): Promise<Inv
         `SELECT id, business_id AS "businessId", location_id AS "locationId", variant_id AS "variantId", type,
                 quantity_delta_minor::text AS "deltaText", balance_after_minor::text AS "balanceAfterText",
                 balance_version AS "balanceVersion", opening_batch_id AS "openingBatchId",
-                goods_receipt_id AS "goodsReceiptId", adjustment_id AS "adjustmentId", pack_id AS "packId",
+                goods_receipt_id AS "goodsReceiptId", adjustment_id AS "adjustmentId",
+                stocktake_id AS "stocktakeId", pack_id AS "packId",
                 pack_count::text AS "packCountText", reverses_movement_id AS "reversesMovementId",
                 reason_code AS "reasonCode", reason_note AS "reasonNote",
                 actor_membership_id AS "actorMembershipId", correlation_id AS "correlationId",
@@ -486,6 +513,19 @@ export async function readInventorySnapshot(env: Env = process.env): Promise<Inv
         `SELECT id, business_id AS "businessId", location_id AS "locationId", variant_id AS "variantId",
                 low_stock_threshold_minor::text AS "thresholdText", version
          FROM public.inventory_stock_thresholds ORDER BY id`,
+      ),
+      stocktakes: await rows(
+        `SELECT id, business_id AS "businessId", location_id AS "locationId", status, version, note,
+                posted_by_membership_id AS "postedByMembershipId", business_date::text AS "businessDate",
+                cancelled_by_membership_id AS "cancelledByMembershipId"
+         FROM public.stocktakes ORDER BY id`,
+      ),
+      stocktakeLines: await rows(
+        `SELECT business_id AS "businessId", stocktake_id AS "stocktakeId", variant_id AS "variantId", status,
+                counted_quantity_minor::text AS "countedText", stock_unit_code AS "stockUnitCode",
+                expected_at_count_minor::text AS "expectedText", balance_version_at_count AS "balanceVersionAtCount",
+                version, variance_minor::text AS "varianceText"
+         FROM public.stocktake_lines ORDER BY business_id, stocktake_id, variant_id`,
       ),
     };
   });
