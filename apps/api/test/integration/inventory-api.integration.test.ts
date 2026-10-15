@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { type LocationBoundContext, parseCorrelationId } from "@tali/application";
-import { readInventoryConsistency, readInventorySnapshot, tenancyFixtures } from "@tali/database/testing";
+import {
+  readInventoryConsistency,
+  readInventorySnapshot,
+  readTenancySnapshot,
+  tenancyFixtures,
+} from "@tali/database/testing";
 import { parseLocationId } from "@tali/domain";
 import { uuidV7IdGenerator } from "@tali/integrations/platform";
 import {
@@ -20,6 +25,7 @@ import {
 } from "@tali/shared";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type ApiHarness, startApi } from "../support/api-harness.js";
+import { registerDevice, untrustedDeviceCases } from "../support/device-trust.js";
 import {
   code,
   FORBIDDEN_INVENTORY_KEYS,
@@ -32,6 +38,7 @@ import {
   ROLES,
   type StockItem,
 } from "../support/inventory-client.js";
+import { INVENTORY_ROUTES } from "../support/inventory-routes.js";
 import { bearer, type RegisteredActor } from "../support/tenancy-client.js";
 
 describe("Build 2 Slice 5 inventory API over HTTP", () => {
@@ -778,6 +785,290 @@ describe("Build 2 Slice 5 inventory API over HTTP", () => {
         InventoryItemsResponseSchema.parse((await client().get("inventory/balances", other, b).expect(200)).body).items,
       ).toEqual([]);
       expect(await readInventorySnapshot()).toEqual(before);
+    });
+  });
+
+  describe("permission, tenancy and device-trust hardening (Slice 8)", () => {
+    it("lets MANAGER record opening stock, adjust, write off and reverse; denies CASHIER and ACCOUNTANT every reversal", async () => {
+      const manager = as("MANAGER");
+      const fresh = await client().product();
+      const line = (quantityMinor: string) => ({ variantId: fresh.variantId, ...pieces(quantityMinor) });
+      await client()
+        .keyed("inventory/opening-stock", { lines: [line("6")] }, manager)
+        .expect(201);
+      const received = GoodsReceiptResponseSchema.parse((await client().receive([[fresh, "4"]], manager)).body);
+      const adjusted = AdjustmentResponseSchema.parse(
+        (
+          await client()
+            .keyed(
+              "inventory/adjustments",
+              { lines: [{ ...line("2"), direction: "DECREASE" }], reasonCode: "DATA_ENTRY_CORRECTION" },
+              manager,
+            )
+            .expect(201)
+        ).body,
+      );
+      const writtenOff = AdjustmentResponseSchema.parse(
+        (
+          await client()
+            .keyed("inventory/write-offs", { lines: [line("3")], reasonCode: "EXPIRED" }, manager)
+            .expect(201)
+        ).body,
+      );
+      const reversals = [
+        `inventory/goods-receipts/${received.document.id}/reverse`,
+        `inventory/adjustments/${adjusted.document.id}/reverse`,
+        `inventory/adjustments/${writtenOff.document.id}/reverse`,
+      ];
+      const before = await readInventorySnapshot();
+      for (const path of reversals) {
+        for (const role of ["CASHIER", "ACCOUNTANT", "STOCK_KEEPER"] as const) {
+          const denied = await client().post(path, { reason: "x" }, as(role));
+          expect({ path, role, status: denied.status, code: code(denied.body) }).toEqual({
+            path,
+            role,
+            status: 403,
+            code: "PERMISSION_DENIED",
+          });
+        }
+      }
+      expect(await readInventorySnapshot()).toEqual(before);
+      for (const path of reversals) {
+        expect((await client().post(path, { reason: "Manager correction" }, manager).expect(200)).body).toMatchObject({
+          changed: true,
+        });
+      }
+      expect(await item(fresh)).toMatchObject({ onHand: pieces("6") });
+    });
+
+    it("never lets business B record opening stock for A's variant or reverse A's adjustment", async () => {
+      const milk = await client().product();
+      const adjusted = AdjustmentResponseSchema.parse(
+        (
+          await client()
+            .keyed("inventory/adjustments", {
+              lines: [{ variantId: milk.variantId, ...pieces("3"), direction: "INCREASE" }],
+              reasonCode: "FOUND_STOCK",
+            })
+            .expect(201)
+        ).body,
+      );
+      const before = await readInventorySnapshot();
+      const other = world.ownerB;
+      const attempts = [
+        () =>
+          client().keyed(
+            "inventory/opening-stock",
+            { lines: [{ variantId: milk.variantId, ...pieces("1") }] },
+            other,
+            randomUUID(),
+            world.b,
+          ),
+        () =>
+          client().keyed(
+            "inventory/opening-stock",
+            { lines: [{ variantId: milk.variantId, ...pieces("1") }] },
+            other,
+            randomUUID(),
+            world.a,
+          ),
+        () => client().post(`inventory/adjustments/${adjusted.document.id}/reverse`, { reason: "x" }, other, world.b),
+        () => client().post(`inventory/adjustments/${adjusted.document.id}/reverse`, { reason: "x" }, other, world.a),
+        () => client().get(`inventory/adjustments/${adjusted.document.id}`, other, world.b),
+      ];
+      for (const attempt of attempts) {
+        const response = await attempt();
+        expect(response.status).toBe(404);
+        expect(code(response.body)).toBe("NOT_FOUND");
+        expect(JSON.stringify(response.body)).not.toContain(milk.variantId);
+      }
+      expect(await readInventorySnapshot()).toEqual(before);
+    });
+
+    it("fails closed on all 22 inventory routes for every untrusted device case, and a trusted device reaches every handler", async () => {
+      const milk = await client().product();
+      const opened = await client().product();
+      const opening = OpeningBatchResponseSchema.parse(
+        (
+          await client()
+            .keyed("inventory/opening-stock", { lines: [{ variantId: opened.variantId, ...pieces("2") }] })
+            .expect(201)
+        ).body,
+      );
+      const receipt = GoodsReceiptResponseSchema.parse((await client().receive([[milk, "5"]])).body);
+      const adjustment = AdjustmentResponseSchema.parse(
+        (
+          await client()
+            .keyed("inventory/write-offs", {
+              lines: [{ variantId: milk.variantId, ...pieces("1") }],
+              reasonCode: "DAMAGED",
+            })
+            .expect(201)
+        ).body,
+      );
+      const stocktake = (await client().keyed("inventory/stocktakes", {}).expect(201)).body as { stocktakeId: string };
+      const line = { variantId: milk.variantId, ...pieces("1") };
+      const params: Record<string, string> = {
+        ":businessId": world.a,
+        ":variantId": milk.variantId,
+        ":openingBatchId": opening.document.id,
+        ":goodsReceiptId": receipt.document.id,
+        ":adjustmentId": adjustment.document.id,
+        ":stocktakeId": stocktake.stocktakeId,
+      };
+      const bodies: Record<string, unknown> = {
+        "POST /inventory/opening-stock": { lines: [line] },
+        "POST /inventory/goods-receipts": { lines: [line] },
+        "POST /inventory/adjustments": { lines: [{ ...line, direction: "INCREASE" }], reasonCode: "FOUND_STOCK" },
+        "POST /inventory/write-offs": { lines: [line], reasonCode: "DAMAGED" },
+        "POST /inventory/stocktakes": {},
+        "POST /inventory/goods-receipts/:goodsReceiptId/reverse": { reason: "x" },
+        "POST /inventory/adjustments/:adjustmentId/reverse": { reason: "x" },
+        "PUT /inventory/items/:variantId/threshold": { expectedVersion: 0, threshold: pieces("1") },
+        "POST /inventory/items/:variantId/threshold/clear": { expectedVersion: 1 },
+        "PUT /inventory/stocktakes/:stocktakeId/lines/:variantId": { count: pieces("1") },
+        "POST /inventory/stocktakes/:stocktakeId/lines/:variantId/remove": { expectedVersion: 1 },
+        "POST /inventory/stocktakes/:stocktakeId/post": { expectedVersion: 1 },
+        "POST /inventory/stocktakes/:stocktakeId/cancel": { expectedVersion: 1 },
+      };
+      const call = (route: (typeof INVENTORY_ROUTES)[number], headers: Record<string, string>, body?: unknown) => {
+        const [method, template] = route.split(" ") as [string, string];
+        const path = template.replace(/:[A-Za-z]+/g, (param) => params[param] ?? param);
+        const verb = method.toLowerCase() as "get" | "post" | "put";
+        const http = client().http();
+        const prepared = http[verb](path)
+          .set(bearer(as("OWNER").token))
+          .set(headers);
+        if (method === "GET") return prepared;
+        const relative = template.replace("/v1/businesses/:businessId", "");
+        return prepared.set("idempotency-key", randomUUID()).send((body ?? bodies[`${method} ${relative}`]) as object);
+      };
+
+      const cases = await untrustedDeviceCases(api, as("OWNER"), world.a, { owner: world.ownerB, businessId: world.b });
+      const before = { inventory: await readInventorySnapshot(), audit: (await readTenancySnapshot()).businessAudit };
+      expect(INVENTORY_ROUTES).toHaveLength(22);
+      for (const [label, headers] of cases) {
+        for (const route of INVENTORY_ROUTES) {
+          const response = await call(route, headers);
+          expect({ label, route, status: response.status, code: code(response.body) }).toEqual({
+            label,
+            route,
+            status: 403,
+            code: "DEVICE_NOT_TRUSTED",
+          });
+        }
+      }
+      expect({
+        inventory: await readInventorySnapshot(),
+        audit: (await readTenancySnapshot()).businessAudit,
+      }).toEqual(before);
+
+      const trusted = await registerDevice(api, as("OWNER"), world.a, "Trusted counter");
+      for (const route of INVENTORY_ROUTES) {
+        const response = await call(route, trusted.headers, { unexpected: true });
+        const expectedStatus = route.startsWith("GET ") ? 200 : 400;
+        expect({ route, status: response.status }).toEqual({ route, status: expectedStatus });
+      }
+      expect(await readInventorySnapshot()).toEqual(before.inventory);
+    });
+  });
+
+  describe("audit records (Slice 8)", () => {
+    const auditOfA = async () =>
+      (await readTenancySnapshot()).businessAudit.filter((row) => row.businessId === world.a);
+
+    async function audited(call: () => Promise<{ body: unknown; headers: Record<string, unknown> }>) {
+      const before = (await auditOfA()).length;
+      const response = await call();
+      return {
+        body: response.body,
+        correlationId: String(response.headers["x-correlation-id"]),
+        rows: (await auditOfA()).slice(before),
+      };
+    }
+    const actions = (rows: readonly { action: string }[]) => rows.map((row) => row.action);
+
+    it("each document and threshold route writes one record per real change with the request's envelope; replays, no-ops, reuse and denials write none", async () => {
+      const milk = await client().product();
+      const owner = as("OWNER");
+      const line = { variantId: milk.variantId, ...pieces("5") };
+      const creates: [string, string, Record<string, unknown>, string][] = [
+        ["inventory/opening-stock", "inventory.opening_recorded", { lines: [line] }, "inventory_opening_batch"],
+        ["inventory/goods-receipts", "inventory.received", { lines: [line], reference: "DN-7" }, "goods_receipt"],
+        [
+          "inventory/adjustments",
+          "inventory.adjusted",
+          { lines: [{ ...line, direction: "INCREASE" }], reasonCode: "FOUND_STOCK" },
+          "inventory_adjustment",
+        ],
+        [
+          "inventory/write-offs",
+          "inventory.written_off",
+          { lines: [line], reasonCode: "DAMAGED" },
+          "inventory_adjustment",
+        ],
+      ];
+      const documents: Record<string, string> = {};
+      for (const [path, action, body, entityType] of creates) {
+        const key = randomUUID();
+        const fresh = await audited(() => client().keyed(path, body, owner, key).expect(201));
+        const documentId = (fresh.body as { document: { id: string } }).document.id;
+        documents[path] = documentId;
+        expect({ path, actions: actions(fresh.rows) }).toEqual({ path, actions: [action] });
+        expect(fresh.rows[0]).toMatchObject({
+          entityType,
+          entityId: documentId,
+          actorUserId: owner.userId,
+          sourceChannel: "api",
+          correlationId: fresh.correlationId,
+          idempotencyKey: key,
+        });
+        expect((await audited(() => client().keyed(path, body, owner, key).expect(201))).rows).toEqual([]);
+        expect((await audited(() => client().keyed(path, { lines: [] }, owner, key).expect(400))).rows).toEqual([]);
+        expect((await audited(() => client().keyed(path, body, as("CASHIER")).expect(403))).rows).toEqual([]);
+      }
+      const location = (await readInventorySnapshot()).balances[0]?.locationId;
+      expect(location).toBeDefined();
+      const locations = new Set(
+        (await auditOfA()).filter((row) => row.action.startsWith("inventory.")).map((row) => row.locationId),
+      );
+      expect(locations).toEqual(new Set([location]));
+
+      const reversals: [string, string][] = [
+        [`inventory/goods-receipts/${documents["inventory/goods-receipts"]}/reverse`, "inventory.receipt_reversed"],
+        [`inventory/adjustments/${documents["inventory/adjustments"]}/reverse`, "inventory.adjustment_reversed"],
+        [`inventory/adjustments/${documents["inventory/write-offs"]}/reverse`, "inventory.adjustment_reversed"],
+      ];
+      for (const [path, action] of reversals) {
+        expect(
+          (await audited(() => client().post(path, { reason: "x" }, as("STOCK_KEEPER")).expect(403))).rows,
+        ).toEqual([]);
+        const first = await audited(() => client().post(path, { reason: "Entered twice" }).expect(200));
+        expect({ path, actions: actions(first.rows) }).toEqual({ path, actions: [action] });
+        expect((await audited(() => client().post(path, { reason: "Again" }).expect(200))).rows).toEqual([]);
+      }
+
+      const thresholdPath = `inventory/items/${milk.variantId}/threshold`;
+      const set = await audited(() =>
+        client()
+          .put(thresholdPath, { expectedVersion: 0, threshold: pieces("3") })
+          .expect(200),
+      );
+      expect(actions(set.rows)).toEqual(["inventory.low_stock_threshold_set"]);
+      expect(
+        (
+          await audited(() =>
+            client()
+              .put(thresholdPath, { expectedVersion: 1, threshold: pieces("3") })
+              .expect(200),
+          )
+        ).rows,
+      ).toEqual([]);
+      const cleared = await audited(() => client().post(`${thresholdPath}/clear`, { expectedVersion: 1 }).expect(200));
+      expect(actions(cleared.rows)).toEqual(["inventory.low_stock_threshold_cleared"]);
+      expect(
+        (await audited(() => client().post(`${thresholdPath}/clear`, { expectedVersion: 2 }).expect(200))).rows,
+      ).toEqual([]);
     });
   });
 });

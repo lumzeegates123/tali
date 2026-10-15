@@ -28,6 +28,7 @@ import { BUSINESS_SCOPED_PATH } from "../../src/business/business-scoped.control
 import { createApiApplication } from "../../src/bootstrap.js";
 import { type ApiRuntime, createApiRuntime } from "../../src/composition/api-runtime.js";
 import { JsonLogger } from "../../src/observability/logger.js";
+import { INVENTORY_ROUTES } from "../support/inventory-routes.js";
 import { type GuardRef, metadataRoutes, registeredRoutes, type RouteInfo } from "../support/route-inventory.js";
 
 /*
@@ -76,32 +77,6 @@ const TENANCY_AND_CATALOG_ROUTES = [
   "POST /v1/businesses/:businessId/products/:productId/packs",
   "POST /v1/businesses/:businessId/products/:productId/reactivate",
   "PUT /v1/businesses/:businessId/products/:productId/price",
-];
-
-/** Build 2 Slices 5 and 6: the only stock routes, all at the server-resolved default location. */
-const INVENTORY_ROUTES = [
-  "GET /v1/businesses/:businessId/inventory/balances",
-  "GET /v1/businesses/:businessId/inventory/items/:variantId",
-  "GET /v1/businesses/:businessId/inventory/items/:variantId/movements",
-  "GET /v1/businesses/:businessId/inventory/opening-batches/:openingBatchId",
-  "GET /v1/businesses/:businessId/inventory/goods-receipts/:goodsReceiptId",
-  "GET /v1/businesses/:businessId/inventory/adjustments/:adjustmentId",
-  "GET /v1/businesses/:businessId/inventory/stocktakes",
-  "GET /v1/businesses/:businessId/inventory/stocktakes/:stocktakeId",
-  "GET /v1/businesses/:businessId/inventory/stocktakes/:stocktakeId/lines",
-  "POST /v1/businesses/:businessId/inventory/opening-stock",
-  "POST /v1/businesses/:businessId/inventory/goods-receipts",
-  "POST /v1/businesses/:businessId/inventory/adjustments",
-  "POST /v1/businesses/:businessId/inventory/write-offs",
-  "POST /v1/businesses/:businessId/inventory/stocktakes",
-  "POST /v1/businesses/:businessId/inventory/goods-receipts/:goodsReceiptId/reverse",
-  "POST /v1/businesses/:businessId/inventory/adjustments/:adjustmentId/reverse",
-  "PUT /v1/businesses/:businessId/inventory/items/:variantId/threshold",
-  "POST /v1/businesses/:businessId/inventory/items/:variantId/threshold/clear",
-  "PUT /v1/businesses/:businessId/inventory/stocktakes/:stocktakeId/lines/:variantId",
-  "POST /v1/businesses/:businessId/inventory/stocktakes/:stocktakeId/lines/:variantId/remove",
-  "POST /v1/businesses/:businessId/inventory/stocktakes/:stocktakeId/post",
-  "POST /v1/businesses/:businessId/inventory/stocktakes/:stocktakeId/cancel",
 ];
 
 const VARIANT = "019a0000-0000-7000-8000-000000000001";

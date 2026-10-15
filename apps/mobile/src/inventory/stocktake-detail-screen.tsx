@@ -11,6 +11,8 @@ import { entryProblemText, type QuantityEntry, stocktakeCount } from "./quantity
 import { postingSummary } from "./stocktakes-screen";
 
 export const STALE_MESSAGE = "Some stock changed while you were counting. Recount the affected items before posting.";
+export const MORE_STALE_MESSAGE =
+  "More items changed than Tali can list at once. Recount the marked items, then try posting again. If more items still need recounting, Tali will show the next group. Nothing will post until all changed items are recounted.";
 const LINE_VERSION_CONFLICT =
   "This count changed since it was loaded. The latest counts are shown; check the item and count it again.";
 const STOCKTAKE_VERSION_CONFLICT =
@@ -34,10 +36,18 @@ interface CountTarget {
   readonly productId: string | undefined;
 }
 
+/**
+ * The last STOCKTAKE_STALE answer: `lineCount` lines are stale, the API listed
+ * `listedCount` of them, and `variantIds` are the listed ones not yet recounted.
+ * More may be stale than were listed, so recounting every mark does not clear it.
+ */
 interface Stale {
   readonly variantIds: ReadonlySet<string>;
+  readonly listedCount: number;
   readonly lineCount: number;
 }
+
+const NO_STALE: Stale = { variantIds: new Set(), listedCount: 0, lineCount: 0 };
 
 function isStaleFailure(failure: ApiFailure | undefined): boolean {
   return failure?.kind === "api-error" && failure.code === "STOCKTAKE_STALE";
@@ -70,7 +80,7 @@ export function StocktakeDetailScreen({
   const allowed = useAllowed();
   const { units, labels } = useInventory();
   const [state, setState] = useState<DetailState>({ phase: "loading" });
-  const [stale, setStale] = useState<Stale>({ variantIds: new Set(), lineCount: 0 });
+  const [stale, setStale] = useState<Stale>(NO_STALE);
   const [notice, setNotice] = useState<string | undefined>(undefined);
   const [failure, setFailure] = useState<
     { readonly failure: ApiFailure; readonly versionConflict: string } | undefined
@@ -113,6 +123,7 @@ export function StocktakeDetailScreen({
   const canFinish = draft && stocktake.visibility === "FULL" && allowed.can("inventory:count-post");
   const full = stocktake.visibility === "FULL" && lines.every((line) => line.visibility === "FULL");
   const summary = postingSummary(stocktake);
+  const moreStale = stale.lineCount > stale.listedCount;
 
   function nameOf(variantId: string): string {
     const label = labels[variantId];
@@ -132,8 +143,12 @@ export function StocktakeDetailScreen({
     setFailure({ failure: outcomeFailure, versionConflict });
     if (outcomeFailure.kind !== "api-error") return;
     if (outcomeFailure.code === "STOCKTAKE_STALE") {
-      const details = outcomeFailure.stale;
-      setStale({ variantIds: new Set(details?.staleVariantIds ?? []), lineCount: details?.staleLineCount ?? 0 });
+      const listed = outcomeFailure.stale?.staleVariantIds ?? [];
+      setStale({
+        variantIds: new Set(listed),
+        listedCount: listed.length,
+        lineCount: outcomeFailure.stale?.staleLineCount ?? 0,
+      });
       void load();
     } else if (outcomeFailure.code === "VERSION_CONFLICT" || outcomeFailure.code === "CONFLICT") {
       void load();
@@ -148,7 +163,7 @@ export function StocktakeDetailScreen({
     setBusy(false);
     setConfirm(undefined);
     if (outcome.status === "ok") {
-      setStale({ variantIds: new Set(), lineCount: 0 });
+      setStale(NO_STALE);
       setNotice(
         outcome.value.changed
           ? "Stocktake posted. Stock now matches the counts."
@@ -204,14 +219,15 @@ export function StocktakeDetailScreen({
       {stocktake.visibility === "BLIND" && draft ? (
         <Text style={styles.hint}>Count what is on the shelf. Expected quantities are not shown while counting.</Text>
       ) : null}
-      {stale.variantIds.size === 0 && !isStaleFailure(failure?.failure) ? null : (
+      {stale.variantIds.size === 0 && !moreStale && !isStaleFailure(failure?.failure) ? null : (
         <View style={styles.alert} accessibilityRole="alert" accessibilityLiveRegion="assertive">
           <Text>{STALE_MESSAGE}</Text>
-          {stale.lineCount > stale.variantIds.size ? (
+          {moreStale && stale.variantIds.size > 0 ? (
             <Text>
-              {stale.lineCount} items are affected; the first {stale.variantIds.size} are marked below.
+              {stale.lineCount} items are affected; the first {stale.listedCount} are marked below.
             </Text>
           ) : null}
+          {moreStale ? <Text>{MORE_STALE_MESSAGE}</Text> : null}
         </View>
       )}
       {failure === undefined || isStaleFailure(failure.failure) ? null : (
@@ -246,7 +262,7 @@ export function StocktakeDetailScreen({
               if (!current.variantIds.has(result.line.variantId)) return current;
               const variantIds = new Set(current.variantIds);
               variantIds.delete(result.line.variantId);
-              return { variantIds, lineCount: current.lineCount };
+              return { ...current, variantIds };
             });
             setTarget(undefined);
             setFailure(undefined);

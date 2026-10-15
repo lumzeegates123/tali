@@ -11,6 +11,7 @@
 import {
   type AcceptInvitation,
   type AddPack,
+  type ArchiveCategory,
   type ArchiveProduct,
   AuditRecorder,
   type AuthenticatedUserContext,
@@ -20,18 +21,21 @@ import {
   type CreateBusiness,
   type CreateBusinessInput,
   type CreateBusinessOutcome,
+  type CreateCategory,
   type CreateInvitation,
   type CreateProduct,
   type CancelStocktake,
   type CreateStocktake,
   createAcceptInvitation,
   createAddPack,
+  createArchiveCategory,
   createArchiveProduct,
   createBusinessContextResolver,
   createCancelStocktake,
   createChangeMemberRole,
   createClearLowStockThreshold,
   createCreateBusiness,
+  createCreateCategory,
   createCreateInvitation,
   createCreateProduct,
   createCreateStocktake,
@@ -68,8 +72,10 @@ import {
   createRevokeDevice,
   createRevokeInvitation,
   createSetLowStockThreshold,
+  createSetSellingPrice,
   createSuspendMember,
   createUpdateBusinessName,
+  createUpdateCategory,
   createUpdateProduct,
   createUserContextResolver,
   type DefaultLocationResolver,
@@ -107,10 +113,12 @@ import {
   type RevokeDevice,
   type RevokeInvitation,
   type SetLowStockThreshold,
+  type SetSellingPrice,
   type SuspendMember,
   taliAuditRegistry,
   type UnitOfWork,
   type UpdateBusinessName,
+  type UpdateCategory,
   type UpdateProduct,
   type UserId,
 } from "@tali/application";
@@ -160,6 +168,10 @@ export interface Tenancy {
   readonly updateProduct: UpdateProduct;
   readonly archiveProduct: ArchiveProduct;
   readonly reactivateProduct: ReactivateProduct;
+  readonly setSellingPrice: SetSellingPrice;
+  readonly createCategory: CreateCategory;
+  readonly updateCategory: UpdateCategory;
+  readonly archiveCategory: ArchiveCategory;
   readonly addPack: AddPack;
   readonly retirePack: RetirePack;
   readonly recordOpeningStock: RecordOpeningStock;
@@ -344,6 +356,10 @@ export function useTenancyHarness() {
       updateProduct: createUpdateProduct({ ...catalog, inventory: repos.variantInventoryState }),
       archiveProduct: createArchiveProduct(catalog),
       reactivateProduct: createReactivateProduct(catalog),
+      setSellingPrice: createSetSellingPrice(catalog),
+      createCategory: createCreateCategory({ ...catalog, idempotency: businessIdempotency, hasher }),
+      updateCategory: createUpdateCategory(catalog),
+      archiveCategory: createArchiveCategory(catalog),
       addPack: createAddPack({ ...catalog, idempotency: businessIdempotency, hasher }),
       retirePack: createRetirePack(catalog),
       recordOpeningStock: createRecordOpeningStock({ ...stock, openings: repos.inventoryOpeningBatches }),
