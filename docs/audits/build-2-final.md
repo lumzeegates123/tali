@@ -1,9 +1,8 @@
 # Build 2 final audit: product catalog and inventory
 
 - Date: 2026-10-15 (final gates; the reference device walkthrough was on 2026-10-11)
-- Status: **Build 2 COMPLETE** (Slices 0 to 8; all gates passed, including the reference Android device walkthrough;
-  pending human review; the Slice 8 change set is not committed or pushed). **Production release readiness is not
-  claimed.**
+- Status: **Build 2 COMPLETE** (Slices 0 to 8; all gates passed, including the reference Android device walkthrough);
+  Slice 8 submitted as PR #20 for final review. **Production release readiness is not claimed.**
 - Plan: `docs/plans/004-build-2-catalog-inventory.md`. Design: `docs/decisions/ADR-008-catalog-quantity-inventory.md`
   (ACCEPTED 2026-10-05, unchanged by every slice).
 - This record summarizes acceptance across the slices; the evidence is in each slice audit, `build-2-slice-1.md`
@@ -86,8 +85,10 @@
 - **BLIND and FULL separation**: BLIND counters never receive or render `expectedAtCount` or `variance`, and get no
   post or cancel action; FULL roles see them (Slices 6, 7; confirmed on the device with a STOCK_KEEPER and an OWNER).
 - **No `locationId` authority**: clients never send a location; the API resolves it.
-- **No offline inventory persistence**: no tenant data, token or device credential in browser or device storage
-  (store and Playwright storage checks).
+- **No offline catalog/inventory persistence**: catalog and inventory application data are not persisted in browser
+  storage or mobile app-data stores such as AsyncStorage, MMKV or SQLite (store and Playwright storage checks).
+  Browser authentication tokens remain memory-only. Mobile Cognito session material and business-scoped device
+  credentials continue to use the approved SecureStore mechanisms established in Build 1 / ADR-007.
 - **Bundle scans clean**: web, Expo Android and iOS JavaScript, Hermes bytecode and the public app config (Slice 8
   final scan).
 
@@ -111,6 +112,11 @@ Open item for human review: on the Windows development host, the first worker pr
 at 20 s in the full `pnpm test:integration` pipeline (three of the four runs on the finished tree that reached the
 worker suite; the final run passed 12 of 12 tasks). The worker is unchanged by Build 2 Slice 8, the suite passes in isolation, and no assertion failed;
 the root cause is not isolated (`build-2-slice-8.md` section H.2).
+
+Maintainer review disposition: The intermittent Windows worker-process timeout is accepted as a non-blocking
+test-reliability issue for Build 2 acceptance. Its root cause remains unresolved. No worker code, worker
+configuration or timeout was changed; isolated worker runs pass, no worker assertion failed, and the final forced
+full integration run passed. This does not claim that the test-reliability issue is resolved.
 
 ## Limitations and deferred scope
 

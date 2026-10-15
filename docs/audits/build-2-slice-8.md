@@ -2,8 +2,8 @@
 
 - Date: 2026-10-10 (automated waves); 2026-10-11 (reference device walkthrough); 2026-10-14 to 2026-10-15 (final
   gates on the finished tree).
-- Status: **COMPLETE** (all gates passed, including the reference Android device walkthrough; pending human review;
-  nothing committed or pushed). Release readiness is not claimed.
+- Status: **COMPLETE** (all gates passed, including the reference Android device walkthrough); submitted as PR #20
+  for final review. Production release readiness is not claimed.
 - History: on 2026-10-10 this slice was recorded as BLOCKED ("Reference Android device walkthrough blocked: no
   reference device connected"). On 2026-10-11 the human maintainer performed the walkthrough on the physical
   reference device and it passed (section G); the final gates were then rerun on the finished tree (section H).
@@ -280,6 +280,11 @@ Investigation of the worker timeout (runs 5, 6 and 8):
 - Root cause **not isolated** beyond this. No production or test code was changed and no timeout was raised. This
   is recorded as an open, intermittent test-environment issue for human review (section I). It does not affect the
   Slice 8 change set.
+
+Maintainer review disposition: The intermittent Windows worker-process timeout is accepted as a non-blocking
+test-reliability issue for Build 2 acceptance. Its root cause remains unresolved. No worker code, worker
+configuration or timeout was changed; isolated worker runs pass, no worker assertion failed, and the final forced
+full integration run passed. This does not claim that the test-reliability issue is resolved.
 
 ## I. Limitations
 
