@@ -11,7 +11,10 @@ pending human review (`docs/audits/build-2-slice-4.md`). **Slice 5 (inventory co
 all gates passed, pending human review (`docs/audits/build-2-slice-5.md`). **Slice 6 (stocktake and inventory API)
 COMPLETE (2026-10-09)**, with all gates passed, pending human review (`docs/audits/build-2-slice-6.md`). **Slice 7
 (inventory clients) COMPLETE (2026-10-09)**, with all gates passed, pending human review
-(`docs/audits/build-2-slice-7.md`). Slice 8 is not started. Where this plan
+(`docs/audits/build-2-slice-7.md`). **Slice 8 (hardening and acceptance) COMPLETE (2026-10-15)**, with all gates
+passed, including the reference Android device walkthrough, pending human review (`docs/audits/build-2-slice-8.md`).
+**Build 2 COMPLETE (2026-10-15)**, pending human review (`docs/audits/build-2-final.md`); production release
+readiness is not claimed. Where this plan
 and an ADR differ, the ADR is authoritative (`AGENTS.md` section 4).
 
 Scope: implementation steps 3 (product catalog) and 4 (inventory) of `docs/product/mvp-scope.md`, quantity-only.
@@ -37,7 +40,7 @@ Not in Build 2:
 | 5     | Inventory core: movements, balances, opening, goods receipts, adjustments, write-offs, reversals, low-stock thresholds and the derived low-stock state (domain, application, schema, repositories) | **COMPLETE** (2026-10-08; `docs/audits/build-2-slice-5.md`) |
 | 6     | Stocktake (domain, application, schema) and the inventory API, including threshold endpoints  | **COMPLETE** (2026-10-09; `docs/audits/build-2-slice-6.md`) |
 | 7     | Inventory clients (web and mobile), including threshold management and the LOW STOCK indicator | **COMPLETE** (2026-10-09; `docs/audits/build-2-slice-7.md`) |
-| 8     | Hardening and final acceptance                                                                | Not started                    |
+| 8     | Hardening and final acceptance                                                                | **COMPLETE** (2026-10-15; `docs/audits/build-2-slice-8.md`; Build 2 acceptance in `docs/audits/build-2-final.md`) |
 
 ## 1. Delivery sequence
 
@@ -50,7 +53,7 @@ flowchart TD
   S3 --> S5["S5 Inventory core (COMPLETE)"]
   S5 --> S6["S6 Inventory and stocktake API (COMPLETE)"]
   S6 --> S7["S7 Inventory clients (COMPLETE)"]
-  S4 --> S8["S8 Hardening and acceptance"]
+  S4 --> S8["S8 Hardening and acceptance (COMPLETE)"]
   S7 --> S8
 ```
 
@@ -423,7 +426,24 @@ process-startup or resource failure in which no assertion failed, and it is docu
   - no client-side stock arithmetic beyond display.
 - Stop: as S4.
 
-### S8. Hardening and acceptance
+### S8. Hardening and acceptance: COMPLETE (2026-10-15)
+
+- Outcome: all gates passed; audit in `docs/audits/build-2-slice-8.md` and the Build 2 acceptance record in
+  `docs/audits/build-2-final.md`, pending human review. No new dependency; no schema or migration change.
+  - audit coverage: each effective change writes exactly its designed action set; replays, no-ops, denials and
+    failures write none;
+  - concurrency soak: 11 scenarios without retries, three 25-iteration runs passed;
+  - tenancy, location, permission, device-trust and dependency-boundary review: no bypass found;
+  - one client defect fixed (D1: stale >50 guidance on web and mobile); no server contract change;
+  - low-stock acceptance on web (Playwright) and Android (Jest and the device walkthrough);
+  - reference Android device walkthrough on the debug APK: BLOCKED on 2026-10-10 (no device connected), then PASSED
+    on 2026-10-11 on the physical reference device, including a BLIND STOCK_KEEPER count (release readiness not
+    claimed);
+  - `pnpm verify` needed format and lint fixes, one documented retry of a host-load hook timeout, and a test-fixture
+    reduction after a second host-load timeout before it passed (failed runs recorded in the Slice 8 audit);
+  - final `pnpm test:integration` on the finished tree passed after four failed runs: three intermittent timeouts of
+    the first worker process test (root cause not isolated; worker unchanged; open item for human review) and one
+    Docker engine restart (Slice 8 audit section H.2).
 
 - Content:
   - audit coverage review (every mutation writes exactly one record, no-ops none);

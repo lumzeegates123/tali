@@ -1,5 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { readInventoryConsistency, readInventorySnapshot } from "@tali/database/testing";
+import { parseCorrelationId } from "@tali/application";
+import {
+  readInventoryConsistency,
+  readInventorySnapshot,
+  readTenancySnapshot,
+  tenancyFixtures,
+} from "@tali/database/testing";
+import { parseLocationId } from "@tali/domain";
+import { uuidV7IdGenerator } from "@tali/integrations/platform";
 import {
   CancelStocktakeResponseSchema,
   DEVICE_CREDENTIAL_HEADER,
@@ -573,6 +581,193 @@ describe("Build 2 Slice 6 stocktake API over HTTP", () => {
       );
       expect(own.items).toEqual([]);
       expect(await readInventorySnapshot()).toEqual(before);
+    });
+  });
+
+  describe("permission and location hardening (Slice 8)", () => {
+    it("denies CASHIER and ACCOUNTANT count, remove, post and cancel on an existing DRAFT, and writes nothing", async () => {
+      const milk = await client().product();
+      await client().receive([[milk, "5"]]);
+      const id = (await create()).stocktakeId;
+      const counted = await count(id, milk, { count: pieces("4") });
+      const version = counted.stocktake.version;
+      const before = { inventory: await readInventorySnapshot(), audit: (await readTenancySnapshot()).businessAudit };
+      for (const role of ["CASHIER", "ACCOUNTANT"] as const) {
+        const attempts: [string, () => PromiseLike<{ status: number; body: unknown }>][] = [
+          [
+            "count",
+            () =>
+              client().put(
+                stocktakePath(id, `/lines/${milk.variantId}`),
+                { count: pieces("3"), expectedVersion: counted.line.version },
+                as(role),
+              ),
+          ],
+          [
+            "remove",
+            () =>
+              client().post(
+                stocktakePath(id, `/lines/${milk.variantId}/remove`),
+                { expectedVersion: counted.line.version },
+                as(role),
+              ),
+          ],
+          ["post", () => client().post(stocktakePath(id, "/post"), { expectedVersion: version }, as(role))],
+          ["cancel", () => client().post(stocktakePath(id, "/cancel"), { expectedVersion: version }, as(role))],
+        ];
+        for (const [action, attempt] of attempts) {
+          const response = await attempt();
+          expect({ role, action, status: response.status, code: code(response.body) }).toEqual({
+            role,
+            action,
+            status: 403,
+            code: "PERMISSION_DENIED",
+          });
+        }
+      }
+      expect({ inventory: await readInventorySnapshot(), audit: (await readTenancySnapshot()).businessAudit }).toEqual(
+        before,
+      );
+    });
+
+    it("lets MANAGER post and cancel", async () => {
+      const milk = await client().product();
+      await client().receive([[milk, "5"]]);
+      const manager = as("MANAGER");
+      const first = (await create(manager)).stocktakeId;
+      const counted = await count(first, milk, { count: pieces("3") }, manager);
+      const posted = PostStocktakeResponseSchema.parse(
+        (
+          await client()
+            .post(stocktakePath(first, "/post"), { expectedVersion: counted.stocktake.version }, manager)
+            .expect(200)
+        ).body,
+      );
+      expect(posted).toMatchObject({ changed: true, stocktake: { status: "POSTED" } });
+      expect(await onHand(milk)).toBe("3");
+      const second = (await create(manager)).stocktakeId;
+      const cancelled = CancelStocktakeResponseSchema.parse(
+        (
+          await client()
+            .post(stocktakePath(second, "/cancel"), { expectedVersion: await current(second) }, manager)
+            .expect(200)
+        ).body,
+      );
+      expect(cancelled).toMatchObject({ changed: true, stocktake: { status: "CANCELLED" } });
+    });
+
+    it("never shows or changes a stocktake at another location of the same business over HTTP", async () => {
+      const milk = await client().product();
+      await client().receive([[milk, "5"]]);
+      const backId = uuidV7IdGenerator.newId("location");
+      await tenancyFixtures.insertLocation({ id: backId, businessId: world.a, name: "Back store" });
+      const { services } = api.runtime;
+      const identity = await api.identity.verifyAccessToken(as("OWNER").token);
+      const user = await services.userContexts.resolve(identity, {
+        correlationId: parseCorrelationId("s8-back-store"),
+        sourceChannel: "web",
+      });
+      const bound = await services.defaultLocations.resolveDefaultLocation(
+        await services.businessContexts.resolveForUser(user, world.a),
+      );
+      const back = { ...bound, locationId: parseLocationId(backId) };
+      await services.postGoodsReceipt.execute(back, {
+        lines: [{ variantId: milk.variantId, quantityMinor: "9", unit: "PIECE" }],
+        idempotencyKey: randomUUID(),
+      });
+      const { stocktake } = await services.createStocktake.execute(back, { idempotencyKey: randomUUID() });
+      const backLine = await services.recordStocktakeCount.execute(back, {
+        stocktakeId: stocktake.stocktakeId,
+        variantId: milk.variantId,
+        count: { quantityMinor: "8", unit: "PIECE" },
+      });
+      const before = await readInventorySnapshot();
+
+      const listed = StocktakesResponseSchema.parse((await client().get("inventory/stocktakes").expect(200)).body);
+      expect(listed.items).toEqual([]);
+      const backPath = (rest = "") => stocktakePath(stocktake.stocktakeId, rest);
+      const attempts = [
+        () => client().get(backPath()),
+        () => client().get(backPath("/lines")),
+        () =>
+          client().put(backPath(`/lines/${milk.variantId}`), {
+            count: pieces("1"),
+            expectedVersion: backLine.line.version,
+          }),
+        () => client().post(backPath(`/lines/${milk.variantId}/remove`), { expectedVersion: backLine.line.version }),
+        () => client().post(backPath("/post"), { expectedVersion: backLine.stocktake.version }),
+        () => client().post(backPath("/cancel"), { expectedVersion: backLine.stocktake.version }),
+      ];
+      for (const attempt of attempts) {
+        const response = await attempt();
+        expect(response.status).toBe(404);
+        expect(code(response.body)).toBe("NOT_FOUND");
+      }
+      expect(await readInventorySnapshot()).toEqual(before);
+
+      const here = await create();
+      expect(here.stocktakeId).not.toBe(stocktake.stocktakeId);
+      expect(await onHand(milk)).toBe("5");
+    });
+  });
+
+  describe("audit records (Slice 8)", () => {
+    const auditOfA = async () =>
+      (await readTenancySnapshot()).businessAudit.filter((row) => row.businessId === world.a);
+    const actionsSince = async (before: number) => (await auditOfA()).slice(before).map((row) => row.action);
+
+    it("start, post and cancel write one record each; replays, counts, removals, no-ops and denials write none", async () => {
+      const milk = await client().product();
+      const sugar = await client().product();
+      await client().receive([
+        [milk, "5"],
+        [sugar, "5"],
+      ]);
+      const key = randomUUID();
+      let before = (await auditOfA()).length;
+      const started = await client().keyed("inventory/stocktakes", {}, as("OWNER"), key).expect(201);
+      const id = StocktakeCreationResponseSchema.parse(started.body).stocktakeId;
+      const startRows = (await auditOfA()).slice(before);
+      expect(startRows.map((row) => row.action)).toEqual(["inventory.stocktake_started"]);
+      expect(startRows[0]).toMatchObject({
+        entityId: id,
+        actorUserId: as("OWNER").userId,
+        sourceChannel: "api",
+        correlationId: String(started.headers["x-correlation-id"]),
+        idempotencyKey: key,
+      });
+
+      before = (await auditOfA()).length;
+      await client().keyed("inventory/stocktakes", {}, as("OWNER"), key).expect(201);
+      await client().keyed("inventory/stocktakes", {}, as("CASHIER")).expect(403);
+      const counted = await count(id, milk, { count: pieces("4") });
+      await count(id, milk, { count: pieces("3"), expectedVersion: counted.line.version });
+      const sugarLine = await count(id, sugar, { count: pieces("5") });
+      const removePath = stocktakePath(id, `/lines/${sugar.variantId}/remove`);
+      const removed = StocktakeLineChangeResponseSchema.parse(
+        (await client().post(removePath, { expectedVersion: sugarLine.line.version }).expect(200)).body,
+      );
+      await client().post(removePath, { expectedVersion: removed.line.version }).expect(200);
+      await client()
+        .post(stocktakePath(id, "/post"), { expectedVersion: await current(id) }, as("STOCK_KEEPER"))
+        .expect(403);
+      expect(await actionsSince(before)).toEqual([]);
+
+      const version = await current(id);
+      before = (await auditOfA()).length;
+      await client().post(stocktakePath(id, "/post"), { expectedVersion: version }).expect(200);
+      expect(await actionsSince(before)).toEqual(["inventory.stocktake_posted"]);
+      before = (await auditOfA()).length;
+      await client().post(stocktakePath(id, "/post"), { expectedVersion: version }).expect(200);
+      expect(await actionsSince(before)).toEqual([]);
+
+      const next = (await create()).stocktakeId;
+      const cancelBody = { expectedVersion: await current(next), reason: "Wrong day" };
+      before = (await auditOfA()).length;
+      await client().post(stocktakePath(next, "/cancel"), cancelBody, as("STOCK_KEEPER")).expect(403);
+      await client().post(stocktakePath(next, "/cancel"), cancelBody).expect(200);
+      await client().post(stocktakePath(next, "/cancel"), cancelBody).expect(200);
+      expect(await actionsSince(before)).toEqual(["inventory.stocktake_cancelled"]);
     });
   });
 });

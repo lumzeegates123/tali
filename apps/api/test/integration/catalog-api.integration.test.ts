@@ -36,6 +36,7 @@ import {
 import request from "supertest";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { startApi, type ApiHarness } from "../support/api-harness.js";
+import { registerDevice, untrustedDeviceCases } from "../support/device-trust.js";
 import { bearer, createBusinessAs, registerActor, type RegisteredActor } from "../support/tenancy-client.js";
 
 type Role = (typeof MembershipRoleWireSchema.options)[number];
@@ -1079,6 +1080,183 @@ describe("Build 2 Slice 3 catalog API over HTTP", () => {
         expect(response.text).not.toMatch(/_id"|"PK-1"|00036000291452/);
       }
       expect(seen.flatMap((body) => wireSafetyViolations(body))).toEqual([]);
+    });
+  });
+
+  describe("device trust (Slice 8)", () => {
+    it("fails closed on sampled catalog reads and writes for every untrusted device case, and accepts a trusted device", async () => {
+      const owner = as("OWNER");
+      const item = await product({ initialPrice: { amountMinor: "1000", currency: "KES" } });
+      const category = CategoryResponseSchema.parse((await createCategory(owner, "Dairy").expect(201)).body);
+      const pack = PackResponseSchema.parse((await addPack(owner, item.id, { name: "Crate", factorMinor: "24" })).body);
+      const samples: [string, (headers: Record<string, string>) => request.Test][] = [
+        ["list products", (headers) => get(owner, "products").set(headers)],
+        ["read product", (headers) => get(owner, `products/${item.id}`).set(headers)],
+        ["create product", (headers) => createProduct(owner, { name: "Bypass" }).set(headers)],
+        [
+          "rename product",
+          (headers) =>
+            http()
+              .patch(url(world.a, `products/${item.id}`))
+              .set(bearer(owner.token))
+              .set(headers)
+              .send({ expectedVersion: item.version, name: "Bypass" }),
+        ],
+        [
+          "set price",
+          (headers) =>
+            http()
+              .put(url(world.a, `products/${item.id}/price`))
+              .set(bearer(owner.token))
+              .set(headers)
+              .send({ expectedVersion: item.version, price: { amountMinor: "1", currency: "KES" } }),
+        ],
+        [
+          "archive category",
+          (headers) =>
+            http()
+              .post(url(world.a, `categories/${category.id}/archive`))
+              .set(bearer(owner.token))
+              .set(headers)
+              .send({ expectedVersion: category.version }),
+        ],
+        [
+          "retire pack",
+          (headers) =>
+            http()
+              .post(url(world.a, `packs/${pack.id}/retire`))
+              .set(bearer(owner.token))
+              .set(headers)
+              .send({}),
+        ],
+      ];
+      const cases = await untrustedDeviceCases(api, owner, world.a, { owner: world.ownerB, businessId: world.b });
+      const before = { catalog: await readCatalogSnapshot(), audit: (await readTenancySnapshot()).businessAudit };
+      for (const [label, headers] of cases) {
+        for (const [sample, call] of samples) {
+          const response = await call({ ...headers });
+          expect({ label, sample, status: response.status, code: code(response.body) }).toEqual({
+            label,
+            sample,
+            status: 403,
+            code: "DEVICE_NOT_TRUSTED",
+          });
+        }
+      }
+      expect({ catalog: await readCatalogSnapshot(), audit: (await readTenancySnapshot()).businessAudit }).toEqual(
+        before,
+      );
+      const trusted = await registerDevice(api, owner, world.a, "Trusted counter");
+      await get(owner, "products")
+        .set({ ...trusted.headers })
+        .expect(200);
+      await createProduct(owner, { name: "Trusted create" })
+        .set({ ...trusted.headers })
+        .expect(201);
+    });
+  });
+
+  describe("audit records (Slice 8)", () => {
+    const auditOfA = async () =>
+      (await readTenancySnapshot()).businessAudit.filter((row) => row.businessId === world.a);
+
+    it("each catalog mutation route writes its designed action set once; replays, no-ops and denials write none", async () => {
+      const owner = as("OWNER");
+      const send = async (
+        call: () => request.Test,
+        status: number,
+      ): Promise<{ body: unknown; rows: Awaited<ReturnType<typeof auditOfA>>; correlationId: string }> => {
+        const before = (await auditOfA()).length;
+        const response = await call().expect(status);
+        return {
+          body: response.body as unknown,
+          rows: (await auditOfA()).slice(before),
+          correlationId: String(response.headers["x-correlation-id"]),
+        };
+      };
+      const actions = (rows: readonly { action: string }[]) => rows.map((row) => row.action);
+      const expectEnvelope = (
+        rows: readonly { actorUserId: string | null; sourceChannel: string; correlationId: string }[],
+        correlationId: string,
+      ) => {
+        for (const row of rows) {
+          expect(row).toMatchObject({ actorUserId: owner.userId, sourceChannel: "api", correlationId });
+        }
+      };
+
+      const categoryKey = randomUUID();
+      const createdCategory = await send(() => createCategory(owner, "Dairy", categoryKey), 201);
+      const category = CategoryResponseSchema.parse(createdCategory.body);
+      expect(actions(createdCategory.rows)).toEqual(["product_category.created"]);
+      expect(createdCategory.rows[0]).toMatchObject({ entityId: category.id, idempotencyKey: categoryKey });
+      expectEnvelope(createdCategory.rows, createdCategory.correlationId);
+      expect((await send(() => createCategory(owner, "Dairy", categoryKey), 201)).rows).toEqual([]);
+      const categoryPath = url(world.a, `categories/${category.id}`);
+      const patchCategory = (name: string, expectedVersion: number) => () =>
+        http().patch(categoryPath).set(bearer(owner.token)).send({ expectedVersion, name });
+      expect((await send(patchCategory("Dairy", 1), 200)).rows).toEqual([]);
+      expect(actions((await send(patchCategory("Milk and dairy", 1), 200)).rows)).toEqual(["product_category.updated"]);
+      const archiveCategory = (expectedVersion: number) => () =>
+        http().post(`${categoryPath}/archive`).set(bearer(owner.token)).send({ expectedVersion });
+      expect(actions((await send(archiveCategory(2), 200)).rows)).toEqual(["product_category.archived"]);
+      expect((await send(archiveCategory(3), 200)).rows).toEqual([]);
+
+      const productKey = randomUUID();
+      const pricedBody = { name: "Milo 500g", initialPrice: { amountMinor: "320000", currency: "KES" } };
+      const created = await send(() => createProduct(owner, pricedBody, productKey), 201);
+      const item = ProductResponseSchema.parse(created.body);
+      expect(actions(created.rows)).toEqual(["product.created", "product.price_set"]);
+      expect(created.rows.every((row) => row.entityId === item.id && row.idempotencyKey === productKey)).toBe(true);
+      expectEnvelope(created.rows, created.correlationId);
+      expect((await send(() => createProduct(owner, pricedBody, productKey), 201)).rows).toEqual([]);
+      expect((await send(() => createProduct(owner, { name: "Other" }, productKey), 409)).rows).toEqual([]);
+
+      const productPath = url(world.a, `products/${item.id}`);
+      let version = item.version;
+      const patchProduct = (name: string) => () =>
+        http().patch(productPath).set(bearer(owner.token)).send({ expectedVersion: version, name });
+      expect((await send(patchProduct("Milo 500g"), 200)).rows).toEqual([]);
+      const renamed = await send(patchProduct("Milo Tin 500g"), 200);
+      expect(actions(renamed.rows)).toEqual(["product.updated"]);
+      version = ProductResponseSchema.parse(renamed.body).version;
+      const putPrice = (amountMinor: string) => () =>
+        http()
+          .put(`${productPath}/price`)
+          .set(bearer(owner.token))
+          .send({ expectedVersion: version, price: { amountMinor, currency: "KES" } });
+      expect((await send(putPrice("320000"), 200)).rows).toEqual([]);
+      const repriced = await send(putPrice("335000"), 200);
+      expect(actions(repriced.rows)).toEqual(["product.price_set"]);
+      version = ProductResponseSchema.parse(repriced.body).version;
+      const lifecycle = (path: "archive" | "reactivate") => () =>
+        http().post(`${productPath}/${path}`).set(bearer(owner.token)).send({ expectedVersion: version });
+      const archived = await send(lifecycle("archive"), 200);
+      expect(actions(archived.rows)).toEqual(["product.archived"]);
+      version = ProductResponseSchema.parse(archived.body).version;
+      expect((await send(lifecycle("archive"), 200)).rows).toEqual([]);
+      const reactivated = await send(lifecycle("reactivate"), 200);
+      expect(actions(reactivated.rows)).toEqual(["product.reactivated"]);
+      version = ProductResponseSchema.parse(reactivated.body).version;
+      expect((await send(lifecycle("reactivate"), 200)).rows).toEqual([]);
+
+      const packKey = randomUUID();
+      const packBody = { name: "Carton", factorMinor: "12" };
+      const added = await send(() => addPack(owner, item.id, packBody, packKey), 201);
+      const pack = PackResponseSchema.parse(added.body);
+      expect(actions(added.rows)).toEqual(["product_pack.added"]);
+      expect(added.rows[0]).toMatchObject({ entityId: pack.id, idempotencyKey: packKey });
+      expect((await send(() => addPack(owner, item.id, packBody, packKey), 201)).rows).toEqual([]);
+      const retire = () =>
+        http()
+          .post(url(world.a, `packs/${pack.id}/retire`))
+          .set(bearer(owner.token))
+          .send({});
+      expect(actions((await send(retire, 200)).rows)).toEqual(["product_pack.retired"]);
+      expect((await send(retire, 200)).rows).toEqual([]);
+
+      expect((await send(() => createProduct(as("CASHIER"), { name: "Denied" }), 403)).rows).toEqual([]);
+      expect((await send(() => createCategory(as("ACCOUNTANT"), "Denied"), 403)).rows).toEqual([]);
+      expect((await send(() => createProduct(owner, { name: "" }), 400)).rows).toEqual([]);
     });
   });
 });

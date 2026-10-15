@@ -6,7 +6,7 @@ import { BackHandler } from "react-native";
 import { IDEMPOTENCY_KEY_HEADER } from "../src/api/tali-api-client";
 import { createSessionStore, SessionProvider } from "../src/auth/session-context";
 import { installSecureRandom } from "../src/ids/secure-random";
-import { STALE_MESSAGE } from "../src/inventory/stocktake-detail-screen";
+import { MORE_STALE_MESSAGE, STALE_MESSAGE } from "../src/inventory/stocktake-detail-screen";
 import { OnboardingApp } from "../src/onboarding/onboarding-app";
 import { UNITS } from "./support/catalog-fixtures";
 import {
@@ -158,6 +158,87 @@ describe("mobile stock list", () => {
     }
     await openStocktakes();
     expect(screen.queryByRole("button", { name: "Start stocktake" }) !== null).toBe(canCount);
+  });
+});
+
+describe("mobile low-stock sequence", () => {
+  it("follows the API's LOW STOCK through adjustment, receipt and archive, in the list and on the item", async () => {
+    const threshold = pieces("10");
+    const state = (onHand: string, lowStock: boolean, productStatus: "ACTIVE" | "ARCHIVED" = "ACTIVE") => ({
+      ...ITEM,
+      onHand: pieces(onHand),
+      threshold,
+      thresholdVersion: 1,
+      lowStock,
+      productStatus,
+    });
+    const adjustment = adjustmentFixture(ITEM.variantId);
+    const receipt = receiptFixture(ITEM.variantId);
+    const api = inventoryApi("OWNER", [state("15", false)])
+      .on(`POST ${INV}/adjustments`, json(201, adjustment))
+      .on(`GET ${INV}/adjustments/${adjustment.document.id}`, json(200, adjustment))
+      .on(`POST ${INV}/goods-receipts`, json(201, receipt))
+      .on(`GET ${INV}/goods-receipts/${receipt.document.id}`, json(200, receipt));
+    /** The server's answer from now on, for the list and the item. */
+    function serverHas(item: InventoryItemResponse, lowStockList: readonly InventoryItemResponse[] = [item]) {
+      api.on(BALANCES, page(lowStockList)).on(`GET ${INV}/items/${ITEM.variantId}`, json(200, item));
+    }
+    const card = () => screen.getByRole("button", { name: `Open ${ITEM.name}` });
+    async function expectBoth(lowStock: boolean, onHand: string) {
+      expect(screen.queryByText("LOW STOCK") !== null).toBe(lowStock);
+      expect(screen.getByText(`On hand: ${onHand} PIECE`)).toBeTruthy();
+      await press("Back to stock");
+      expect(within(card()).queryByText("LOW STOCK") !== null).toBe(lowStock);
+      expect(within(card()).getByText(`On hand: ${onHand} PIECE`)).toBeTruthy();
+      await press(`Open ${ITEM.name}`);
+    }
+    async function adjustDown(quantity: string) {
+      await press("Adjust stock");
+      await fireEvent.press(screen.getByRole("radio", { name: "Decrease" }));
+      await fireEvent.changeText(screen.getByLabelText("Quantity (PIECE)"), quantity);
+      await fireEvent.press(screen.getByRole("radio", { name: "Data entry correction" }));
+      await press("Adjust stock");
+      await screen.findByRole("header", { name: "Adjustment" });
+      await press("Back");
+    }
+
+    await openInventory(api);
+    expect(within(card()).queryByText("LOW STOCK")).toBeNull();
+    await press(`Open ${ITEM.name}`);
+    await expectBoth(false, "15");
+
+    serverHas(state("10", true));
+    await adjustDown("5");
+    await expectBoth(true, "10");
+
+    serverHas(state("13", false));
+    await press("Receive stock");
+    await fireEvent.changeText(screen.getByLabelText("Quantity (PIECE)"), "3");
+    await press("Receive stock");
+    await screen.findByRole("header", { name: "Goods receipt" });
+    await press("Back");
+    await expectBoth(false, "13");
+
+    serverHas(state("5", true));
+    await adjustDown("8");
+    await expectBoth(true, "5");
+
+    const archived = state("5", false, "ARCHIVED");
+    serverHas(archived, []);
+    await press("Back to stock");
+    await fireEvent.press(screen.getByRole("checkbox", { name: "Low stock only" }));
+    await settle();
+    expect(api.to(BALANCES).at(-1)?.query).toBe("?lowStock=true");
+    expect(screen.queryByRole("button", { name: `Open ${ITEM.name}` })).toBeNull();
+    serverHas(archived);
+    await fireEvent.press(screen.getByRole("checkbox", { name: "Low stock only" }));
+    await settle();
+    expect(within(card()).getByText("Archived")).toBeTruthy();
+    expect(within(card()).queryByText("LOW STOCK")).toBeNull();
+    await press(`Open ${ITEM.name}`);
+    expect(screen.getByText("Status: Archived")).toBeTruthy();
+    expect(screen.queryByText("LOW STOCK")).toBeNull();
+    expect(api.requests.some((request) => /locationId/u.test(request.query))).toBe(false);
   });
 });
 
@@ -367,6 +448,87 @@ describe("mobile stocktakes", () => {
     await press("Confirm post");
     expect(await screen.findByText("This stocktake was already posted.")).toBeTruthy();
   });
+
+  it("keeps the stale warning while more items changed than were listed, replaces the marks on each STOCKTAKE_STALE, and clears only on a successful post", async () => {
+    // 120 lines are stale on the server. The fake serves only the 60 the two batches list (the second
+    // batch relists 40 that changed again), since every line card re-renders per recount and a larger
+    // stocktake makes this test slow enough to starve the suites running beside it.
+    const items = Array.from({ length: 60 }, (_, index) =>
+      itemFixture({ name: `Item ${String(index + 1).padStart(3, "0")}` }),
+    );
+    const ids = items.map((item) => item.variantId);
+    const stocktake = stocktakeFixture("FULL", { countedLineCount: 120 });
+    const ROUTE = `${INV}/stocktakes/${stocktake.stocktakeId}`;
+    const POST = `POST ${ROUTE}/post`;
+    const api = inventoryApi()
+      .on(STOCKTAKES, page([stocktake]))
+      .on(`GET ${ROUTE}`, json(200, stocktake))
+      .on(`GET ${ROUTE}/lines`, page(ids.map((id) => fullLine(id))))
+      .on(
+        POST,
+        apiError(409, "STOCKTAKE_STALE", "stale", { staleVariantIds: ids.slice(0, 50), staleLineCount: 120 }),
+        apiError(409, "STOCKTAKE_STALE", "stale", { staleVariantIds: ids.slice(10, 60), staleLineCount: 70 }),
+        json(200, { stocktake: { ...stocktake, status: "POSTED", version: 2 }, movements: [], changed: true }),
+      );
+    for (const item of items) {
+      withItem(api, item).on(
+        `PUT ${ROUTE}/lines/${item.variantId}`,
+        json(200, {
+          stocktake,
+          line: fullLine(item.variantId, { version: 2, countedQuantity: pieces("9") }),
+          changed: true,
+        }),
+      );
+    }
+    const MARK = "Stock changed while counting. Recount.";
+    const marks = () => screen.queryAllByText(MARK).length;
+    const marked = (index: number) => {
+      const card = screen.getByText(items[index]?.name ?? "").parent;
+      return card !== null && within(card).queryByText(MARK) !== null;
+    };
+    // Text queries: role queries over many cards make this test very slow.
+    async function recount(index: number) {
+      await fireEvent.press(screen.getByText(`Recount ${items[index]?.name ?? ""}`));
+      await settle();
+      await fireEvent.changeText(screen.getByLabelText("Counted quantity (PIECE)"), "9");
+      await fireEvent.press(screen.getByText("Save count"));
+      await settle();
+    }
+    async function postStocktake() {
+      await press("Post stocktake");
+      await press("Confirm post");
+    }
+
+    await openStocktake(api);
+    await postStocktake();
+    expect(await screen.findByText(STALE_MESSAGE)).toBeTruthy();
+    expect(screen.getByText(MORE_STALE_MESSAGE)).toBeTruthy();
+    expect(screen.getByText("120 items are affected; the first 50 are marked below.")).toBeTruthy();
+    expect(marks()).toBe(50);
+
+    await recount(0);
+    expect(marks()).toBe(49);
+    expect(screen.getByText("120 items are affected; the first 50 are marked below.")).toBeTruthy();
+    for (let index = 1; index < 50; index += 1) await recount(index);
+    expect(marks()).toBe(0);
+    expect(screen.getByText(STALE_MESSAGE)).toBeTruthy();
+    expect(screen.getByText(MORE_STALE_MESSAGE)).toBeTruthy();
+
+    await postStocktake();
+    expect(api.to(POST)).toHaveLength(2);
+    expect(screen.getByText("70 items are affected; the first 50 are marked below.")).toBeTruthy();
+    expect(screen.getByText(MORE_STALE_MESSAGE)).toBeTruthy();
+    expect(marks()).toBe(50);
+    expect([0, 9, 10, 49, 50, 59].map(marked)).toEqual([false, false, true, true, true, true]);
+
+    await recount(50);
+    await postStocktake();
+    expect(api.to(POST)).toHaveLength(3);
+    expect(await screen.findByText("Stocktake posted. Stock now matches the counts.")).toBeTruthy();
+    expect(screen.queryByText(STALE_MESSAGE)).toBeNull();
+    expect(screen.queryByText(MORE_STALE_MESSAGE)).toBeNull();
+    expect(marks()).toBe(0);
+  }, 180_000);
 
   it("guides to the stocktake in progress when starting one conflicts", async () => {
     const { api } = stocktakeApi("STOCK_KEEPER", "BLIND");

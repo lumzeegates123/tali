@@ -3,7 +3,7 @@ import type { InventoryItemResponse } from "@tali/shared";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IDEMPOTENCY_KEY_HEADER } from "../src/lib/api-client/tali-api-client";
-import { STALE_MESSAGE } from "../src/inventory/stocktake-detail";
+import { MORE_STALE_MESSAGE, STALE_MESSAGE } from "../src/inventory/stocktake-detail";
 import { OnboardingApp } from "../src/onboarding/onboarding-app";
 import { UNITS } from "./support/catalog-fixtures";
 import {
@@ -431,6 +431,88 @@ describe("stocktakes", () => {
     expect(api.to(POST).map((request) => request.body)).toEqual([{ expectedVersion: 1 }, { expectedVersion: 1 }]);
     expect(await screen.findByText("This stocktake was already posted.")).toBeDefined();
   });
+
+  it("keeps the stale warning while more items changed than were listed, replaces the marks on each STOCKTAKE_STALE, and clears only on a successful post", async () => {
+    // 120 lines are stale on the server. The fake serves only the 60 the two batches list (the second
+    // batch relists 40 that changed again), since every row re-renders per recount and a larger
+    // stocktake makes this test slow enough to starve the suites running beside it.
+    const items = Array.from({ length: 60 }, (_, index) =>
+      itemFixture({ name: `Item ${String(index + 1).padStart(3, "0")}` }),
+    );
+    const ids = items.map((item) => item.variantId);
+    const stocktake = stocktakeFixture("FULL", { countedLineCount: 120 });
+    const ROUTE = `${INV}/stocktakes/${stocktake.stocktakeId}`;
+    const POST = `POST ${ROUTE}/post`;
+    const api = inventoryApi()
+      .on(STOCKTAKES, page([stocktake]))
+      .on(`GET ${ROUTE}`, json(200, stocktake))
+      .on(`GET ${ROUTE}/lines`, page(ids.map((id) => fullLine(id))))
+      .on(
+        POST,
+        apiError(409, "STOCKTAKE_STALE", "stale", { staleVariantIds: ids.slice(0, 50), staleLineCount: 120 }),
+        apiError(409, "STOCKTAKE_STALE", "stale", { staleVariantIds: ids.slice(10, 60), staleLineCount: 70 }),
+        json(200, { stocktake: { ...stocktake, status: "POSTED", version: 2 }, movements: [], changed: true }),
+      );
+    for (const item of items) {
+      withItem(api, item).on(
+        `PUT ${ROUTE}/lines/${item.variantId}`,
+        json(200, {
+          stocktake,
+          line: fullLine(item.variantId, { version: 2, countedQuantity: pieces("9") }),
+          changed: true,
+        }),
+      );
+    }
+    const marks = () => screen.queryAllByText("Stock changed while counting. Recount.").length;
+    const marked = (index: number) =>
+      screen
+        .getByText(items[index]?.name ?? "")
+        .closest("tr")
+        ?.textContent.includes("Stock changed while counting");
+    // Label and text queries: role queries over a large table make this test very slow.
+    async function recount(index: number) {
+      fireEvent.click(screen.getByLabelText(`Recount ${items[index]?.name ?? ""}`));
+      await act(settle);
+      type("Counted quantity (PIECE)", "9");
+      fireEvent.click(screen.getByText("Save count"));
+      await act(settle);
+    }
+    async function postStocktake() {
+      await click("Post stocktake");
+      await click("Confirm post");
+    }
+
+    await openInventory(api);
+    await openStocktakes();
+    fireEvent.click(screen.getByRole("button", { name: /^Open stocktake started/u }));
+    await act(settle);
+    await postStocktake();
+    expect(screen.getByRole("alert").textContent).toContain(STALE_MESSAGE);
+    expect(screen.getByRole("alert").textContent).toContain(MORE_STALE_MESSAGE);
+    expect(screen.getByText("120 items are affected; the first 50 are marked below.")).toBeDefined();
+    expect(marks()).toBe(50);
+
+    await recount(0);
+    expect(marks()).toBe(49);
+    expect(screen.getByText("120 items are affected; the first 50 are marked below.")).toBeDefined();
+    for (let index = 1; index < 50; index += 1) await recount(index);
+    expect(marks()).toBe(0);
+    expect(screen.getByRole("alert").textContent).toContain(MORE_STALE_MESSAGE);
+
+    await postStocktake();
+    expect(api.to(POST)).toHaveLength(2);
+    expect(screen.getByText("70 items are affected; the first 50 are marked below.")).toBeDefined();
+    expect(screen.getByRole("alert").textContent).toContain(MORE_STALE_MESSAGE);
+    expect(marks()).toBe(50);
+    expect([0, 9, 10, 49, 50, 59].map(marked)).toEqual([false, false, true, true, true, true]);
+
+    await recount(50);
+    await postStocktake();
+    expect(api.to(POST)).toHaveLength(3);
+    expect(await screen.findByText("Stocktake posted. Stock now matches the counts.")).toBeDefined();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(marks()).toBe(0);
+  }, 120_000);
 
   it("cancels after confirmation with an optional reason", async () => {
     const { api, stocktake, ROUTE } = stocktakeApi("MANAGER", "FULL", fullLine);
