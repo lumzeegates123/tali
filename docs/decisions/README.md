@@ -104,9 +104,10 @@ compliance items remain production deployment conditions, and web hosting remain
 - Money and decimal representation
 - Authorization model (roles, permissions, offline permissions) and its mapping to the authentication provider.
   Decided in ADR-005 (accepted); offline permissions remain with the sync ADR.
-- Ledger design and default chart of accounts (requires accounting review)
-- Configurable tax treatment model (requires accounting review; no hardcoded jurisdiction rules)
-- Inventory valuation method
+- Ledger design and default chart of accounts (requires accounting review). Decided in ADR-009 (accepted).
+- Configurable tax treatment model (requires accounting review; no hardcoded jurisdiction rules). Decided in ADR-010
+  (accepted); pilot tax configuration remains a separate reviewed configuration.
+- Inventory valuation method. Decided in ADR-009 (accepted).
 - Audit log design. Decided in ADR-004 (accepted).
 - Idempotency and outbox design. Decided in ADR-004 (accepted).
 - Offline command queue, local storage, sync lifecycle and conflict (NEEDS_ATTENTION) protocol for the mobile app
@@ -133,6 +134,9 @@ implementation decisions are made.
 | [ADR-006](ADR-006-audit-payload-schema-boundary.md) | Audit payload schema boundary | Accepted (2026-09-29). Supersedes only the Zod-specific implementation wording of ADR-004 section 8.3 (partial supersession). |
 | [ADR-007](ADR-007-mobile-cognito-session-persistence.md) | Mobile Cognito session persistence | Accepted (2026-09-30). Option B: the complete Amplify-managed session in Expo SecureStore through the public storage interface. Partially supersedes only the mobile Cognito persistence wording of ADR-003 section 14.4; ADR-003 remains ACCEPTED and otherwise unchanged. |
 | [ADR-008](ADR-008-catalog-quantity-inventory.md) | Catalog, quantity and inventory model | Accepted (2026-10-05). Build 2: hidden default variant, scaled-integer quantity, append-only movements with a transactional balance, location-scoped low-stock thresholds, quantity-only (no cost or valuation). Partially resolves open decision 9 (inventory portion only). |
+| [ADR-009](ADR-009-ledger-accounting-inventory-valuation.md) | Ledger posting foundation, chart of accounts and inventory valuation | Accepted (2026-10-15). Build 3: balanced immutable journal entries, default chart template v1, perpetual weighted average cost with explicit `VALUED`/`UNVALUED` status, opening and operational valuation. Accountant-reviewed (A1 to A22). Resolves open decision 6; narrows open decision 5. |
+| [ADR-010](ADR-010-configurable-tax-treatment.md) | Configurable tax treatment | Accepted (2026-10-15). Tax architecture only; framework accountant-reviewed (T1 to T7). Default `NO_TAX`; no tax rate or pilot configuration approved, which requires separate reviewed configuration. |
+| [ADR-011](ADR-011-sales-transaction-model.md) | Sales transaction model | Accepted (2026-10-15). Build 3 online, fully tendered sales with line discounts, stock-unit selling and full reversal; posting rule `SALE_POSTED` v1 under ADR-009. Resolves the Build 3 portion of open decision 7 and the sales portion of open decision 9. |
 
 "Reserved" is not an ADR status. It marks a number that an accepted ADR already refers to, so the number is not
 reused for another decision.

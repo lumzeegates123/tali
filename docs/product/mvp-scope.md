@@ -3,7 +3,8 @@
 Status: **APPROVED** product decisions (approved 2026-09-27; amended 2026-09-27 after the governance audit;
 amended 2026-09-27 to record the AWS infrastructure direction; amended 2026-09-29 to record the initial private-pilot
 role vocabulary; amended 2026-10-05 to record the inventory quantity, unit and pack decision of ADR-008 and narrow
-open decision 9).
+open decision 9; amended 2026-10-15 to record the Build 3 ledger, valuation, tax-framework and sales decisions of
+ADR-009, ADR-010 and ADR-011, resolving open decision 6 and narrowing open decisions 5, 7 and 9).
 Sections below are APPROVED unless marked otherwise. The "Open decisions" section is **not** approved and must
 not be treated as decided. Changes to this scope must be recorded here (with date and reason), or in an ADR when
 they affect architecture. Precedence between documents is defined in `AGENTS.md` section 4.
@@ -132,11 +133,13 @@ is an immutable UUID. The receipt number format is decided in the sync ADR.
 - Products have a **selling price** and a **cost price where known**.
 - Transaction lines store **price snapshots** at transaction time (unit price, cost where known, discount, tax
   treatment); later price changes never alter past transactions.
-- **Simple discounts** only (e.g. a fixed amount or percentage on a line or a sale, subject to permission).
+- **Simple discounts** only (e.g. a fixed amount or percentage on a line or a sale, subject to permission). Build 3
+  implements line discounts only (see "Build 3 ledger, valuation, tax framework and sales" below).
 - **No complex promotion engine** (no bundles, rule-based promotions, loyalty schemes or coupon engines in MVP).
 - **Tax:** Tali provides architecture for **configurable tax treatment** (per business and per product/line),
   but **does not invent or hardcode Nigerian tax rules or rates**. Actual pilot accounting and tax configuration
-  **requires accounting review before production use**.
+  **requires accounting review before production use**. The tax architecture is decided in
+  `docs/decisions/ADR-010-configurable-tax-treatment.md` (ACCEPTED 2026-10-15); it approves no rate or configuration.
 
 ### Restocking and purchasing
 
@@ -164,7 +167,32 @@ sections 3.4 and 4. This resolves only the inventory portion of former open deci
 - **Pack data entry for receiving and counting:** packs may be used to enter quantities when receiving and counting
   stock (and for other inventory data entry), and are converted exactly to stock units.
 
-Commercial pack semantics for sales and purchasing are **not** decided here; they remain open decision 9.
+Commercial pack semantics for sales and purchasing are **not** decided here; they remain open decision 9 (its
+Build 3 sales portion is recorded below).
+
+### Build 3 ledger, valuation, tax framework and sales
+
+Approved 2026-10-15 by reference to `docs/decisions/ADR-009-ledger-accounting-inventory-valuation.md`,
+`docs/decisions/ADR-010-configurable-tax-treatment.md` and `docs/decisions/ADR-011-sales-transaction-model.md` (all
+ACCEPTED 2026-10-15, after accountant review recorded in `docs/reviews/build-3-accountant-review.md`). The ADRs are
+authoritative; this is a summary.
+
+- **Ledger and chart of accounts (open decision 5, narrowed):** balanced, immutable journal entries posted only by
+  deterministic domain rules; a versioned default chart template (version 1) of stable system account roles; the
+  Build 3 sale posting rule `SALE_POSTED` version 1. Corrections post reversals.
+- **Tax (open decision 5, narrowed):** only the configurable tax **architecture** is decided. The default is no tax;
+  no tax rate, named tax or pilot treatment is approved or hardcoded. Any pilot tax configuration requires its own
+  reviewed configuration under ADR-010 before it is entered.
+- **Inventory valuation (open decision 6, resolved):** perpetual weighted average cost per business, location and
+  variant, with an explicit `VALUED` / `UNVALUED` status. Stock with unknown cost stays `UNVALUED` (no invented cost,
+  no COGS, value disclosed as incomplete). The initial valuation of never-valued stock is balanced against opening
+  balance equity; a later operational valuation posts its difference as inventory gain or shrinkage, never to
+  opening balance equity, and never rewrites earlier sales or COGS.
+- **Discounts (open decision 7, Build 3 portion):** line-level discounts only, as a fixed amount or basis points;
+  OWNER or MANAGER permission (`sales:discount`); a discount must stay below the line gross (no 100% discount); tax,
+  when configured, is computed after the line discount. No sale-level discounts in Build 3.
+- **Sales packs (open decision 9, sales portion):** Build 3 sells in the stock unit only; no commercial pack
+  selling, no pack price and no pack barcode.
 
 ### Ledger from the first sale
 
@@ -232,7 +260,8 @@ The deterministic business platform. Must be reliable before any AI or channel w
   to receivables; expenses with categories (offline capture of permitted expenses).
 - **Ledger**: posting foundation with the first sales; later completion of reporting (sales summary, simple profit
   and loss, cash/bank balances, stock value, receivables and payables aging), account management, period controls
-  and accountant review capabilities. Default chart of accounts subject to accounting review.
+  and accountant review capabilities. Default chart of accounts subject to accounting review (the Build 3 template
+  was accountant-reviewed and accepted in ADR-009).
 - **Daily close**: operational close as defined above.
 - **Minimal suppliers/purchasing**: the eight purchasing concepts above, with distinct quantities.
 - **Reconciliation**: evidence records and the reconciliation vocabulary (`docs/architecture/reconciliation-principles.md`);
@@ -303,17 +332,31 @@ if restock with cost ships before sales, the posting foundation is built first.
 3. Which roles may operate offline by default, and limits (e.g. maximum offline sale value, maximum offline duration).
 4. Whether offline credit sales or offline customer payments are ever permitted (currently: not in initial offline goals).
 5. Default chart of accounts, posting rules and tax configuration for the pilot (requires accounting review).
-6. Inventory valuation method (requires accounting review and ADR). _Cross-reference (2026-10-05): still open;
-   `docs/decisions/ADR-008-catalog-quantity-inventory.md` (ACCEPTED 2026-10-05) keeps Build 2 quantity-only and
-   leaves this to a future ledger/valuation ADR._
-7. Discount rules: who may apply discounts, maximums, and how discounts interact with tax.
+   _Narrowed 2026-10-15: the ledger architecture, chart-of-accounts approach, Build 3 default chart template and
+   Build 3 sale posting framework are decided by ADR-009 and ADR-011 (ACCEPTED 2026-10-15); see "Build 3 ledger,
+   valuation, tax framework and sales" above. Still open: the actual pilot tax configuration (treatments and rates,
+   which require reviewed configuration under ADR-010; none is approved or hardcoded), and posting rules for later
+   features (payments, receivables, expenses, purchasing), decided with those features._
+6. _Resolved 2026-10-15 by `docs/decisions/ADR-009-ledger-accounting-inventory-valuation.md` (ACCEPTED 2026-10-15):_
+   perpetual weighted average cost per business, location and variant, with explicit `VALUED` / `UNVALUED` status
+   and the opening and operational valuation treatment of ADR-009 sections 20 and 21; see "Build 3 ledger, valuation,
+   tax framework and sales" above. (Formerly: inventory valuation method; ADR-008 had kept Build 2 quantity-only.)
+7. Discount rules: who may apply discounts, maximums, and how discounts interact with tax. _Narrowed 2026-10-15: the
+   Build 3 portion is decided by `docs/decisions/ADR-011-sales-transaction-model.md` (ACCEPTED 2026-10-15): line-level
+   fixed or basis-point discounts only, OWNER/MANAGER permission, discount below the line gross, no sale-level
+   discounts in Build 3; tax is computed after the line discount (ADR-010). Still open: sale-level discounts and any
+   further limits for later builds._
 8. Daily close details: who performs it, whether a day can be reopened, and how late-synced offline records are handled after close.
 9. Commercial pack semantics for sales and purchasing: selling by pack; pack-level selling prices; purchasing and
    commercial cost by pack; transaction-line pack selection and snapshots; and any other sales or purchasing pack
    semantics. _Narrowed 2026-10-05: the inventory portion of the original decision (unit-of-measure and pack model for
    restock, purchasing and sale) is approved by reference to
    `docs/decisions/ADR-008-catalog-quantity-inventory.md` (ACCEPTED 2026-10-05); see "Inventory quantities, units and
-   packs" above. Only the commercial pack semantics listed here remain open._
+   packs" above. Only the commercial pack semantics listed here remain open._ _Narrowed 2026-10-15: for sales,
+   `docs/decisions/ADR-011-sales-transaction-model.md` (ACCEPTED 2026-10-15) decides that Build 3 sells in the stock
+   unit only, with no commercial pack selling, pack price or pack barcode. Purchasing commercial pack semantics
+   (purchasing and commercial cost by pack, purchasing line pack selection and snapshots) remain open for the later
+   purchasing build._
 10. Which payment provider is integrated first.
 11. The narrow WhatsApp flows for the pilot (e.g. record sale, record expense, daily summary, customer balance).
 12. How a single WhatsApp identity selects the active Tali business when the same user belongs to multiple businesses.
