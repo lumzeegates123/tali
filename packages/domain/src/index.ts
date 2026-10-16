@@ -10,4 +10,5 @@ export * from "./modules/catalog/index.js";
 export * from "./modules/device/index.js";
 export * from "./modules/identity/index.js";
 export * from "./modules/inventory/index.js";
+export * from "./modules/ledger/index.js";
 export * from "./modules/location/index.js";

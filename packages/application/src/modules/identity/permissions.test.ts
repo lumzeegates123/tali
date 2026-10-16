@@ -5,6 +5,7 @@ import {
   catalogPermissions,
   identityPermissions,
   inventoryPermissions,
+  ledgerPermissions,
   permissionsForRole,
   rolePermissions,
 } from "./permissions.js";
@@ -69,6 +70,15 @@ const BUILD_2_MATRIX: Readonly<Record<string, readonly string[]>> = {
   "inventory:count-post": ["OWNER", "MANAGER"],
 };
 
+/** ADR-009 section 17 / M14: ledger:read is OWNER and ACCOUNTANT only. */
+const LEDGER_ROLE_PERMISSIONS = {
+  OWNER: ["ledger:read"],
+  MANAGER: [] as const,
+  CASHIER: [] as const,
+  STOCK_KEEPER: [] as const,
+  ACCOUNTANT: ["ledger:read"],
+} as const;
+
 describe("Build 1 permission catalogue (ADR-005 section 8)", () => {
   it("declares exactly the Build 1 permissions", () => {
     expect([...identityPermissions.all].sort()).toEqual(
@@ -129,20 +139,43 @@ describe("Build 2 catalog and inventory permissions (ADR-008 section 15)", () =>
     expect(inventory.sort()).toEqual([...INVENTORY_ROLE_PERMISSIONS[role]].sort());
   });
 
-  it.each(MEMBERSHIP_ROLES)("maps %s to exactly Build 1, catalog and inventory permissions, nothing else", (role) => {
-    expect(rolePermissions[role].map(String).sort()).toEqual(
-      [
-        ...BUILD_1_ROLE_PERMISSIONS[role],
-        ...CATALOG_ROLE_PERMISSIONS[role],
-        ...INVENTORY_ROLE_PERMISSIONS[role],
-      ].sort(),
-    );
-  });
+  it.each(MEMBERSHIP_ROLES)(
+    "maps %s to exactly Build 1, catalog, inventory and ledger permissions, nothing else",
+    (role) => {
+      expect(rolePermissions[role].map(String).sort()).toEqual(
+        [
+          ...BUILD_1_ROLE_PERMISSIONS[role],
+          ...CATALOG_ROLE_PERMISSIONS[role],
+          ...INVENTORY_ROLE_PERMISSIONS[role],
+          ...LEDGER_ROLE_PERMISSIONS[role],
+        ].sort(),
+      );
+    },
+  );
 
   it("grants product:price only to OWNER and MANAGER", () => {
     const price = catalogPermissions.permissions["product:price"];
     expect(MEMBERSHIP_ROLES.filter((role) => hasPermission(permissionsForRole(role), price)).sort()).toEqual([
       "MANAGER",
+      "OWNER",
+    ]);
+  });
+});
+
+describe("Build 3 ledger permissions (ADR-009 section 17)", () => {
+  it("declares exactly ledger:read", () => {
+    expect([...ledgerPermissions.all]).toEqual(["ledger:read"]);
+  });
+
+  it.each(MEMBERSHIP_ROLES)("maps %s to exactly its ledger permissions", (role) => {
+    const ledger = rolePermissions[role].map(String).filter((name) => ledgerPermissions.has(name));
+    expect(ledger.sort()).toEqual([...LEDGER_ROLE_PERMISSIONS[role]].sort());
+  });
+
+  it("grants ledger:read only to OWNER and ACCOUNTANT", () => {
+    const read = ledgerPermissions.permissions["ledger:read"];
+    expect(MEMBERSHIP_ROLES.filter((role) => hasPermission(permissionsForRole(role), read)).sort()).toEqual([
+      "ACCOUNTANT",
       "OWNER",
     ]);
   });

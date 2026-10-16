@@ -179,7 +179,7 @@ describe("audit actions and registry", () => {
     expect(registry.has(defineAuditAction({ ...action, fields: { flag: auditField.boolean() } }))).toBe(false);
   });
 
-  it("registers exactly the Build 1 actions (plan 003 section 12) and the Build 2 catalog and inventory actions", () => {
+  it("registers exactly the Build 1–3 audit actions (including ledger.chart_provisioned)", () => {
     expect(taliAuditRegistry.actions.map((a) => [a.name, a.stream]).sort()).toEqual([
       ["business.created", "business"],
       ["business.renamed", "business"],
@@ -200,6 +200,7 @@ describe("audit actions and registry", () => {
       ["invitation.accepted", "business"],
       ["invitation.created", "business"],
       ["invitation.revoked", "business"],
+      ["ledger.chart_provisioned", "business"],
       ["location.created", "business"],
       ["membership.created", "business"],
       ["membership.reactivated", "business"],

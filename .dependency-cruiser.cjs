@@ -175,10 +175,16 @@ module.exports = {
     {
       name: "application-module-public-surface",
       severity: "error",
+      comment:
+        "Cross-module imports go through each module's index.ts. Exception: ledger/posting.ts is an explicit ADR-009 posting entry so inventory/sales can call the posting service without re-exporting it from the ledger barrel (reads stay on ledger/index).",
       from: { path: "^packages/application/src/modules/([^/]+)/" },
       to: {
         path: "^packages/application/src/modules/[^/]+/.+",
-        pathNot: ["^packages/application/src/modules/$1/", "^packages/application/src/modules/[^/]+/index\\.ts$"],
+        pathNot: [
+          "^packages/application/src/modules/$1/",
+          "^packages/application/src/modules/[^/]+/index\\.ts$",
+          "^packages/application/src/modules/ledger/posting\\.ts$",
+        ],
       },
     },
 
@@ -237,12 +243,42 @@ module.exports = {
       name: "ai-no-catalog-inventory",
       severity: "error",
       comment:
-        "AI source never reaches the database or the catalog and inventory application modules (their use cases and repository ports), directly or through any re-export such as the @tali/application root index (ADR-008; 40-ai-safety.mdc). Execution goes through authorized use cases composed outside AI code. Domain value objects and shared contracts stay reachable.",
+        "AI source never reaches the database or the catalog, inventory and ledger application modules (their use cases, posting service and repository ports), directly or through any re-export such as the @tali/application root index (ADR-008, ADR-009; 40-ai-safety.mdc). Execution goes through authorized use cases composed outside AI code. Domain value objects and shared contracts stay reachable.",
       from: { path: ["^packages/ai/", "^packages/application/src/modules/ai/"], pathNot: TEST_FILE },
       to: {
-        path: ["^packages/database/", "^packages/application/src/modules/(catalog|inventory)/"],
+        path: ["^packages/database/", "^packages/application/src/modules/(catalog|inventory|ledger)/"],
         reachable: true,
       },
+    },
+    {
+      name: "ledger-posting-importers",
+      severity: "error",
+      comment:
+        "Only application modules that own posting sources may import the ledger posting service (ADR-009 section 3): ledger itself, inventory, and sales (sales path reserved for Build 3). Other modules use ledger reads/ports only; they never call createLedgerPostingService.",
+      from: {
+        path: "^packages/application/src/",
+        pathNot: ["^packages/application/src/modules/(ledger|inventory|sales)/", TEST_FILE, PACKAGE_TEST_CONTRACTS],
+      },
+      to: { path: "^packages/application/src/modules/ledger/posting\\.ts$" },
+    },
+    {
+      name: "ledger-posting-not-from-clients",
+      severity: "error",
+      comment:
+        "Web and mobile never import the ledger application module (ADR-009 section 17). Ledger posting is an internal server side effect; clients talk only to Tali's API.",
+      from: { path: "^apps/(web|mobile)/" },
+      to: { path: "^packages/application/src/modules/ledger/" },
+    },
+    {
+      name: "ledger-persistence-only-in-database",
+      severity: "error",
+      comment:
+        "Other modules never reach into database ledger internals. Persistence adapters live under packages/database; application code uses ledger ports only (ADR-009).",
+      from: {
+        path: "^packages/(application|domain|integrations|shared|ai|ui)/",
+        pathNot: TEST_FILE,
+      },
+      to: { path: "^packages/database/src/.*/ledger" },
     },
     {
       name: "ui-direction",

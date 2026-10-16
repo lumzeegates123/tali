@@ -3,8 +3,8 @@
  * Permanent regression suite for the ADR-006 application boundary and the
  * ADR-008 AI boundary. It runs the real .dependency-cruiser.cjs rules against
  * a throwaway fixture repository in which packages/application declares zod
- * and another external package, re-exports catalog and inventory modules from
- * its root index as the real package does, and AI source exists both as
+ * and another external package, re-exports catalog, inventory and ledger modules
+ * from its root index as the real package does, and AI source exists both as
  * packages/ai and as an application module. It checks each edge's verdict and
  * the manifest policy. Run by tooling/dependency-boundaries.mjs before the
  * repository cruise, so a rule change that weakens either boundary fails
@@ -31,6 +31,7 @@ const FIXTURE_APPLICATION_MANIFEST = {
 };
 
 const AI_RULE = "ai-no-catalog-inventory";
+const LEDGER_POSTING_RULE = "ledger-posting-importers";
 
 /**
  * Fixture source files (repository-relative), each with the rule its single
@@ -122,6 +123,18 @@ const CASES = [
     expectedRule: AI_RULE,
   },
   {
+    file: "packages/ai/src/forbidden-ledger-module.ts",
+    source:
+      'import { createLedgerPostingService } from "../../application/src/modules/ledger/posting.js";\nexport const value = createLedgerPostingService;\n',
+    expectedRule: AI_RULE,
+  },
+  {
+    file: "packages/ai/src/forbidden-ledger-port.ts",
+    source:
+      'import type { JournalRepository } from "../../application/src/modules/ledger/ports.js";\nexport type Value = JournalRepository;\n',
+    expectedRule: AI_RULE,
+  },
+  {
     file: "packages/ai/src/allowed-domain.ts",
     source: 'import { domain } from "@tali/domain";\nexport const value = domain;\n',
     expectedRule: null,
@@ -173,6 +186,17 @@ const CASES = [
     expectedRule: AI_RULE,
   },
   {
+    file: "packages/application/src/modules/ai/forbidden-ledger-module.ts",
+    source:
+      'import { createLedgerPostingService } from "../ledger/posting.js";\nexport const value = createLedgerPostingService;\n',
+    expectedRule: AI_RULE,
+  },
+  {
+    file: "packages/application/src/modules/ai/forbidden-ledger-port.ts",
+    source: 'import type { JournalRepository } from "../ledger/ports.js";\nexport type Value = JournalRepository;\n',
+    expectedRule: AI_RULE,
+  },
+  {
     file: "packages/application/src/modules/ai/allowed-domain.ts",
     source: 'import { domain } from "@tali/domain";\nexport const value = domain;\n',
     expectedRule: null,
@@ -182,16 +206,48 @@ const CASES = [
     source: 'import { business } from "../business/index.js";\nexport const value = business;\n',
     expectedRule: null,
   },
+
+  // ---- Ledger posting importer allowlist (ADR-009 section 3) ------------
+  {
+    file: "packages/application/src/modules/inventory/allowed-ledger-posting.ts",
+    source:
+      'import { createLedgerPostingService } from "../ledger/posting.js";\nexport const value = createLedgerPostingService;\n',
+    expectedRule: null,
+  },
+  {
+    file: "packages/application/src/modules/sales/allowed-ledger-posting.ts",
+    source:
+      'import { createLedgerPostingService } from "../ledger/posting.js";\nexport const value = createLedgerPostingService;\n',
+    expectedRule: null,
+  },
+  {
+    file: "packages/application/src/modules/ledger/allowed-self-posting.ts",
+    source:
+      'import { createLedgerPostingService } from "./posting.js";\nexport const value = createLedgerPostingService;\n',
+    expectedRule: null,
+  },
+  {
+    file: "packages/application/src/modules/catalog/forbidden-ledger-posting.ts",
+    source:
+      'import { createLedgerPostingService } from "../ledger/posting.js";\nexport const value = createLedgerPostingService;\n',
+    expectedRule: LEDGER_POSTING_RULE,
+  },
+  {
+    file: "packages/application/src/modules/business/forbidden-ledger-posting.ts",
+    source:
+      'import { createLedgerPostingService } from "../ledger/posting.js";\nexport const value = createLedgerPostingService;\n',
+    expectedRule: LEDGER_POSTING_RULE,
+  },
 ];
 
 /**
- * Fixture catalog, inventory and business modules shaped like the real ones,
- * re-exported from the application root index, plus one database source file.
+ * Fixture catalog, inventory, ledger and business modules shaped like the real
+ * ones, re-exported from the application root index, plus one database source file.
  * @type {Readonly<Record<string, string>>}
  */
 const FIXTURE_SOURCES = {
   "packages/application/src/index.ts":
-    'export * from "./modules/business/index.js";\nexport * from "./modules/catalog/index.js";\nexport * from "./modules/inventory/index.js";\n',
+    'export * from "./modules/business/index.js";\nexport * from "./modules/catalog/index.js";\nexport * from "./modules/inventory/index.js";\nexport * from "./modules/ledger/index.js";\n',
   "packages/application/src/modules/business/index.ts": 'export const business = "business";\n',
   "packages/application/src/modules/catalog/index.ts":
     'export type { ProductPackRepository, ProductRepository } from "./ports.js";\nexport * from "./products.js";\n',
@@ -204,6 +260,11 @@ const FIXTURE_SOURCES = {
     'export interface InventoryMovementRepository {\n  readonly kind: "movement";\n}\nexport interface StockBalanceRepository {\n  readonly kind: "balance";\n}\n',
   "packages/application/src/modules/inventory/goods-receipts.ts":
     'export const createPostGoodsReceipt = "post-goods-receipt";\n',
+  "packages/application/src/modules/ledger/index.ts":
+    'export type { JournalRepository } from "./ports.js";\nexport const createListLedgerAccounts = "list-accounts";\n',
+  "packages/application/src/modules/ledger/ports.ts":
+    'export interface JournalRepository {\n  readonly kind: "journal";\n}\n',
+  "packages/application/src/modules/ledger/posting.ts": 'export const createLedgerPostingService = "ledger-posting";\n',
   "packages/database/src/repositories/product-repository.ts": 'export const productRepository = "products";\n',
 };
 

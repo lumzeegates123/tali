@@ -5,6 +5,7 @@ export {
   catalogPermissions,
   identityPermissions,
   inventoryPermissions,
+  ledgerPermissions,
   permissionsForRole,
   rolePermissions,
 } from "./permissions.js";
