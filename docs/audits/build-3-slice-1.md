@@ -3,7 +3,7 @@
 - Date: 2026-10-16
 - Branch: `feature/build-3-slice-1-ledger-domain`
 - Baseline: `542a9ba9715950d46508d43e0806a18055b49838`
-- Status: **COMPLETE** (all S1 gates passed; awaiting human review; nothing committed).
+- Status: **COMPLETE** (all S1 gates passed); submitted as PR #22 for final review. S2 has not started.
 - Governing ADRs: ADR-009 (ACCEPTED 2026-10-15), ADR-004, ADR-005, ADR-006; Plan 005 S1; `mvp-scope.md`.
 - Scope: pure ledger domain and application foundation only.
 - Not in this slice: migrations, Prisma schema, PostgreSQL repositories, `db:ledger-consistency`, sales, inventory
