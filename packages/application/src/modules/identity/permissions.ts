@@ -38,9 +38,17 @@ export const inventoryPermissions = definePermissionCatalogue([
   "inventory:count-post",
 ]);
 
+/**
+ * Build 3 ledger read permission (ADR-009 section 17; maintainer decision M14).
+ * There is no `ledger:post`: posting is an internal side effect of another
+ * authorized business mutation.
+ */
+export const ledgerPermissions = definePermissionCatalogue(["ledger:read"]);
+
 const p = identityPermissions.permissions;
 const c = catalogPermissions.permissions;
 const i = inventoryPermissions.permissions;
+const l = ledgerPermissions.permissions;
 const everyRole = [
   p["business:read"],
   p["location:read"],
@@ -70,6 +78,7 @@ export const rolePermissions: Readonly<Record<MembershipRole, readonly Permissio
     c["product:manage"],
     c["product:price"],
     ...allInventoryChanges,
+    l["ledger:read"],
   ]),
   MANAGER: Object.freeze([
     ...everyRole,
@@ -87,7 +96,7 @@ export const rolePermissions: Readonly<Record<MembershipRole, readonly Permissio
     i["inventory:receive"],
     i["inventory:count"],
   ]),
-  ACCOUNTANT: Object.freeze([...everyRole]),
+  ACCOUNTANT: Object.freeze([...everyRole, l["ledger:read"]]),
 });
 
 /** Expands a membership's role into its PermissionSet during context resolution. */

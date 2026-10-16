@@ -1,9 +1,9 @@
 # Plan 005. Build 3: sales and ledger posting foundation
 
-Status: **APPROVED / S0 COMPLETE / S1 READY.** ADR-009, ADR-010 and ADR-011 were **ACCEPTED on 2026-10-15** by the
+Status: **APPROVED / S0 COMPLETE / S1 COMPLETE.** ADR-009, ADR-010 and ADR-011 were **ACCEPTED on 2026-10-15** by the
 human maintainer. Accountant review is **COMPLETE** (Osasu, 2026-10-15; `docs/reviews/build-3-accountant-review.md`
 sections 14 and 14.1): ADR-009 A1 to A22 and ADR-010 T1 to T7 approved. Maintainer questions M1 to M17 are resolved
-(section 4). **No implementation has started**; S1 is unblocked and S2 to S9 are not started.
+(section 4). S1 (ledger domain and application) is **COMPLETE (2026-10-16)**; S2 to S9 are not started.
 
 Scope: the ledger posting foundation, the default chart of accounts, perpetual weighted average cost valuation with
 explicit valuation status, and online, fully tendered sales with full reversal (ADR-009, ADR-011). Configurable tax
@@ -18,7 +18,7 @@ selling; price override; sale-level discounts; account management UI; period clo
 | Slice | Name                                   | Governing ADR        | Status                     |
 | ----- | -------------------------------------- | -------------------- | -------------------------- |
 | S0    | Decisions                              | (produces the ADRs)  | **Complete** (2026-10-15)  |
-| S1    | Ledger domain and application          | ADR-009              | Ready (unblocked); not started |
+| S1    | Ledger domain and application          | ADR-009              | **Complete** (2026-10-16); S2 not started |
 | S2    | Ledger persistence and consistency     | ADR-009              | Not started (after S1)     |
 | S3    | Valuation and cost foundation          | ADR-009              | Not started (after S2)     |
 | S4    | Sales domain and application           | ADR-011, ADR-009     | Not started (after S1)     |
@@ -78,6 +78,9 @@ Each slice: outcome, dependencies, modules and files, tests, gate, stop conditio
   role resolution, provisioning idempotency, unauthorized tenant, permission matrix, audit payloads.
 - Gate: unit and application tests green; boundary rules enforced.
 - Stop: any need for a public posting entry point, or a posting rule that cannot be expressed by roles.
+- Status: **COMPLETE (2026-10-16).** Domain chart template v1, `PostingPlan`, reversal mirroring, application
+  posting port, `ProvisionChartOfAccounts`, `ledger:read`, `ledger.chart_provisioned`, and AI/client boundary rules
+  are in place with in-memory adapters only. No migrations, schema or PostgreSQL repositories (S2).
 
 ### S2. Ledger persistence and consistency
 

@@ -10,6 +10,8 @@ import {
   IdempotencyKeyRequiredError,
   IdempotencyKeyReusedError,
   InsufficientStockError,
+  LedgerChartIncompleteError,
+  LedgerNotProvisionedError,
   LocationRequiredError,
   NotFoundError,
   PermissionDeniedError,
@@ -71,6 +73,8 @@ describe("ErrorEnvelopeFilter", () => {
       409,
       "STOCKTAKE_STALE",
     ],
+    [new LedgerNotProvisionedError(), 409, "LEDGER_NOT_PROVISIONED"],
+    [new LedgerChartIncompleteError(), 409, "LEDGER_CHART_INCOMPLETE"],
   ] as const)("maps %s to %i %s", (error: ApplicationError, status, code) => {
     const result = run(error);
     expect(result.status).toBe(status);

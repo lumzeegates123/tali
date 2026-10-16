@@ -13,6 +13,7 @@ export { InMemoryAuditWriter } from "./in-memory-audit-writer.js";
 export { InMemoryBusinessIdempotencyStore } from "./in-memory-business-idempotency-store.js";
 export { InMemoryCatalogStore } from "./in-memory-catalog-store.js";
 export { InMemoryInventoryStore } from "./in-memory-inventory-store.js";
+export { InMemoryLedgerStore } from "./in-memory-ledger-store.js";
 export { InMemoryObjectStorage } from "./in-memory-object-storage.js";
 export { InMemoryQueue } from "./in-memory-queue.js";
 export { InMemoryTenancyStore } from "./in-memory-tenancy-store.js";

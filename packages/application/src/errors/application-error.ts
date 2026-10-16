@@ -24,7 +24,9 @@ export type ApplicationErrorCode =
   | "CONCURRENT_MODIFICATION"
   | "VERSION_CONFLICT"
   | "INSUFFICIENT_STOCK"
-  | "STOCKTAKE_STALE";
+  | "STOCKTAKE_STALE"
+  | "LEDGER_NOT_PROVISIONED"
+  | "LEDGER_CHART_INCOMPLETE";
 
 /** Whether a client may retry the same request unchanged (ADR-004 section 11; ADR-005 section 13.1). */
 const RETRYABLE: Readonly<Record<ApplicationErrorCode, boolean>> = {
@@ -45,6 +47,8 @@ const RETRYABLE: Readonly<Record<ApplicationErrorCode, boolean>> = {
   VERSION_CONFLICT: false,
   INSUFFICIENT_STOCK: false,
   STOCKTAKE_STALE: false,
+  LEDGER_NOT_PROVISIONED: false,
+  LEDGER_CHART_INCOMPLETE: false,
 };
 
 export interface ValidationIssue {
@@ -225,5 +229,29 @@ export class StocktakeStaleError extends ApplicationError {
     }
     this.staleVariantIds = Object.freeze(sorted.slice(0, STOCKTAKE_STALE_MAX_IDS));
     this.staleLineCount = staleLineCount;
+  }
+}
+
+/**
+ * A required system account role is missing for the business (ADR-009 section 6).
+ * Nothing was written. Not retryable unchanged: the chart must be provisioned.
+ * Distinct from {@link LedgerChartIncompleteError}: that code means some accounts
+ * exist but the chart is partial or inconsistent; this code means a role needed
+ * for posting is absent (often because the chart was never provisioned).
+ */
+export class LedgerNotProvisionedError extends ApplicationError {
+  constructor(message = "The ledger chart of accounts is not provisioned for this business") {
+    super("LEDGER_NOT_PROVISIONED", message);
+  }
+}
+
+/**
+ * Chart provisioning found a partial or inconsistent chart for the requested
+ * template version (missing roles, extras, or code/type mismatches). Nothing
+ * was written and the chart is not silently repaired.
+ */
+export class LedgerChartIncompleteError extends ApplicationError {
+  constructor(message = "The ledger chart of accounts is incomplete or inconsistent for this business") {
+    super("LEDGER_CHART_INCOMPLETE", message);
   }
 }

@@ -3,6 +3,7 @@ import { catalogAuditActions } from "../modules/catalog/index.js";
 import { deviceAuditActions } from "../modules/device/index.js";
 import { identityAuditActions } from "../modules/identity/index.js";
 import { inventoryAuditActions } from "../modules/inventory/index.js";
+import { ledgerAuditActions } from "../modules/ledger/index.js";
 import { locationAuditActions } from "../modules/location/index.js";
 import { defineAuditRegistry } from "./audit-action.js";
 
@@ -14,4 +15,5 @@ export const taliAuditRegistry = defineAuditRegistry([
   ...deviceAuditActions,
   ...catalogAuditActions,
   ...inventoryAuditActions,
+  ...ledgerAuditActions,
 ]);
