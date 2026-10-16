@@ -137,15 +137,25 @@ repositories; no `db:ledger-consistency`; no operator chart-provisioning command
 - HTTP read routes for accounts, balances and journal entry (`ledger:read`).
 - Sales/valuation modules call `LedgerPostingService` via `../ledger/posting.js` when they arrive (S3–S5).
 
+## PR #22 review fix: reversal source identity
+
+ADR-009 section 13 requires a reversal to carry the same typed source as its original entry. The `REVERSAL` path of
+`LedgerPostingService.post` now loads the original and rejects the request with `ValidationError`
+("reversal source must match the original journal source", path `source`) unless both `source.kind` and `source.id`
+equal the original's. The check runs before any insert, so a mismatch writes nothing; the request source is never
+silently replaced. Application tests cover a same-source reversal (entry kind `REVERSAL`, `reversesEntryId`, same
+source, mirrored directions, unchanged roles, accounts and amounts) and rejection of a different source id and a
+different source kind, each leaving only the unchanged original entry.
+
 ## Gate results
 
 | Gate | Result |
 | ---- | ------ |
 | Focused domain ledger tests | 31 passed |
-| Focused application ledger tests | 18 passed |
+| Focused application ledger tests | 21 passed (18 at submission + 3 reversal source identity tests) |
 | Focused API error-envelope tests | 36 passed |
 | `pnpm boundaries` | self-test pass; no violations (718 modules, 3739 dependencies) |
-| `pnpm verify` | exit 0 (18 of 18; 2026-10-16 pre-commit fix pass) |
+| `pnpm verify` | exit 0 (18 of 18; 2026-10-16 pre-commit fix pass and reversal source fix pass) |
 | `git diff --check` | clean |
 
 One earlier pre-commit-fix `pnpm verify` failed under parallel host load with no assertion failure: web Vitest

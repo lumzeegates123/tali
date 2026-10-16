@@ -163,6 +163,11 @@ export function createLedgerPostingService(dependencies: LedgerPostingDependenci
         if (original === undefined || original.entryKind !== "ORIGINAL") {
           throw new ConflictError("reversal target is missing or not an original entry");
         }
+        if (source.kind !== original.source.kind || source.id !== original.source.id) {
+          throw new ValidationError("reversal source must match the original journal source", [
+            { path: ["source"], message: "mismatch" },
+          ]);
+        }
         // Ensure the caller's plan mirrors the original (roles/amounts/order).
         const expected = reversePostingPlan(
           createPostingPlan(

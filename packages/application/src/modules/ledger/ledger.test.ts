@@ -290,6 +290,96 @@ describe("LedgerPostingService", () => {
   });
 });
 
+describe("LedgerPostingService reversal source identity (ADR-009 section 13)", () => {
+  async function postOriginal() {
+    const harness = await setup();
+    const { provision, posting, roles, tenancy } = harness;
+    await provision.execute(roles.OWNER);
+    const plan = createPostingPlan(roles.OWNER.currency, [
+      { role: "CASH_ON_HAND", direction: "DEBIT", amount: money(roles.OWNER, 1000n), memoKind: "TENDER_CASH" },
+      { role: "SALES_REVENUE", direction: "CREDIT", amount: money(roles.OWNER, 1000n), memoKind: "REVENUE" },
+      { role: "COST_OF_GOODS_SOLD", direction: "DEBIT", amount: money(roles.OWNER, 700n), memoKind: "COGS" },
+      { role: "INVENTORY", direction: "CREDIT", amount: money(roles.OWNER, 700n), memoKind: "INVENTORY" },
+    ]);
+    const source = saleSource(tenancy.ids);
+    const { entry: original } = await tenancy.unitOfWork.run((scope) =>
+      posting.post(scope, roles.OWNER, {
+        plan,
+        source,
+        postingRule: "SALE_POSTED",
+        postingRuleVersion: 1,
+        description: "Sale S-000100",
+      }),
+    );
+    return { ...harness, plan, source, original };
+  }
+
+  function reverse(
+    harness: Awaited<ReturnType<typeof postOriginal>>,
+    source: { readonly kind: "sale" | "stocktake"; readonly id: string },
+  ) {
+    const { posting, roles, tenancy, plan, original } = harness;
+    return tenancy.unitOfWork.run((scope) =>
+      posting.post(scope, roles.OWNER, {
+        plan: reversePostingPlan(plan),
+        source,
+        postingRuleVersion: 1,
+        postingRule: "SALE_REVERSED",
+        description: "Sale S-000100 reversal",
+        entryKind: "REVERSAL",
+        reversesEntryId: original.id,
+      }),
+    );
+  }
+
+  it("posts a reversal with the same source, mirroring directions and keeping roles and amounts", async () => {
+    const harness = await postOriginal();
+    const { original, source, ledger } = harness;
+    expect(original.entryKind).toBe("ORIGINAL");
+
+    const { entry: reversal } = await reverse(harness, source);
+    expect(reversal.entryKind).toBe("REVERSAL");
+    expect(reversal.reversesEntryId).toBe(original.id);
+    expect(reversal.source.kind).toBe(original.source.kind);
+    expect(reversal.source.id).toBe(original.source.id);
+    expect(reversal.lines.map((line) => line.systemRole)).toEqual(original.lines.map((line) => line.systemRole));
+    expect(reversal.lines.map((line) => line.accountId)).toEqual(original.lines.map((line) => line.accountId));
+    expect(reversal.lines.map((line) => line.amount.amountMinor)).toEqual(
+      original.lines.map((line) => line.amount.amountMinor),
+    );
+    expect(reversal.lines.map((line) => line.direction)).toEqual(
+      original.lines.map((line) => (line.direction === "DEBIT" ? "CREDIT" : "DEBIT")),
+    );
+    expect(ledger.entries).toHaveLength(2);
+  });
+
+  it.each([
+    [
+      "a different source id",
+      (source: { kind: "sale"; id: string }, newId: string) => ({ kind: source.kind, id: newId }),
+    ],
+    [
+      "a different source kind",
+      (source: { kind: "sale"; id: string }) => ({ kind: "stocktake" as const, id: source.id }),
+    ],
+  ])("rejects a reversal with %s and writes nothing", async (_label, mismatch) => {
+    const harness = await postOriginal();
+    const { original, source, ledger, tenancy } = harness;
+    const snapshot = { ...original, lines: [...original.lines] };
+
+    await expect(reverse(harness, mismatch(source, tenancy.ids.newId("Sale")))).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+      message: "reversal source must match the original journal source",
+    });
+
+    expect(ledger.entries).toHaveLength(1);
+    expect(ledger.entries.filter((entry) => entry.entryKind === "REVERSAL")).toHaveLength(0);
+    const stored = ledger.entries[0];
+    expect(stored).toEqual(snapshot);
+    expect(stored?.source).toEqual(source);
+  });
+});
+
 describe("ledger:read permissions", () => {
   it.each([
     ["OWNER", true],
