@@ -1,9 +1,11 @@
 # Plan 005. Build 3: sales and ledger posting foundation
 
-Status: **APPROVED / S0 COMPLETE / S1 COMPLETE.** ADR-009, ADR-010 and ADR-011 were **ACCEPTED on 2026-10-15** by the
+Status: **APPROVED / S0 COMPLETE / S1 COMPLETE / S2 COMPLETE.** ADR-009, ADR-010 and ADR-011 were **ACCEPTED on 2026-10-15** by the
 human maintainer. Accountant review is **COMPLETE** (Osasu, 2026-10-15; `docs/reviews/build-3-accountant-review.md`
 sections 14 and 14.1): ADR-009 A1 to A22 and ADR-010 T1 to T7 approved. Maintainer questions M1 to M17 are resolved
-(section 4). S1 (ledger domain and application) is **COMPLETE (2026-10-16)**; S2 to S9 are not started.
+(section 4). S1 (ledger domain and application) is **COMPLETE (2026-10-16)**. S2 (ledger account persistence and
+chart provisioning; journal tables moved to S3 by the maintainer's split decision) is **COMPLETE (2026-10-16)**; S3
+to S9 are not started.
 
 Scope: the ledger posting foundation, the default chart of accounts, perpetual weighted average cost valuation with
 explicit valuation status, and online, fully tendered sales with full reversal (ADR-009, ADR-011). Configurable tax
@@ -18,8 +20,8 @@ selling; price override; sale-level discounts; account management UI; period clo
 | Slice | Name                                   | Governing ADR        | Status                     |
 | ----- | -------------------------------------- | -------------------- | -------------------------- |
 | S0    | Decisions                              | (produces the ADRs)  | **Complete** (2026-10-15)  |
-| S1    | Ledger domain and application          | ADR-009              | **Complete** (2026-10-16); S2 not started |
-| S2    | Ledger persistence and consistency     | ADR-009              | Not started (after S1)     |
+| S1    | Ledger domain and application          | ADR-009              | **Complete** (2026-10-16)  |
+| S2    | Ledger persistence and consistency     | ADR-009              | **Complete** (2026-10-16); accounts and chart only; journal tables moved to S3 |
 | S3    | Valuation and cost foundation          | ADR-009              | Not started (after S2)     |
 | S4    | Sales domain and application           | ADR-011, ADR-009     | Not started (after S1)     |
 | S5    | Sales persistence and SALE integration | ADR-011, ADR-009     | Not started (after S3, S4) |
@@ -94,10 +96,22 @@ Each slice: outcome, dependencies, modules and files, tests, gate, stop conditio
   cross-tenant isolation, consistency script on seeded good and deliberately broken data (test database only).
 - Gate: migrations apply forward on a fresh and on a Build 2 database; consistency clean.
 - Stop: any need to backfill business data in a migration, or to alter Build 2 history.
+- Scope change (maintainer split decision, 2026-10-16): ADR-009 section 13 introduces every typed journal source
+  column in a later slice, so journal entries cannot be persisted in S2 without a polymorphic or placeholder source,
+  which ADR-009 forbids. S2 therefore delivers `ledger_accounts` (SELECT, INSERT), its repository, chart provisioning
+  in the business creation transaction, the idempotent operator command, chart checks in `db:ledger-consistency` and
+  `verify-schema` coverage. `journal_entries`, `journal_lines`, the PostgreSQL journal repository and the journal
+  consistency checks move to S3. ADR-009 is unchanged.
+- Rollout: apply the migration, run the operator command for every existing business, then require a clean
+  `db:ledger-consistency`, which fails with `MISSING_CHART` for any ACTIVE business without a chart.
+- Status: **COMPLETE (2026-10-16)** for the reduced scope above, including the pre-commit review fixes; every gate
+  passed (`docs/audits/build-3-slice-2.md`).
 
 ### S3. Valuation and cost foundation
 
-- Outcome: `inventory_valuations`, `inventory_movement_valuations`, `stock_valuations`; WAC in total-value form;
+- Outcome: `journal_entries` and `journal_lines` (grants: SELECT, INSERT) with the valuation-slice typed source
+  columns, the PostgreSQL journal repository behind the S1 posting port, and the journal checks in
+  `db:ledger-consistency` (moved from S2); `inventory_valuations`, `inventory_movement_valuations`, `stock_valuations`; WAC in total-value form;
   initial opening valuation use case; optional cost on opening stock and goods receipts (OWNER/MANAGER only); value
   postings for valued adjustments, write-offs, counts and reversals; costless receipts turning valued items
   `UNVALUED`; the **operational valuation** use case with the approved A22 posting rule (ADR-009 section 20.3:
@@ -106,7 +120,9 @@ Each slice: outcome, dependencies, modules and files, tests, gate, stop conditio
 - Dependencies: S2.
 - Modules: `packages/domain/src/modules/inventory` (valuation), `packages/application/src/modules/inventory` (Build 2
   use cases gain valuation calls), permission `inventory:value`, audit `inventory.valuation_recorded`.
-- Tests: WAC rounding and last-unit exactness, status transitions, unvalued behaviour (no postings), staleness,
+- Tests: journal DB tests moved from S2 (grants with no UPDATE/DELETE, composite tenant FKs, one original per
+  source, at most one reversal, cross-tenant isolation, consistency script on deliberately broken data); WAC
+  rounding and last-unit exactness, status transitions, unvalued behaviour (no postings), staleness,
   initial versus operational valuation kind decided server-side, operational valuation increase, decrease and
   zero-difference cases (ADR-009 examples M and N; no `OPENING_BALANCE_EQUITY` line; reason required;
   `VALUATION_STALE`; no change to earlier COGS), STOCK_KEEPER cost entry denied, reversal of

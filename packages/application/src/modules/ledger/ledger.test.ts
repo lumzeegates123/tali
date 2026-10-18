@@ -19,6 +19,7 @@ import {
   ValidationError,
 } from "../../errors/application-error.js";
 import { createCatalogHarness } from "../../testing/catalog-harness.js";
+import type { InMemoryAuditWriter } from "../../testing/in-memory-audit-writer.js";
 import { InMemoryLedgerStore } from "../../testing/in-memory-ledger-store.js";
 import { createLedgerPostingService } from "./posting.js";
 import { createProvisionChartOfAccounts } from "./provision-chart.js";
@@ -29,6 +30,8 @@ async function setup(currencyCode: "NGN" | "KES" | "USD" = "KES") {
     currencies: [defineCurrency("NGN", 2), defineCurrency("KES", 2), defineCurrency("USD", 2)],
   });
   const { tenancy } = catalog;
+  // Business creation provisions into tenancy.ledger; this separate store stands
+  // in for a business whose chart does not exist yet (created before Build 3 S2).
   const ledger = new InMemoryLedgerStore({ unitOfWork: tenancy.unitOfWork });
   const audit = new AuditRecorder({
     registry: taliAuditRegistry,
@@ -55,7 +58,16 @@ async function setup(currencyCode: "NGN" | "KES" | "USD" = "KES") {
     getEntry: createGetJournalEntry({ unitOfWork: tenancy.unitOfWork, accounts: ledger, journals: ledger }),
   };
   const roles = await catalog.businessWithRoles(`Shop-${currencyCode}`, currencyCode);
-  return { catalog, tenancy, ledger, provision, posting, reads, roles };
+  const creationChartAudits = chartAuditsFor(tenancy, roles.OWNER.businessId);
+  /** ledger.chart_provisioned audits for the business beyond the one written by business creation. */
+  const chartAudits = () => chartAuditsFor(tenancy, roles.OWNER.businessId).slice(creationChartAudits.length);
+  return { catalog, tenancy, ledger, provision, posting, reads, roles, chartAudits };
+}
+
+function chartAuditsFor(tenancy: { readonly auditWriter: InMemoryAuditWriter }, businessId: string) {
+  return tenancy.auditWriter.businessRecords.filter(
+    (r) => r.action === "ledger.chart_provisioned" && r.businessId === businessId,
+  );
 }
 
 function money(context: BusinessContext, minor: bigint) {
@@ -81,9 +93,9 @@ describe("ProvisionChartOfAccounts", () => {
   });
 
   it("is idempotent on replay and does not write a second audit record", async () => {
-    const { provision, roles, tenancy, ledger } = await setup();
+    const { provision, roles, ledger, chartAudits } = await setup();
     const first = await provision.execute(roles.OWNER);
-    const auditsBefore = tenancy.auditWriter.businessRecords.filter((r) => r.action === "ledger.chart_provisioned");
+    const auditsBefore = chartAudits();
     expect(auditsBefore).toHaveLength(1);
     expect(auditsBefore[0]?.payload).toEqual({ templateVersion: 1, accountCount: 13 });
 
@@ -92,7 +104,7 @@ describe("ProvisionChartOfAccounts", () => {
     expect(second.accountCount).toBe(13);
     expect(second.accounts.map((a) => a.id).sort()).toEqual(first.accounts.map((a) => a.id).sort());
     expect(ledger.accountsFor(roles.OWNER.businessId)).toHaveLength(13);
-    expect(tenancy.auditWriter.businessRecords.filter((r) => r.action === "ledger.chart_provisioned")).toHaveLength(1);
+    expect(chartAudits()).toHaveLength(1);
   });
 
   it("provisions another business in isolation", async () => {
@@ -111,16 +123,16 @@ describe("ProvisionChartOfAccounts", () => {
   });
 
   it("rolls back accounts and audit when insert fails", async () => {
-    const { provision, roles, ledger, tenancy } = await setup();
+    const { provision, roles, ledger, tenancy, chartAudits } = await setup();
     ledger.failures.failNext("ledger.accounts.insertMany");
     await expect(provision.execute(roles.OWNER)).rejects.toThrow();
     expect(ledger.accountsFor(roles.OWNER.businessId)).toHaveLength(0);
-    expect(tenancy.auditWriter.businessRecords.filter((r) => r.action === "ledger.chart_provisioned")).toHaveLength(0);
+    expect(chartAudits()).toHaveLength(0);
     expect(tenancy.unitOfWork.rollbacks).toBeGreaterThan(0);
   });
 
   it("fails closed on a partial chart without repairing or auditing", async () => {
-    const { provision, roles, ledger, tenancy } = await setup();
+    const { provision, roles, ledger, chartAudits } = await setup();
     await provision.execute(roles.OWNER);
     ledger.removeRole(roles.OWNER.businessId, "SALES_REVENUE");
     const remaining = ledger.accountsFor(roles.OWNER.businessId).map((account) => account.id);
@@ -132,15 +144,15 @@ describe("ProvisionChartOfAccounts", () => {
         .map((account) => account.id)
         .sort(),
     ).toEqual([...remaining].sort());
-    expect(tenancy.auditWriter.businessRecords.filter((r) => r.action === "ledger.chart_provisioned")).toHaveLength(1);
+    expect(chartAudits()).toHaveLength(1);
   });
 
   it("fails closed when an existing account code or type is inconsistent", async () => {
-    const { provision, roles, ledger, tenancy } = await setup();
+    const { provision, roles, ledger, chartAudits } = await setup();
     await provision.execute(roles.OWNER);
     ledger.corruptAccount(roles.OWNER.businessId, "CASH_ON_HAND", { code: "9999", type: "LIABILITY" });
     await expect(provision.execute(roles.OWNER)).rejects.toBeInstanceOf(LedgerChartIncompleteError);
-    expect(tenancy.auditWriter.businessRecords.filter((r) => r.action === "ledger.chart_provisioned")).toHaveLength(1);
+    expect(chartAudits()).toHaveLength(1);
     expect(ledger.accountsFor(roles.OWNER.businessId)).toHaveLength(13);
   });
 });

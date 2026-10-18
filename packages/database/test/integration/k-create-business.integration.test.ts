@@ -2,6 +2,7 @@ import {
   type AuditWriter,
   IdempotencyInProgressError,
   IdempotencyKeyReusedError,
+  type LedgerAccountRepository,
   type LocationRepository,
   ValidationError,
 } from "@tali/application";
@@ -11,9 +12,10 @@ import { useTenancyHarness } from "../support/tenancy.js";
 
 /**
  * CreateBusiness composed over PostgreSQL (ADR-005 section 5; ADR-004
- * sections 4 and 9): one transaction creates the business, its single ACTIVE
- * default location, the OWNER membership, three audit records and the keyed
- * idempotency record, or nothing at all.
+ * sections 4 and 9; ADR-009 section 6): one transaction creates the business,
+ * its single ACTIVE default location, the OWNER membership, the thirteen
+ * template v1 ledger accounts, four audit records and the keyed idempotency
+ * record, or nothing at all.
  */
 describe("CreateBusiness over PostgreSQL", () => {
   const harness = useTenancyHarness();
@@ -25,13 +27,14 @@ describe("CreateBusiness over PostgreSQL", () => {
              (SELECT count(*) FROM business_locations) AS locations,
              (SELECT count(*) FROM business_memberships) AS memberships,
              (SELECT count(*) FROM business_audit_records) AS audit,
+             (SELECT count(*) FROM ledger_accounts) AS accounts,
              (SELECT count(*) FROM user_idempotency_records) AS idempotency`);
     return Object.fromEntries(Object.entries(rows[0] ?? {}).map(([key, value]) => [key, Number(value)]));
   };
-  const nothingCreated = { businesses: 0, locations: 0, memberships: 0, audit: 0, idempotency: 0 };
-  const oneBusiness = { businesses: 1, locations: 1, memberships: 1, audit: 3, idempotency: 1 };
+  const nothingCreated = { businesses: 0, locations: 0, memberships: 0, audit: 0, accounts: 0, idempotency: 0 };
+  const oneBusiness = { businesses: 1, locations: 1, memberships: 1, audit: 4, accounts: 13, idempotency: 1 };
 
-  it("creates everything atomically: one ACTIVE default location, one OWNER, three audit records, one key", async () => {
+  it("creates everything atomically: one ACTIVE default location, one OWNER, a chart, four audit records, one key", async () => {
     const tenancy = harness.compose();
     const user = await tenancy.registeredUser("owner-subject");
     const outcome = await tenancy.create(user, { name: "Mama Put Provisions", currencyCode: "NGN" });
@@ -56,8 +59,20 @@ describe("CreateBusiness over PostgreSQL", () => {
        FROM business_audit_records WHERE business_id = $1 ORDER BY id`,
       [business.id],
     );
-    expect(audit.rows.map((row) => row.action)).toEqual(["business.created", "location.created", "membership.created"]);
+    expect(audit.rows.map((row) => row.action)).toEqual([
+      "business.created",
+      "location.created",
+      "membership.created",
+      "ledger.chart_provisioned",
+    ]);
     expect(new Set(audit.rows.map((row) => row.actor_membership_id))).toEqual(new Set([membership.id]));
+    const accounts = await owner.query<{ system_role: string; template_version: number; status: string }>(
+      `SELECT system_role, template_version, status FROM ledger_accounts WHERE business_id = $1 ORDER BY code`,
+      [business.id],
+    );
+    expect(accounts.rows).toHaveLength(13);
+    expect(new Set(accounts.rows.map((row) => row.system_role)).size).toBe(13);
+    expect(accounts.rows.every((row) => row.template_version === 1 && row.status === "ACTIVE")).toBe(true);
     const stored = await owner.query(
       `SELECT operation, resource_type, resource_id::text, actor_type, actor_id FROM user_idempotency_records`,
     );
@@ -149,6 +164,40 @@ describe("CreateBusiness over PostgreSQL", () => {
     expect(await counts()).toEqual(nothingCreated);
   });
 
+  it("rolls everything back when the ledger account insert fails after writing", async () => {
+    const failure = new Error("injected: ledger account insert failed after writing");
+    const failingAccounts: LedgerAccountRepository = {
+      ...harness.repositories.ledgerAccounts,
+      async insertMany(scope, accounts) {
+        await harness.repositories.ledgerAccounts.insertMany(scope, accounts);
+        throw failure;
+      },
+    };
+    const tenancy = harness.compose({ decorate: { ledgerAccounts: failingAccounts } });
+    const user = await tenancy.registeredUser("ledger-rollback-owner");
+    await expect(tenancy.create(user)).rejects.toBe(failure);
+    expect(await counts()).toEqual(nothingCreated);
+
+    const retried = await harness.compose().create(user);
+    expect(retried.replayed).toBe(false);
+    expect(await counts()).toEqual(oneBusiness);
+  });
+
+  it("rolls everything back when the chart audit record fails", async () => {
+    const failure = new Error("injected: chart audit failed");
+    const failingAudit: AuditWriter = {
+      ...harness.repositories.auditWriter,
+      async recordBusinessEvent(scope, record) {
+        if (record.action === "ledger.chart_provisioned") throw failure;
+        await harness.repositories.auditWriter.recordBusinessEvent(scope, record);
+      },
+    };
+    const tenancy = harness.compose({ decorate: { auditWriter: failingAudit } });
+    const user = await tenancy.registeredUser("chart-audit-rollback-owner");
+    await expect(tenancy.create(user)).rejects.toBe(failure);
+    expect(await counts()).toEqual(nothingCreated);
+  });
+
   it("rejects a currency missing from the reference data, leaving nothing behind", async () => {
     const tenancy = harness.compose();
     const user = await tenancy.registeredUser("usd-owner");
@@ -169,7 +218,14 @@ describe("CreateBusiness over PostgreSQL", () => {
         expect(outcomes.map((outcome) => outcome.replayed).sort()).toEqual([false, true]);
         expect(outcomes[0].result.business.id).toBe(outcomes[1].result.business.id);
       }
-      expect(await counts()).toEqual({ businesses: 5, locations: 5, memberships: 5, audit: 15, idempotency: 5 });
+      expect(await counts()).toEqual({
+        businesses: 5,
+        locations: 5,
+        memberships: 5,
+        audit: 20,
+        accounts: 65,
+        idempotency: 5,
+      });
     });
 
     it("waits for the first request: replay after it commits, IDEMPOTENCY_IN_PROGRESS past lock_timeout", async () => {

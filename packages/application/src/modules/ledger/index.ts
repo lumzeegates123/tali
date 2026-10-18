@@ -16,15 +16,28 @@ export type {
   LedgerAccount,
   LedgerAccountRepository,
   LedgerAccountStatus,
+  LedgerBusinessLock,
 } from "./ports.js";
-export { JOURNAL_SOURCE_KINDS } from "./ports.js";
+export { JOURNAL_SOURCE_KINDS, StoredLedgerAccountInvalidError } from "./ports.js";
 export type {
+  ChartOfAccountsProvisioning,
+  ChartProvisioningDependencies,
   ProvisionChartDependencies,
   ProvisionChartOfAccounts,
   ProvisionChartOfAccountsInput,
   ProvisionChartOfAccountsResult,
 } from "./provision-chart.js";
-export { CHART_TEMPLATE_VERSION_V1, createProvisionChartOfAccounts } from "./provision-chart.js";
+export {
+  CHART_TEMPLATE_VERSION_V1,
+  createChartOfAccountsProvisioning,
+  createProvisionChartOfAccounts,
+} from "./provision-chart.js";
+export type {
+  ProvisionExistingBusinessChart,
+  ProvisionExistingBusinessChartInput,
+  ProvisionExistingBusinessChartResult,
+} from "./provision-existing-business.js";
+export { createProvisionExistingBusinessChart, LEDGER_CHART_OPERATOR_ACTOR } from "./provision-existing-business.js";
 export type {
   AccountBalanceView,
   GetJournalEntry,

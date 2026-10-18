@@ -1,5 +1,7 @@
 import type { InventoryConsistencyIssue } from "../inventory/consistency-query.js";
 import { findInventoryInconsistencies } from "../inventory/consistency-query.js";
+import type { LedgerConsistencyIssue } from "../ledger/consistency-query.js";
+import { findLedgerInconsistencies } from "../ledger/consistency-query.js";
 import type { FixtureEnv } from "./fixture-safety.js";
 import { withFixtureSession } from "./fixture-session.js";
 
@@ -29,6 +31,7 @@ type Env = FixtureEnv;
  * `units_of_measure` are reference data and are never truncated.
  */
 export const TENANCY_TABLES = [
+  "ledger_accounts",
   "inventory_balances",
   "inventory_stock_thresholds",
   "inventory_movements",
@@ -161,6 +164,20 @@ export const tenancyFixtures = {
       `UPDATE public.business_locations SET status = 'ARCHIVED', is_default = false, updated_at = now() WHERE id = $1`,
       [locationId],
     );
+  },
+
+  /**
+   * Returns a business to the state of one created before Build 3 S2: no
+   * ledger accounts and no chart audit. The application role can do neither.
+   */
+  async removeLedgerChart(businessId: string, env: Env = process.env): Promise<void> {
+    await withFixtureSession(env, async (client) => {
+      await client.query(`DELETE FROM public.ledger_accounts WHERE business_id = $1`, [businessId]);
+      await client.query(
+        `DELETE FROM public.business_audit_records WHERE business_id = $1 AND action = 'ledger.chart_provisioned'`,
+        [businessId],
+      );
+    });
   },
 
   /** Moves a PENDING invitation's creation and expiry into the past, so it is expired now. */
@@ -534,4 +551,36 @@ export async function readInventorySnapshot(env: Env = process.env): Promise<Inv
 /** Every inconsistent stock item across every tenant (plan section T); empty when the ledger and balances agree. */
 export async function readInventoryConsistency(env: Env = process.env): Promise<readonly InventoryConsistencyIssue[]> {
   return withFixtureSession(env, (client) => findInventoryInconsistencies(client));
+}
+
+/** Plain ledger account rows for assertions (no Prisma types), across every tenant. */
+export interface LedgerSnapshot {
+  readonly accounts: readonly {
+    id: string;
+    businessId: string;
+    code: string;
+    name: string;
+    type: string;
+    normalBalance: string;
+    systemRole: string | null;
+    templateVersion: number;
+    status: string;
+  }[];
+}
+
+export async function readLedgerSnapshot(env: Env = process.env): Promise<LedgerSnapshot> {
+  return withFixtureSession(env, async (client) => ({
+    accounts: (
+      await client.query(
+        `SELECT id, business_id AS "businessId", code, name, type, normal_balance AS "normalBalance",
+                system_role AS "systemRole", template_version AS "templateVersion", status
+         FROM public.ledger_accounts ORDER BY business_id, code`,
+      )
+    ).rows as LedgerSnapshot["accounts"],
+  }));
+}
+
+/** Every ledger chart inconsistency across every tenant (ADR-009 section 29); empty when every chart matches its template. */
+export async function readLedgerConsistency(env: Env = process.env): Promise<readonly LedgerConsistencyIssue[]> {
+  return withFixtureSession(env, (client) => findLedgerInconsistencies(client));
 }

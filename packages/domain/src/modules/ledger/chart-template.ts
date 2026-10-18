@@ -136,7 +136,13 @@ export function chartTemplateV1Roles(): readonly SystemAccountRole[] {
   return SYSTEM_ACCOUNT_ROLES;
 }
 
+/** The template for a version this application knows, or undefined. */
+export function findChartTemplate(version: number): ChartTemplate | undefined {
+  return version === CHART_TEMPLATE_V1.version ? CHART_TEMPLATE_V1 : undefined;
+}
+
 export function chartTemplateByVersion(version: number): ChartTemplate {
-  if (version === 1) return CHART_TEMPLATE_V1;
+  const template = findChartTemplate(version);
+  if (template !== undefined) return template;
   throw new DomainError("INVALID_VALUE", `unknown chart template version ${version}`, "templateVersion");
 }

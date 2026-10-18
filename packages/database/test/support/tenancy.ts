@@ -39,6 +39,8 @@ import {
   createCreateInvitation,
   createCreateProduct,
   createCreateStocktake,
+  createChartOfAccountsProvisioning,
+  createProvisionExistingBusinessChart,
   createDefaultLocationCreation,
   createDefaultLocationResolver,
   createDeviceVerifier,
@@ -98,6 +100,7 @@ import {
   parseCorrelationId,
   type PostGoodsReceipt,
   type PostStocktake,
+  type ProvisionExistingBusinessChart,
   type ReactivateMember,
   type ReactivateProduct,
   type RecordAdjustment,
@@ -196,6 +199,8 @@ export interface Tenancy {
   readonly getOpeningBatch: GetOpeningBatch;
   readonly getGoodsReceipt: GetGoodsReceipt;
   readonly getAdjustment: GetAdjustment;
+  /** The operator chart command's use case, composed as apps/api composes it. */
+  readonly provisionExistingBusinessChart: ProvisionExistingBusinessChart;
   registeredUser(subject: string, displayName?: string): Promise<RegisteredUser>;
   create(user: RegisteredUser, input?: Partial<CreateBusinessInput>): Promise<CreateBusinessOutcome>;
   /** The server-resolved context of an ACTIVE member, as the API's BusinessContextGuard produces it. */
@@ -287,6 +292,7 @@ export function useTenancyHarness() {
       receipts: repos.goodsReceipts,
       adjustments: repos.inventoryAdjustments,
     };
+    const chartOfAccounts = createChartOfAccountsProvisioning({ accounts: repos.ledgerAccounts, audit, clock, ids });
     const createBusiness = createCreateBusiness({
       unitOfWork: uow,
       users: repos.users,
@@ -294,6 +300,7 @@ export function useTenancyHarness() {
       memberships: repos.memberships,
       currencies: repos.currencies,
       defaultLocation: createDefaultLocationCreation({ locations: repos.locations, audit, ids }),
+      chartOfAccounts,
       idempotency: new KeyedIdempotency({ store: repos.userIdempotency, clock, ids }),
       hasher,
       audit,
@@ -384,6 +391,11 @@ export function useTenancyHarness() {
       getOpeningBatch: createGetOpeningBatch(reads),
       getGoodsReceipt: createGetGoodsReceipt(reads),
       getAdjustment: createGetAdjustment(reads),
+      provisionExistingBusinessChart: createProvisionExistingBusinessChart({
+        unitOfWork: uow,
+        businesses,
+        chartOfAccounts,
+      }),
       contextFor(user, businessId) {
         return businessContexts.resolveForUser(user.context, businessId);
       },

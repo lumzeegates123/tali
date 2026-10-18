@@ -10,6 +10,7 @@ import {
   type InventoryItemReader,
   type InventoryMovementRepository,
   type InvitationRepository,
+  type LedgerAccountRepository,
   type LocationRepository,
   type MembershipRepository,
   type OpeningBatchRepository,
@@ -40,6 +41,7 @@ import { createInventoryMovementRepository } from "./repositories/inventory-move
 import { createOpeningBatchRepository } from "./repositories/inventory-opening-batch-repository.js";
 import { createInventoryStockThresholdRepository } from "./repositories/inventory-stock-threshold-repository.js";
 import { createInvitationRepository } from "./repositories/invitation-repository.js";
+import { createLedgerAccountRepository } from "./repositories/ledger-account-repository.js";
 import { createLocationRepository } from "./repositories/location-repository.js";
 import { createMembershipRepository } from "./repositories/membership-repository.js";
 import { createProductCategoryRepository } from "./repositories/product-category-repository.js";
@@ -98,6 +100,7 @@ export interface DatabaseRepositories {
   readonly stocktakes: StocktakeRepository;
   readonly stocktakeLines: StocktakeLineRepository;
   readonly inventoryItems: InventoryItemReader;
+  readonly ledgerAccounts: LedgerAccountRepository;
 }
 
 /**
@@ -139,6 +142,7 @@ export function createRepositories(): DatabaseRepositories {
     stocktakes: createStocktakeRepository(),
     stocktakeLines: createStocktakeLineRepository(),
     inventoryItems: createInventoryItemReader(),
+    ledgerAccounts: createLedgerAccountRepository(),
   });
 }
 

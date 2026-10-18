@@ -1,11 +1,12 @@
 import type { BusinessId, JournalEntryId, LedgerAccountId, SystemAccountRole } from "@tali/domain";
-import type {
-  JournalEntry,
-  JournalLineRow,
-  JournalRepository,
-  JournalSourceRef,
-  LedgerAccount,
-  LedgerAccountRepository,
+import {
+  StoredLedgerAccountInvalidError,
+  type JournalEntry,
+  type JournalLineRow,
+  type JournalRepository,
+  type JournalSourceRef,
+  type LedgerAccount,
+  type LedgerAccountRepository,
 } from "../modules/ledger/ports.js";
 import type { TransactionScope } from "../ports/unit-of-work.js";
 import { FailureInjection } from "./failure-injection.js";
@@ -20,6 +21,7 @@ export class InMemoryLedgerStore implements LedgerAccountRepository, JournalRepo
   readonly #unitOfWork: InMemoryUnitOfWork | undefined;
   #accounts: LedgerAccount[] = [];
   #entries: JournalEntry[] = [];
+  readonly #unreadable = new Set<BusinessId>();
 
   constructor(options: { readonly unitOfWork?: InMemoryUnitOfWork } = {}) {
     this.#unitOfWork = options.unitOfWork;
@@ -56,6 +58,9 @@ export class InMemoryLedgerStore implements LedgerAccountRepository, JournalRepo
   async listByBusiness(scope: TransactionScope, businessId: BusinessId): Promise<readonly LedgerAccount[]> {
     this.#unitOfWork?.assertActive(scope);
     this.failures.check("ledger.accounts.listByBusiness");
+    if (this.#unreadable.has(businessId)) {
+      throw new StoredLedgerAccountInvalidError("stored ledger account has no system role");
+    }
     return Object.freeze(
       [...this.#accounts.filter((account) => account.businessId === businessId)].sort((a, b) =>
         a.code.localeCompare(b.code),
@@ -63,15 +68,13 @@ export class InMemoryLedgerStore implements LedgerAccountRepository, JournalRepo
     );
   }
 
-  async findProvisionedTemplateVersion(scope: TransactionScope, businessId: BusinessId): Promise<number | undefined> {
+  async listProvisionedTemplateVersions(scope: TransactionScope, businessId: BusinessId): Promise<readonly number[]> {
     this.#unitOfWork?.assertActive(scope);
-    this.failures.check("ledger.accounts.findProvisionedTemplateVersion");
-    let version: number | undefined;
-    for (const account of this.#accounts) {
-      if (account.businessId !== businessId) continue;
-      version = version === undefined ? account.templateVersion : Math.max(version, account.templateVersion);
-    }
-    return version;
+    this.failures.check("ledger.accounts.listProvisionedTemplateVersions");
+    const versions = new Set(
+      this.#accounts.filter((account) => account.businessId === businessId).map((account) => account.templateVersion),
+    );
+    return Object.freeze([...versions].sort((a, b) => a - b));
   }
 
   async insertMany(scope: TransactionScope, accounts: readonly LedgerAccount[]): Promise<void> {
@@ -199,6 +202,15 @@ export class InMemoryLedgerStore implements LedgerAccountRepository, JournalRepo
       }
       return Object.freeze({ ...account, ...patch });
     });
+  }
+
+  /**
+   * Test helper: simulate a stored account row for the business that the
+   * repository cannot restore (for example one with no system role), as the
+   * PostgreSQL adapter reports it.
+   */
+  addUnreadableAccount(businessId: BusinessId): void {
+    this.#unreadable.add(businessId);
   }
 
   accountId(businessId: BusinessId, role: SystemAccountRole): LedgerAccountId | undefined {

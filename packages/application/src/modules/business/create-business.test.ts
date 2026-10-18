@@ -57,6 +57,12 @@ describe("CreateBusiness", () => {
     expect(h.store.businesses).toEqual([result.business]);
     expect(h.store.locations).toEqual([result.location]);
     expect(h.store.memberships).toEqual([result.membership]);
+    const accounts = h.ledger.accountsFor(result.business.id);
+    expect(accounts).toHaveLength(13);
+    expect(new Set(accounts.map((account) => account.systemRole)).size).toBe(13);
+    expect(new Set(accounts.map((account) => `${account.templateVersion}:${account.status}`))).toEqual(
+      new Set(["1:ACTIVE"]),
+    );
   });
 
   it("accepts any approved currency and canonicalizes the time zone", async () => {
@@ -65,11 +71,11 @@ describe("CreateBusiness", () => {
     expect(result.business).toMatchObject({ currencyCode: "JPY", timeZone: "Etc/UTC" });
   });
 
-  it("writes business, location and membership audit records in the business stream", async () => {
+  it("writes business, location, membership and chart audit records in the business stream", async () => {
     const { h, owner, auditBefore } = await setup();
     const { result } = await h.createBusiness.execute(owner.context, input());
     const actor = { type: "user", userId: owner.userId, membershipId: result.membership.id };
-    expect(h.auditWriter.all).toHaveLength(auditBefore + 3);
+    expect(h.auditWriter.all).toHaveLength(auditBefore + 4);
     expect(h.auditWriter.businessRecords).toEqual([
       expect.objectContaining({
         action: "business.created",
@@ -93,6 +99,15 @@ describe("CreateBusiness", () => {
         businessId: result.business.id,
         actor,
         payload: { userId: owner.userId, role: "OWNER", status: "ACTIVE" },
+      }),
+      expect.objectContaining({
+        action: "ledger.chart_provisioned",
+        entityType: "business",
+        entityId: result.business.id,
+        businessId: result.business.id,
+        actor,
+        idempotencyKey: KEY,
+        payload: { templateVersion: 1, accountCount: 13 },
       }),
     ]);
     expect(JSON.stringify(h.auditWriter.businessRecords)).not.toContain("Mama Put");
@@ -122,6 +137,7 @@ describe("CreateBusiness", () => {
     const second = await h.createBusiness.execute(owner.context, input());
     expect(second).toEqual({ result: first.result, replayed: true });
     expect(h.store.businesses).toHaveLength(1);
+    expect(h.ledger.accounts).toHaveLength(13);
     expect(h.auditWriter.all).toHaveLength(auditCount);
   });
 
@@ -206,14 +222,21 @@ describe("CreateBusiness", () => {
     ["the business audit", "audit.business.created"],
     ["the location audit", "audit.location.created"],
     ["the membership audit", "audit.membership.created"],
+    ["the ledger account insert", "ledger.accounts.insertMany"],
+    ["the chart audit", "audit.ledger.chart_provisioned"],
   ])("leaves nothing behind when %s fails", async (_name, operation) => {
     const { h, owner, auditBefore } = await setup();
-    const failures = operation.startsWith("audit.") ? h.auditWriter.failures : h.store.failures;
+    const failures = operation.startsWith("audit.")
+      ? h.auditWriter.failures
+      : operation.startsWith("ledger.")
+        ? h.ledger.failures
+        : h.store.failures;
     failures.failNext(operation);
     await expect(h.createBusiness.execute(owner.context, input())).rejects.toThrow(/injected failure/);
     expect(h.store.businesses).toHaveLength(0);
     expect(h.store.locations).toHaveLength(0);
     expect(h.store.memberships).toHaveLength(0);
+    expect(h.ledger.accounts).toHaveLength(0);
     expect(h.idempotencyStore.records).toHaveLength(0);
     expect(h.auditWriter.all).toHaveLength(auditBefore);
     // The same key then succeeds: the failed attempt claimed nothing.
