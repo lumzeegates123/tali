@@ -28,6 +28,7 @@ import type { JsonValue } from "../../ports/queue-provider.js";
 import type { UnitOfWork } from "../../ports/unit-of-work.js";
 import type { UserRepository } from "../identity/index.js";
 import { requireActiveUser } from "../identity/index.js";
+import type { ChartOfAccountsProvisioning } from "../ledger/index.js";
 import type { DefaultLocationCreation } from "../location/index.js";
 import { businessCreated, membershipCreated } from "./audit-actions.js";
 import type { BusinessRepository, CurrencyReferenceRepository, MembershipRepository } from "./ports.js";
@@ -56,11 +57,13 @@ export interface CreateBusinessOutcome {
 }
 
 /**
- * Creates a business, its single ACTIVE default location and the creator's
- * ACTIVE OWNER membership in one transaction (ADR-005 section 5), keyed by
- * the caller's idempotency key in user scope (ADR-004 section 4.2). Any
- * active registered user may create a business; no business permission
- * applies because the business does not exist yet.
+ * Creates a business, its single ACTIVE default location, the creator's
+ * ACTIVE OWNER membership and its ledger chart of accounts (template version
+ * 1; ADR-009 section 6) in one transaction (ADR-005 section 5), keyed by the
+ * caller's idempotency key in user scope (ADR-004 section 4.2). A replay
+ * writes nothing, so no second chart or chart audit. Any active registered
+ * user may create a business; no business permission applies because the
+ * business does not exist yet.
  */
 export interface CreateBusiness {
   execute(context: AuthenticatedUserContext, input: CreateBusinessInput): Promise<CreateBusinessOutcome>;
@@ -175,6 +178,7 @@ export function createCreateBusiness(dependencies: {
   readonly memberships: MembershipRepository;
   readonly currencies: CurrencyReferenceRepository;
   readonly defaultLocation: DefaultLocationCreation;
+  readonly chartOfAccounts: ChartOfAccountsProvisioning;
   readonly idempotency: KeyedIdempotency;
   readonly hasher: FingerprintHasher;
   readonly audit: AuditRecorder;
@@ -259,6 +263,7 @@ export function createCreateBusiness(dependencies: {
                   entityId: membership.id,
                   payload: { userId: membership.userId, role: membership.role, status: membership.status },
                 });
+                await dependencies.chartOfAccounts.provisionInTransaction(scope, { ...audit, businessId: business.id });
               },
             };
           },

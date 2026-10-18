@@ -62,6 +62,7 @@ import {
   createRegisterCurrentUser,
   createUserContextResolver,
 } from "../modules/identity/index.js";
+import { createChartOfAccountsProvisioning } from "../modules/ledger/index.js";
 import type { DefaultLocationResolver, ListLocations } from "../modules/location/index.js";
 import {
   createDefaultLocationCreation,
@@ -74,6 +75,7 @@ import { FakeOneTimeSecretGenerator, FakeSecretHasher } from "./fake-one-time-se
 import { FixedClock } from "./fixed-clock.js";
 import { InMemoryAuditWriter } from "./in-memory-audit-writer.js";
 import { InMemoryBusinessIdempotencyStore } from "./in-memory-business-idempotency-store.js";
+import { InMemoryLedgerStore } from "./in-memory-ledger-store.js";
 import { InMemoryTenancyStore } from "./in-memory-tenancy-store.js";
 import { InMemoryUnitOfWork } from "./in-memory-unit-of-work.js";
 import { InMemoryUserIdempotencyStore } from "./in-memory-user-idempotency-store.js";
@@ -88,6 +90,8 @@ export interface TenancyHarness {
   readonly auditWriter: InMemoryAuditWriter;
   readonly idempotencyStore: InMemoryUserIdempotencyStore;
   readonly businessIdempotencyStore: InMemoryBusinessIdempotencyStore;
+  /** Ledger accounts provisioned by business creation (ADR-009 section 6). */
+  readonly ledger: InMemoryLedgerStore;
   readonly hasher: FakeFingerprintHasher;
   readonly secrets: FakeOneTimeSecretGenerator;
   readonly secretHasher: FakeSecretHasher;
@@ -156,6 +160,7 @@ export function createTenancyHarness(options: {
   const auditWriter = new InMemoryAuditWriter({ unitOfWork });
   const idempotencyStore = new InMemoryUserIdempotencyStore({ unitOfWork });
   const businessIdempotencyStore = new InMemoryBusinessIdempotencyStore({ unitOfWork });
+  const ledger = new InMemoryLedgerStore({ unitOfWork });
   const hasher = new FakeFingerprintHasher();
   const secrets = new FakeOneTimeSecretGenerator();
   const secretHasher = new FakeSecretHasher();
@@ -174,6 +179,7 @@ export function createTenancyHarness(options: {
     memberships,
     currencies: store.currencyRepository,
     defaultLocation: createDefaultLocationCreation({ locations, audit, ids }),
+    chartOfAccounts: createChartOfAccountsProvisioning({ accounts: ledger, audit, clock, ids }),
     idempotency: new KeyedIdempotency({ store: idempotencyStore, clock, ids }),
     hasher,
     audit,
@@ -256,6 +262,7 @@ export function createTenancyHarness(options: {
     auditWriter,
     idempotencyStore,
     businessIdempotencyStore,
+    ledger,
     hasher,
     secrets,
     secretHasher,

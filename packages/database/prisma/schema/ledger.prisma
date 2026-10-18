@@ -1,0 +1,32 @@
+// Ledger module (ADR-009 sections 3 to 6; Build 3 Slice 2). One account per
+// business and system role, created from the versioned chart-of-accounts
+// template by ProvisionChartOfAccounts (never by a migration). Tenant-owned:
+// business_id NOT NULL and UNIQUE (business_id, id) for the composite
+// references journal lines will use. Type, normal-balance, role, role-to-type,
+// template-version, status, code and name CHECKs and the privileges (SELECT and
+// INSERT only) live in the migration SQL. Accounts are never updated or
+// deleted, and carry no currency (the business currency applies).
+//
+// Journal entries and lines are not in this slice: ADR-009 section 13 adds
+// each typed source column with its source, and the first sources arrive in
+// the valuation slice (S3), which creates both tables with them.
+
+model LedgerAccount {
+  businessId      String   @map("business_id") @db.Uuid
+  id              String   @id @db.Uuid
+  code            String
+  name            String
+  type            String
+  normalBalance   String   @map("normal_balance")
+  systemRole      String?  @map("system_role")
+  templateVersion Int      @map("template_version")
+  status          String
+  createdAt       DateTime @map("created_at") @db.Timestamptz(3)
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([businessId, id])
+  @@unique([businessId, code])
+  @@unique([businessId, systemRole])
+  @@map("ledger_accounts")
+}

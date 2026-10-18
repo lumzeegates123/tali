@@ -17,7 +17,8 @@ const migrationsDir = fileURLToPath(new URL("../prisma/migrations", import.meta.
  * touched them. Audit and keyed-idempotency records are insert-only
  * (ADR-004 sections 4.2 and 8.1). Unit reference data is read-only and price
  * history is insert-only (ADR-008 sections 3.4 and 4.2). Inventory movements
- * and opening batches are append-only (ADR-008 sections 7.1 and 11).
+ * and opening batches are append-only (ADR-008 sections 7.1 and 11). Ledger
+ * accounts are insert-only in Build 3 (ADR-009 sections 4 and 11).
  */
 const PROTECTED_TABLES = [
   "foundation_spike.protected_entry",
@@ -29,6 +30,7 @@ const PROTECTED_TABLES = [
   "public.product_variant_prices",
   "public.inventory_movements",
   "public.inventory_opening_batches",
+  "public.ledger_accounts",
 ];
 
 /**
@@ -113,6 +115,7 @@ const EXPECTED_APP_PRIVILEGES = {
   "public.inventory_stock_thresholds": ["INSERT", "SELECT", "UPDATE"],
   "public.stocktakes": ["INSERT", "SELECT"],
   "public.stocktake_lines": ["INSERT", "SELECT"],
+  "public.ledger_accounts": ["INSERT", "SELECT"],
 };
 
 /**
@@ -499,6 +502,55 @@ const STOCKTAKE_CHECKS = [
   },
 ];
 
+/** The Build 3 Slice 2 ledger account CHECKs (ADR-009 sections 4 and 5). */
+const LEDGER_CHECKS = [
+  {
+    table: "ledger_accounts",
+    name: "ledger_accounts_type_valid",
+    definition:
+      "CHECK ((type = ANY (ARRAY['ASSET'::text, 'LIABILITY'::text, 'EQUITY'::text, 'REVENUE'::text, 'CONTRA_REVENUE'::text, 'EXPENSE'::text])))",
+  },
+  {
+    table: "ledger_accounts",
+    name: "ledger_accounts_normal_balance_valid",
+    definition: "CHECK ((normal_balance = ANY (ARRAY['DEBIT'::text, 'CREDIT'::text])))",
+  },
+  {
+    table: "ledger_accounts",
+    name: "ledger_accounts_normal_balance_for_type",
+    definition:
+      "CHECK ((((type = ANY (ARRAY['ASSET'::text, 'CONTRA_REVENUE'::text, 'EXPENSE'::text])) AND (normal_balance = 'DEBIT'::text)) OR ((type = ANY (ARRAY['LIABILITY'::text, 'EQUITY'::text, 'REVENUE'::text])) AND (normal_balance = 'CREDIT'::text))))",
+  },
+  {
+    table: "ledger_accounts",
+    name: "ledger_accounts_system_role_valid",
+    definition:
+      "CHECK (((system_role IS NULL) OR (system_role = ANY (ARRAY['CASH_ON_HAND'::text, 'BANK_TRANSFER_PENDING'::text, 'POS_CARD_CLEARING'::text, 'OTHER_TENDER_CLEARING'::text, 'INVENTORY'::text, 'SALES_REVENUE'::text, 'SALES_DISCOUNTS'::text, 'TAX_PAYABLE'::text, 'COST_OF_GOODS_SOLD'::text, 'INVENTORY_SHRINKAGE'::text, 'INVENTORY_GAIN'::text, 'OPENING_BALANCE_EQUITY'::text, 'GOODS_RECEIVED_NOT_INVOICED'::text]))))",
+  },
+  {
+    table: "ledger_accounts",
+    name: "ledger_accounts_system_role_type",
+    definition:
+      "CHECK (((system_role IS NULL) OR ((system_role = ANY (ARRAY['CASH_ON_HAND'::text, 'BANK_TRANSFER_PENDING'::text, 'POS_CARD_CLEARING'::text, 'OTHER_TENDER_CLEARING'::text, 'INVENTORY'::text])) AND (type = 'ASSET'::text)) OR ((system_role = ANY (ARRAY['TAX_PAYABLE'::text, 'GOODS_RECEIVED_NOT_INVOICED'::text])) AND (type = 'LIABILITY'::text)) OR ((system_role = 'OPENING_BALANCE_EQUITY'::text) AND (type = 'EQUITY'::text)) OR ((system_role = ANY (ARRAY['SALES_REVENUE'::text, 'INVENTORY_GAIN'::text])) AND (type = 'REVENUE'::text)) OR ((system_role = 'SALES_DISCOUNTS'::text) AND (type = 'CONTRA_REVENUE'::text)) OR ((system_role = ANY (ARRAY['COST_OF_GOODS_SOLD'::text, 'INVENTORY_SHRINKAGE'::text])) AND (type = 'EXPENSE'::text))))",
+  },
+  {
+    table: "ledger_accounts",
+    name: "ledger_accounts_template_version_positive",
+    definition: "CHECK ((template_version >= 1))",
+  },
+  { table: "ledger_accounts", name: "ledger_accounts_status_valid", definition: "CHECK ((status = 'ACTIVE'::text))" },
+  {
+    table: "ledger_accounts",
+    name: "ledger_accounts_code_valid",
+    definition: "CHECK ((((char_length(code) >= 1) AND (char_length(code) <= 20)) AND (code = btrim(code))))",
+  },
+  {
+    table: "ledger_accounts",
+    name: "ledger_accounts_name_valid",
+    definition: "CHECK ((((char_length(name) >= 1) AND (char_length(name) <= 120)) AND (name = btrim(name))))",
+  },
+];
+
 /**
  * Every custom CHECK constraint, compared with PostgreSQL's canonical
  * rendering (pg_get_constraintdef), so any change to a constraint fails.
@@ -834,6 +886,7 @@ const EXPECTED_CHECKS = [
   },
   ...INVENTORY_CHECKS,
   ...STOCKTAKE_CHECKS,
+  ...LEDGER_CHECKS,
 ];
 
 /** @type {{ schema: string; name: string; columns: string; predicate: string }[]} */
@@ -1041,6 +1094,12 @@ const EXPECTED_TENANT_FOREIGN_KEYS = [
     definition:
       "FOREIGN KEY (business_id, location_id, variant_id, last_movement_id) REFERENCES inventory_movements(business_id, location_id, variant_id, id) ON UPDATE RESTRICT ON DELETE RESTRICT",
   },
+  // A ledger account belongs to an existing business and is never removed with it (ADR-009 section 4).
+  {
+    table: "ledger_accounts",
+    name: "ledger_accounts_business_id_fkey",
+    definition: "FOREIGN KEY (business_id) REFERENCES businesses(id) ON UPDATE RESTRICT ON DELETE RESTRICT",
+  },
 ];
 
 /**
@@ -1109,6 +1168,11 @@ const EXPECTED_UNIQUE_INDEXES = [
   { schema: "public", name: "stocktakes_business_id_id_key", columns: "business_id,id" },
   { schema: "public", name: "stocktakes_business_id_id_location_id_key", columns: "business_id,id,location_id" },
   { schema: "public", name: "stocktake_lines_pkey", columns: "business_id,stocktake_id,variant_id" },
+  // Ledger accounts (ADR-009 sections 4 and 5): the composite-reference target,
+  // one display code and one account per system role per business.
+  { schema: "public", name: "ledger_accounts_business_id_id_key", columns: "business_id,id" },
+  { schema: "public", name: "ledger_accounts_business_id_code_key", columns: "business_id,code" },
+  { schema: "public", name: "ledger_accounts_business_id_system_role_key", columns: "business_id,system_role" },
 ];
 
 /** Reference rows every migrated database must contain (ADR-005 section 5: the pilot currency). */

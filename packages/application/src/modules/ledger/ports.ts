@@ -100,15 +100,41 @@ export interface LedgerAccountRepository {
     businessId: BusinessId,
     role: SystemAccountRole,
   ): Promise<LedgerAccount | undefined>;
-  /** Every account of the business, ordered by code ascending. */
+  /**
+   * Every account of the business, ordered by code ascending. Throws
+   * StoredLedgerAccountInvalidError for a stored row the domain cannot restore.
+   */
   listByBusiness(scope: TransactionScope, businessId: BusinessId): Promise<readonly LedgerAccount[]>;
   /**
-   * Highest template version provisioned for the business, or undefined when
-   * no chart has been provisioned yet.
+   * Every distinct template version among the business's accounts, ascending;
+   * empty when the business has no account. Reported as stored: the caller
+   * decides what a mixed or unknown set means.
    */
-  findProvisionedTemplateVersion(scope: TransactionScope, businessId: BusinessId): Promise<number | undefined>;
+  listProvisionedTemplateVersions(scope: TransactionScope, businessId: BusinessId): Promise<readonly number[]>;
   /** Inserts accounts for a new chart version. Callers must not duplicate roles. */
   insertMany(scope: TransactionScope, accounts: readonly LedgerAccount[]): Promise<void>;
+}
+
+/**
+ * A stored ledger account row that cannot be restored as a LedgerAccount (for
+ * example no system role). Not an ApplicationError: outside chart
+ * provisioning it fails loudly as an unexpected error; provisioning reports
+ * it as LEDGER_CHART_INCOMPLETE.
+ */
+export class StoredLedgerAccountInvalidError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "StoredLedgerAccountInvalidError";
+  }
+}
+
+/**
+ * The business row lock the operator chart command takes, so concurrent runs
+ * for one business serialize. The business module's BusinessRepository
+ * satisfies it structurally (SELECT ... FOR UPDATE on the business row).
+ */
+export interface LedgerBusinessLock {
+  findByIdForUpdate(scope: TransactionScope, businessId: BusinessId): Promise<{ readonly id: BusinessId } | undefined>;
 }
 
 /**

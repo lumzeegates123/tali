@@ -11,12 +11,15 @@ export {
 } from "./test-database.js";
 export { assertFixtureSession, FixtureSafetyError, fixtureTargetUrl } from "./fixture-safety.js";
 export type { InventoryConsistencyIssue, InventoryConsistencyKind } from "../inventory/consistency-query.js";
-export type { CatalogSnapshot, InventorySnapshot, TenancySnapshot } from "./tenancy-fixtures.js";
+export type { LedgerConsistencyIssue, LedgerConsistencyKind } from "../ledger/consistency-query.js";
+export type { CatalogSnapshot, InventorySnapshot, LedgerSnapshot, TenancySnapshot } from "./tenancy-fixtures.js";
 export {
   addTestCurrencies,
   readCatalogSnapshot,
   readInventoryConsistency,
   readInventorySnapshot,
+  readLedgerConsistency,
+  readLedgerSnapshot,
   readTenancySnapshot,
   removeTestCurrencies,
   resetTenancyTables,

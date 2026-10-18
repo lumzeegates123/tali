@@ -14,6 +14,7 @@ export {
   assertValidChartTemplate,
   chartTemplateByVersion,
   chartTemplateV1Roles,
+  findChartTemplate,
 } from "./chart-template.js";
 export type { JournalEntryId, LedgerAccountId } from "./ids.js";
 export { parseJournalEntryId, parseLedgerAccountId } from "./ids.js";
