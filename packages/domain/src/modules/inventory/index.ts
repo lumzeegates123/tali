@@ -53,6 +53,7 @@ export type {
   InventoryMovementId,
   OpeningBatchId,
   StockThresholdId,
+  StockValuationId,
   StocktakeId,
 } from "./ids.js";
 export {
@@ -62,6 +63,7 @@ export {
   parseOpeningBatchId,
   parseStocktakeId,
   parseStockThresholdId,
+  parseStockValuationId,
 } from "./ids.js";
 export { deriveLowStock } from "./low-stock.js";
 export type {
@@ -103,6 +105,29 @@ export {
   STOCKTAKE_LINE_STATUSES,
   STOCKTAKE_STATUSES,
 } from "./stocktake.js";
+export type {
+  InventoryMovementValuation,
+  InventoryValuationState,
+  MovementCostBasis,
+  StockValuationDocument,
+  StockValuationKind,
+  ValuationStatus,
+} from "./valuation.js";
+export {
+  MOVEMENT_COST_BASES,
+  STOCK_VALUATION_KINDS,
+  VALUATION_STATUSES,
+  allocateProportionalMinor,
+  emptyInventoryValuation,
+  hasEverBeenValued,
+  nextValuationVersion,
+  parseMovementCostBasis,
+  parseStockValuationKind,
+  parseValuationStatus,
+  restoreStockValuation,
+  restoreStockValuationId,
+  restoreTriggerMovementId,
+} from "./valuation.js";
 export type { StockThreshold, StockThresholdDecision, StockThresholdTarget } from "./threshold.js";
 export {
   decideClearThreshold,

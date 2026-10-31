@@ -21,9 +21,9 @@ try {
   try {
     const issues = await findInventoryInconsistencies(client);
     for (const issue of issues) {
-      console.error(
-        `INCONSISTENT ${issue.kind} business=${issue.businessId} location=${issue.locationId} variant=${issue.variantId}`,
-      );
+      const location = issue.locationId === null ? "" : ` location=${issue.locationId}`;
+      const variant = issue.variantId === null ? "" : ` variant=${issue.variantId}`;
+      console.error(`INCONSISTENT ${issue.kind} business=${issue.businessId}${location}${variant}`);
     }
     if (issues.length === 0) console.log("Inventory consistency check passed: balances match the movement ledger.");
     else console.error(`Inventory consistency check failed: ${issues.length} mismatch(es). Nothing was changed.`);

@@ -196,6 +196,7 @@ describe("audit actions and registry", () => {
       ["inventory.stocktake_cancelled", "business"],
       ["inventory.stocktake_posted", "business"],
       ["inventory.stocktake_started", "business"],
+      ["inventory.valuation_recorded", "business"],
       ["inventory.written_off", "business"],
       ["invitation.accepted", "business"],
       ["invitation.created", "business"],
@@ -220,9 +221,9 @@ describe("audit actions and registry", () => {
     ]);
   });
 
-  it("registers the eight Slice 5 inventory actions and the three Slice 6 stocktake actions", () => {
+  it("registers the eight Slice 5 inventory actions, the three Slice 6 stocktake actions and valuation", () => {
     const inventory = taliAuditRegistry.actions.filter((a) => a.name.startsWith("inventory."));
-    expect(inventory).toHaveLength(11);
+    expect(inventory).toHaveLength(12);
     expect(
       inventory
         .filter((a) => a.entityType === "stocktake")
@@ -236,6 +237,7 @@ describe("audit actions and registry", () => {
         "inventory_adjustment",
         "inventory_stock_threshold",
         "stocktake",
+        "stock_valuation",
       ]),
     );
   });
@@ -245,7 +247,14 @@ describe("audit actions and registry", () => {
     expect(Object.fromEntries(stocktake.map((a) => [a.name, Object.keys(a.fields).sort()]))).toEqual({
       "inventory.stocktake_started": [],
       "inventory.stocktake_cancelled": ["countedLineCount"],
-      "inventory.stocktake_posted": ["correctionMovementCount", "countedLineCount", "zeroVarianceCount"],
+      "inventory.stocktake_posted": [
+        "correctionMovementCount",
+        "countedLineCount",
+        "journalEntryId",
+        "valuationStatusAfter",
+        "valueDeltaMinor",
+        "zeroVarianceCount",
+      ],
     });
   });
 

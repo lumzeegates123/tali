@@ -21,6 +21,11 @@ const INVENTORY_REPOSITORIES: readonly (keyof DatabaseRepositories)[] = [
   "stocktakes",
   "stocktakeLines",
   "inventoryItems",
+  "inventoryValuations",
+  "inventoryMovementValuations",
+  "stockValuations",
+  "journals",
+  "ledgerAccounts",
   "businessIdempotency",
   "auditWriter",
 ];
@@ -58,8 +63,8 @@ describe("composeApiServices inventory composition (Build 2 Slices 5 and 6)", ()
   });
 
   it("composes every inventory and stocktake use case", () => {
-    expect(INVENTORY_SERVICE_KEYS).toHaveLength(22);
-    expect(new Set(INVENTORY_SERVICE_KEYS).size).toBe(22);
+    expect(INVENTORY_SERVICE_KEYS).toHaveLength(23);
+    expect(new Set(INVENTORY_SERVICE_KEYS).size).toBe(23);
     for (const key of INVENTORY_SERVICE_KEYS) {
       expect({ key, execute: typeof services[key].execute }).toEqual({ key, execute: "function" });
     }

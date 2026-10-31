@@ -10,6 +10,8 @@ import type {
 import {
   MAX_INVENTORY_DOCUMENT_LINES,
   MAX_QUANTITY_MINOR,
+  Money,
+  parseCurrencyCode,
   parseGoodsReceiptReference,
   parseInventoryNote,
   parseInventoryReasonNote,
@@ -46,6 +48,8 @@ export interface StockLineInput {
   readonly unit?: string;
   readonly packId?: string;
   readonly packCount?: string;
+  /** Optional total cost in minor units of the business currency. */
+  readonly totalCost?: { readonly amountMinor: string; readonly currency: string };
 }
 
 export const STOCK_LINE_DIRECTIONS = ["INCREASE", "DECREASE"] as const;
@@ -65,6 +69,7 @@ export interface NormalizedStockLine {
   readonly variantId: ProductVariantId;
   readonly quantity: LineQuantity;
   readonly direction?: StockLineDirection;
+  readonly totalCost?: { readonly amountMinor: string; readonly currency: string };
 }
 
 type SyntaxQuantity = LineQuantity | { readonly form: "decimal"; readonly decimal: string; readonly unit: UnitCode };
@@ -75,6 +80,7 @@ export interface StockLineSyntax {
   readonly variantId: ProductVariantId;
   readonly quantity: SyntaxQuantity;
   readonly direction?: StockLineDirection;
+  readonly totalCost?: { readonly amountMinor: string; readonly currency: string };
 }
 
 function invalid(path: readonly (string | number)[], message: string): ValidationError {
@@ -117,6 +123,27 @@ export function idOrNotFound<T>(parse: () => T, message: string): T {
   } catch {
     throw new NotFoundError(message);
   }
+}
+
+function lineCost(
+  line: StockLineInput,
+  index: number,
+): { readonly totalCost?: { readonly amountMinor: string; readonly currency: string } } {
+  if (line.totalCost === undefined) return {};
+  const path = ["lines", index, "totalCost"] as const;
+  const raw = line.totalCost;
+  if (typeof raw.amountMinor !== "string" || typeof raw.currency !== "string") {
+    throw invalid(path, "totalCost must have amountMinor and currency strings");
+  }
+  try {
+    parseCurrencyCode(raw.currency);
+    const money = Money.fromMinorUnitsString(raw.amountMinor, parseCurrencyCode(raw.currency));
+    if (money.isNegative()) throw invalid(path, "totalCost cannot be negative");
+  } catch (error) {
+    if (error instanceof ValidationError) throw error;
+    throw invalid(path, "totalCost is not a valid money amount");
+  }
+  return { totalCost: { amountMinor: raw.amountMinor, currency: raw.currency } };
 }
 
 function parseLineQuantity(line: StockLineInput, index: number): SyntaxQuantity {
@@ -165,12 +192,12 @@ export function parseStockLines(lines: unknown, options: { readonly directions: 
       if ((line as { readonly direction?: unknown }).direction !== undefined) {
         throw invalid(["lines", index, "direction"], "this document takes no direction");
       }
-      return { index, variantId, quantity };
+      return { index, variantId, quantity, ...lineCost(line, index) };
     }
     if (!(STOCK_LINE_DIRECTIONS as readonly unknown[]).includes(line.direction)) {
       throw invalid(["lines", index, "direction"], "direction must be INCREASE or DECREASE");
     }
-    return { index, variantId, quantity, direction: line.direction };
+    return { index, variantId, quantity, direction: line.direction, ...lineCost(line, index) };
   });
   if (new Set(parsed.map((line) => line.variantId)).size !== parsed.length) {
     throw invalid(["lines"], "a document has one line per product");
@@ -217,6 +244,7 @@ export async function normalizeStockLines(
       variantId: line.variantId,
       quantity,
       ...(line.direction === undefined ? {} : { direction: line.direction }),
+      ...(line.totalCost === undefined ? {} : { totalCost: line.totalCost }),
     });
   }
   return normalized.sort((a, b) => (a.variantId < b.variantId ? -1 : 1));
@@ -230,18 +258,24 @@ export async function normalizeStockLines(
 export function fingerprintLines(lines: readonly NormalizedStockLine[]): CommandValue[] {
   return lines.map((line) => {
     const direction = line.direction === undefined ? undefined : canonicalEnum(line.direction);
+    const cost =
+      line.totalCost === undefined
+        ? undefined
+        : { amountMinor: line.totalCost.amountMinor, currency: line.totalCost.currency };
     return line.quantity.form === "direct"
       ? {
           variantId: line.variantId,
           quantityMinor: line.quantity.quantityMinor,
           unit: line.quantity.unit,
           direction,
+          totalCost: cost,
         }
       : {
           variantId: line.variantId,
           packId: line.quantity.packId,
           packCount: line.quantity.packCount,
           direction,
+          totalCost: cost,
         };
   });
 }

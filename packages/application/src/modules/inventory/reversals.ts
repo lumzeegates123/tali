@@ -23,13 +23,12 @@ import type { LocationBoundContext } from "../../context/business-context.js";
 import { requireLocationBound } from "../../context/business-context.js";
 import { ConflictError, NotFoundError } from "../../errors/application-error.js";
 import { withDomainRules } from "../../errors/domain-errors.js";
-import type { Clock } from "../../ports/clock.js";
-import type { IdGenerator } from "../../ports/id-generator.js";
 import type { TransactionScope, UnitOfWork } from "../../ports/unit-of-work.js";
 import type { MembershipRepository } from "../business/index.js";
 import { requireActingMembership, requireUserActor } from "../business/index.js";
 import type { ProductRepository } from "../catalog/index.js";
 import { inventoryPermissions } from "../identity/index.js";
+import { createLedgerPostingService } from "../ledger/posting.js";
 import { inventoryAdjustmentReversed, inventoryReceiptReversed } from "./audit-actions.js";
 import { ADJUSTMENT_NOT_FOUND, GOODS_RECEIPT_NOT_FOUND, parseReversalReason } from "./inventory-common.js";
 import type {
@@ -39,6 +38,8 @@ import type {
   LockedBalances,
   StockBalanceRepository,
 } from "./ports.js";
+import type { ValuationPostingDependencies } from "./valuation-posting.js";
+import { persistReversalValuations, planMovementValuations } from "./valuation-posting.js";
 
 export interface ReverseDocumentInput {
   readonly documentId: string;
@@ -77,15 +78,13 @@ export interface ReverseAdjustment {
   ): Promise<DocumentReversalResult<InventoryAdjustment>>;
 }
 
-interface ReversalDependencies {
+interface ReversalDependencies extends ValuationPostingDependencies {
   readonly unitOfWork: UnitOfWork;
   readonly memberships: MembershipRepository;
   readonly products: ProductRepository;
   readonly movements: InventoryMovementRepository;
   readonly balances: StockBalanceRepository;
   readonly audit: AuditRecorder;
-  readonly ids: IdGenerator;
-  readonly clock: Clock;
 }
 
 interface PlannedReversal {
@@ -157,10 +156,57 @@ async function planReversal(
 async function writeReversal(
   dependencies: ReversalDependencies,
   scope: TransactionScope,
+  context: LocationBoundContext,
   planned: PlannedReversal,
+  source: InventoryMovementSource,
+  reason: string,
 ): Promise<void> {
+  const variantIds = new Set(planned.plan.movements.map((movement) => movement.variantId));
+  const lockedValuations = await dependencies.valuations.lockForUpdate(scope, planned.locked, variantIds);
+  const originalFacts = await dependencies.movementValuations.listForMovements(
+    scope,
+    context.businessId,
+    planned.originals.map((original) => original.id),
+  );
+  const factsByMovement = new Map(originalFacts.map((fact) => [fact.movementId, fact]));
+  const currentByVariant = new Map(
+    lockedValuations.valuations.map((valuation) => [valuation.variantId as string, valuation]),
+  );
+  const preQuantity = new Map(
+    planned.locked.balances.map((balance) => [balance.variantId as string, balance.quantity.amountMinor]),
+  );
+  const [firstReversal] = planned.plan.movements;
+  if (firstReversal === undefined) {
+    throw new ConflictError("a reversal requires at least one movement");
+  }
+  const valuationPlan = planMovementValuations({
+    movements: planned.plan.movements,
+    currentByVariant,
+    preQuantityByVariant: preQuantity,
+    costsByVariant: new Map(),
+    originalFacts: factsByMovement,
+    now: firstReversal.occurredAt,
+  });
   await dependencies.movements.insertMany(scope, planned.plan.movements);
   await dependencies.balances.apply(scope, planned.locked, planned.plan.balances);
+  const posting = createLedgerPostingService(dependencies);
+  await persistReversalValuations(dependencies, posting, scope, context, {
+    locked: lockedValuations,
+    planned: valuationPlan,
+    source: journalSourceOf(source),
+    postingRule: `${source.kind === "GOODS_RECEIPT" ? "GOODS_RECEIPT" : "INVENTORY_ADJUSTMENT"}_REVERSED`,
+    description: `reversal of ${source.id}`,
+    reason,
+  });
+}
+
+function journalSourceOf(source: InventoryMovementSource): {
+  readonly kind: "goods_receipt" | "adjustment";
+  readonly id: string;
+} {
+  return source.kind === "GOODS_RECEIPT"
+    ? { kind: "goods_receipt", id: source.id }
+    : { kind: "adjustment", id: source.id };
 }
 
 export function createReverseGoodsReceipt(
@@ -190,7 +236,7 @@ export function createReverseGoodsReceipt(
           reverseGoodsReceipt({ receipt, reversedByMembershipId: membership.id, reason, now }),
         );
         await dependencies.receipts.markReversed(scope, receipt, next);
-        await writeReversal(dependencies, scope, planned);
+        await writeReversal(dependencies, scope, context, planned, { kind: "GOODS_RECEIPT", id: receipt.id }, reason);
         await dependencies.audit.recordBusinessEvent(scope, inventoryReceiptReversed, {
           ...businessAuditEnvelope(context),
           locationId: context.locationId,
@@ -231,7 +277,7 @@ export function createReverseAdjustment(
           reverseInventoryAdjustment({ adjustment, reversedByMembershipId: membership.id, reason, now }),
         );
         await dependencies.adjustments.markReversed(scope, adjustment, next);
-        await writeReversal(dependencies, scope, planned);
+        await writeReversal(dependencies, scope, context, planned, { kind: "ADJUSTMENT", id: adjustment.id }, reason);
         await dependencies.audit.recordBusinessEvent(scope, inventoryAdjustmentReversed, {
           ...businessAuditEnvelope(context),
           locationId: context.locationId,

@@ -85,6 +85,142 @@ describe("db:inventory-consistency (operator script)", () => {
     }
   });
 
+  it("reports missing post-cutover movement facts, valued zero-qty leftover value, and the inventory ledger invariant", async () => {
+    const tenancy = harness.compose();
+    const t = await inventoryTenant(harness, "valuation-consistency");
+    const soap = await inventoryProduct(harness, t, { name: "Soap" });
+    await tenancy.recordOpeningStock.execute(t.context, {
+      lines: [
+        {
+          variantId: soap.variant.id,
+          quantityMinor: "2",
+          unit: "PIECE",
+          totalCost: { amountMinor: "200", currency: "NGN" },
+        },
+      ],
+      idempotencyKey: harness.world().ids.newId("IdempotencyKey"),
+    });
+    const fact = await harness.owner.query<{ movement_id: string }>(
+      `SELECT movement_id::text FROM inventory_movement_valuations WHERE business_id = $1`,
+      [t.businessId],
+    );
+    const movementId = fact.rows[0]?.movement_id;
+    const saved = await harness.owner.query(
+      `SELECT * FROM inventory_movement_valuations WHERE business_id = $1 AND movement_id = $2`,
+      [t.businessId, movementId],
+    );
+    await harness.owner.query(`DELETE FROM inventory_movement_valuations WHERE business_id = $1 AND movement_id = $2`, [
+      t.businessId,
+      movementId,
+    ]);
+    try {
+      const missing = await checkInventoryConsistency(appUrl);
+      expect(missing.code).toBe(1);
+      expect(missing.stderr).toContain("MISSING_MOVEMENT_VALUATION");
+      expect(missing.stderr).not.toMatch(/Soap|200/);
+    } finally {
+      const row = saved.rows[0] as Record<string, unknown>;
+      await harness.owner.query(
+        `INSERT INTO inventory_movement_valuations (
+           business_id, movement_id, cost_basis, value_delta_minor, value_after_minor, currency,
+           status_after, supplied_cost_minor, journal_entry_id
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [
+          row["business_id"],
+          row["movement_id"],
+          row["cost_basis"],
+          row["value_delta_minor"],
+          row["value_after_minor"],
+          row["currency"],
+          row["status_after"],
+          row["supplied_cost_minor"],
+          row["journal_entry_id"],
+        ],
+      );
+    }
+
+    await tenancy.recordWriteOff.execute(t.context, {
+      lines: [{ variantId: soap.variant.id, quantityMinor: "2", unit: "PIECE" }],
+      reasonCode: "THEFT_OR_LOSS",
+      idempotencyKey: harness.world().ids.newId("IdempotencyKey"),
+    });
+    await harness.owner.query(
+      `UPDATE inventory_valuations SET value_minor = 1
+       WHERE business_id = $1 AND variant_id = $2`,
+      [t.businessId, soap.variant.id],
+    );
+    try {
+      const leftover = await checkInventoryConsistency(appUrl);
+      expect(leftover.code).toBe(1);
+      expect(leftover.stderr).toContain("VALUED_ZERO_QTY_NONZERO_VALUE");
+      expect(leftover.stderr).toContain("INVENTORY_LEDGER_MISMATCH");
+    } finally {
+      await harness.owner.query(
+        `UPDATE inventory_valuations SET value_minor = 0
+         WHERE business_id = $1 AND variant_id = $2`,
+        [t.businessId, soap.variant.id],
+      );
+    }
+  });
+
+  it("reports a negative reversal fact that is missing its residual pair", async () => {
+    const tenancy = harness.compose();
+    const t = await inventoryTenant(harness, "residual-consistency");
+    const soap = await inventoryProduct(harness, t, { name: "Soap" });
+    await tenancy.recordOpeningStock.execute(t.context, {
+      lines: [
+        {
+          variantId: soap.variant.id,
+          quantityMinor: "10",
+          unit: "PIECE",
+          totalCost: { amountMinor: "1000", currency: "NGN" },
+        },
+      ],
+      idempotencyKey: harness.world().ids.newId("IdempotencyKey"),
+    });
+    const receipt = await tenancy.postGoodsReceipt.execute(t.context, {
+      lines: [
+        {
+          variantId: soap.variant.id,
+          quantityMinor: "10",
+          unit: "PIECE",
+          totalCost: { amountMinor: "500", currency: "NGN" },
+        },
+      ],
+      idempotencyKey: harness.world().ids.newId("IdempotencyKey"),
+    });
+    await tenancy.reverseGoodsReceipt.execute(t.context, {
+      documentId: receipt.document.id,
+      reason: "Returned the delivery",
+    });
+    const reversal = await harness.owner.query<{ movement_id: string }>(
+      `SELECT f.movement_id::text
+       FROM inventory_movement_valuations f
+       JOIN inventory_movements m ON m.id = f.movement_id
+       WHERE m.business_id = $1 AND m.reverses_movement_id IS NOT NULL`,
+      [t.businessId],
+    );
+    const saved = await harness.owner.query<{ value_after_minor: string }>(
+      `SELECT value_after_minor::text FROM inventory_movement_valuations WHERE movement_id = $1`,
+      [reversal.rows[0]?.movement_id],
+    );
+    await harness.owner.query(
+      `UPDATE inventory_movement_valuations SET value_after_minor = -1 WHERE movement_id = $1`,
+      [reversal.rows[0]?.movement_id],
+    );
+    try {
+      const missing = await checkInventoryConsistency(appUrl);
+      expect(missing.code).toBe(1);
+      expect(missing.stderr).toContain("MISSING_RESIDUAL");
+      expect(missing.stderr).toContain("NEGATIVE_VALUE_AFTER_UNPAIRED");
+    } finally {
+      await harness.owner.query(
+        `UPDATE inventory_movement_valuations SET value_after_minor = $2 WHERE movement_id = $1`,
+        [reversal.rows[0]?.movement_id, saved.rows[0]?.value_after_minor],
+      );
+    }
+  });
+
   it("exits 1 without DATABASE_URL, and on a connection failure prints no credentials", async () => {
     const missing = await checkInventoryConsistency(undefined);
     expect(missing.code).toBe(1);

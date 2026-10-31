@@ -7,7 +7,10 @@ import type {
   InventoryAdjustment,
   InventoryAdjustmentId,
   InventoryMovement,
+  InventoryMovementId,
   InventoryMovementSource,
+  InventoryMovementValuation,
+  InventoryValuationState,
   LocationId,
   OpeningBatch,
   OpeningBatchId,
@@ -18,6 +21,8 @@ import type {
   Sku,
   StockBalance,
   StockThreshold,
+  StockValuationDocument,
+  StockValuationId,
   Stocktake,
   StocktakeId,
   StocktakeLine,
@@ -92,6 +97,90 @@ export interface LockedBalances {
  * Seals locked balances. Called only by `StockBalanceRepository` adapters
  * after they have taken the row locks; use cases never call it.
  */
+declare const lockedValuationsBrand: unique symbol;
+
+/**
+ * Valuation rows locked FOR UPDATE by `InventoryValuationRepository.lockForUpdate`,
+ * one per requested variant, in ascending variant order. Missing rows are
+ * created as UNVALUED with `startedFromBalanceVersion` equal to the locked
+ * balance version (the Build 2 / pre-S3 cutover watermark, questionnaire A).
+ */
+export interface LockedValuations {
+  readonly [lockedValuationsBrand]: true;
+  readonly businessId: BusinessId;
+  readonly locationId: LocationId;
+  readonly valuations: readonly InventoryValuationState[];
+}
+
+export function sealLockedValuations(props: {
+  readonly businessId: BusinessId;
+  readonly locationId: LocationId;
+  readonly valuations: readonly InventoryValuationState[];
+}): LockedValuations {
+  const valuations = [...props.valuations].sort((a, b) => (a.variantId < b.variantId ? -1 : 1));
+  return Object.freeze({
+    businessId: props.businessId,
+    locationId: props.locationId,
+    valuations: Object.freeze(valuations),
+  }) as LockedValuations;
+}
+
+/** Projection of recorded inventory value per stock item (ADR-009 section 19). */
+export interface InventoryValuationRepository {
+  /**
+   * Locks valuation rows FOR UPDATE in ascending variant order, creating any
+   * missing row as UNVALUED value 0 with `startedFromBalanceVersion` taken
+   * from the matching locked balance. Call after balances are locked.
+   */
+  lockForUpdate(
+    scope: TransactionScope,
+    lockedBalances: LockedBalances,
+    variantIds: ReadonlySet<ProductVariantId>,
+  ): Promise<LockedValuations>;
+  /**
+   * Inserts a first projection or updates an existing locked row. Throws
+   * ConcurrentModificationError when the stored version is no longer the locked
+   * version.
+   */
+  apply(scope: TransactionScope, locked: LockedValuations, next: readonly InventoryValuationState[]): Promise<void>;
+  find(
+    scope: TransactionScope,
+    businessId: BusinessId,
+    locationId: LocationId,
+    variantId: ProductVariantId,
+  ): Promise<InventoryValuationState | undefined>;
+}
+
+/** Append-only movement valuation facts (ADR-009 section 19). */
+export interface InventoryMovementValuationRepository {
+  insertMany(scope: TransactionScope, rows: readonly InventoryMovementValuation[]): Promise<void>;
+  findByMovement(
+    scope: TransactionScope,
+    businessId: BusinessId,
+    movementId: InventoryMovementId,
+  ): Promise<InventoryMovementValuation | undefined>;
+  listForMovements(
+    scope: TransactionScope,
+    businessId: BusinessId,
+    movementIds: readonly InventoryMovementId[],
+  ): Promise<readonly InventoryMovementValuation[]>;
+}
+
+/** Append-only explicit stock valuation documents (ADR-009 section 20). */
+export interface StockValuationRepository {
+  insert(scope: TransactionScope, document: StockValuationDocument): Promise<void>;
+  findById(
+    scope: TransactionScope,
+    businessId: BusinessId,
+    id: StockValuationId,
+  ): Promise<StockValuationDocument | undefined>;
+  findByTriggerMovement(
+    scope: TransactionScope,
+    businessId: BusinessId,
+    triggerMovementId: InventoryMovementId,
+  ): Promise<StockValuationDocument | undefined>;
+}
+
 export function sealLockedBalances(props: {
   readonly businessId: BusinessId;
   readonly locationId: LocationId;

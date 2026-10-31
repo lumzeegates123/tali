@@ -190,15 +190,15 @@ describe.each(["test", "local"] as const)("business route guards (TALI_ENV=%s)",
     );
   });
 
-  it("mounts exactly the 22 inventory and stocktake routes", () => {
+  it("mounts exactly the 23 inventory and stocktake routes", () => {
     const inventory = routes.filter((route) => /inventor|stock|movement|balance|count/i.test(route.path));
     expect(inventory.map((route) => `${route.method} ${route.path}`).sort()).toEqual([...INVENTORY_ROUTES].sort());
-    expect(INVENTORY_ROUTES).toHaveLength(22);
+    expect(INVENTORY_ROUTES).toHaveLength(23);
   });
 
   it("guards every inventory route with exactly AuthenticationGuard, BusinessContextGuard, DeviceContextGuard", () => {
     const inventory = routes.filter((route) => route.path.startsWith(`${BUSINESS_PREFIX}/inventory`));
-    expect(inventory).toHaveLength(22);
+    expect(inventory).toHaveLength(23);
     for (const route of inventory) {
       expect({ route: `${route.method} ${route.path}`, guards: route.guards }).toEqual({
         route: `${route.method} ${route.path}`,

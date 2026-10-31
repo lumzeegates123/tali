@@ -24,9 +24,12 @@ import {
   IdempotencyKeyHeaderSchema,
   OpeningBatchPathSchema,
   type OpeningBatchResponse,
+  type CostedStockLineWire,
   PostGoodsReceiptRequestSchema,
   RecordAdjustmentRequestSchema,
   RecordOpeningStockRequestSchema,
+  type RecordStockValuationResponse,
+  RecordStockValuationRequestSchema,
   RecordWriteOffRequestSchema,
   ReverseDocumentRequestSchema,
 } from "@tali/shared";
@@ -52,6 +55,13 @@ import { bindDefaultLocation } from "./default-location.js";
 function created(response: Response, replayed: boolean): void {
   if (replayed) response.setHeader(IDEMPOTENT_REPLAYED_HEADER, "true");
   response.status(HttpStatus.CREATED);
+}
+
+function costedLines(lines: readonly CostedStockLineWire[]) {
+  return lines.map((line) => {
+    const { totalCost, ...rest } = line;
+    return totalCost === undefined ? rest : { ...rest, totalCost };
+  });
 }
 
 /**
@@ -85,12 +95,36 @@ export class InventoryDocumentsController {
     const input = parseRequest(RecordOpeningStockRequestSchema, body, "body");
     const context = await bindDefaultLocation(this.#services, business);
     const outcome = await this.#services.recordOpeningStock.execute(context, {
-      lines: input.lines,
+      lines: costedLines(input.lines),
       ...(input.note === undefined ? {} : { note: input.note }),
       idempotencyKey: key,
     });
     created(response, outcome.replayed);
     return toOpeningBatchCreatedResponse(outcome);
+  }
+
+  /** `inventory:value`. */
+  @Post("inventory/valuations")
+  async recordStockValuation(
+    @ResolvedBusinessContext() business: BusinessContext,
+    @Headers("idempotency-key") idempotencyKey: unknown,
+    @Body() body: unknown,
+    @Query() query: unknown,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<RecordStockValuationResponse> {
+    const key = parseRequest(IdempotencyKeyHeaderSchema, idempotencyKey, "headers");
+    parseRequest(EmptyQuerySchema, query, "query");
+    const input = parseRequest(RecordStockValuationRequestSchema, body, "body");
+    const context = await bindDefaultLocation(this.#services, business);
+    const outcome = await this.#services.recordStockValuation.execute(context, {
+      variantId: input.variantId,
+      expectedBalanceVersion: input.expectedBalanceVersion,
+      newTotalValue: input.newTotalValue,
+      reason: input.reason,
+      idempotencyKey: key,
+    });
+    created(response, outcome.replayed);
+    return { valuationId: outcome.valuationId, kind: outcome.kind };
   }
 
   @Get("inventory/opening-batches/:openingBatchId")
@@ -121,7 +155,7 @@ export class InventoryDocumentsController {
     const input = parseRequest(PostGoodsReceiptRequestSchema, body, "body");
     const context = await bindDefaultLocation(this.#services, business);
     const outcome = await this.#services.postGoodsReceipt.execute(context, {
-      lines: input.lines,
+      lines: costedLines(input.lines),
       ...(input.reference === undefined ? {} : { reference: input.reference }),
       ...(input.note === undefined ? {} : { note: input.note }),
       idempotencyKey: key,

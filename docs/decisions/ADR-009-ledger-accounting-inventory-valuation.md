@@ -1,10 +1,11 @@
 # ADR-009. Ledger posting foundation, chart of accounts and inventory valuation
 
-- Status: ACCEPTED (2026-10-15)
+- Status: ACCEPTED (2026-10-15); **amended 2026-10-29** (section 38). The original acceptance is unchanged.
 - Date: 2026-10-15
 - Deciders: Tali maintainers (human approval given 2026-10-15), with review by the business's accountant (complete,
-  section 32). Drafted by an AI agent from the reviewed Build 3 planning report and the maintainer's Build 3 direction
-  (2026-10-15), accepted by the human maintainer. Acceptance record in section 37.
+  section 32; reversal-residual clarification 2026-10-29, section 38). Drafted by an AI agent from the reviewed
+  Build 3 planning report and the maintainer's Build 3 direction (2026-10-15), accepted by the human maintainer.
+  Acceptance record in section 37; amendment record in section 38.
 - Related: `docs/product/mvp-scope.md` ("Ledger from the first sale", Core MVP ledger and inventory, open decisions 5
   and 6); `docs/architecture/data-principles.md` sections 2 to 4, 11 to 14; `.cursor/rules/20-financial-integrity.mdc`;
   `.cursor/rules/10-database.mdc`; ADR-002 sections 13, 14 and 25; ADR-004; ADR-005 sections 5, 8, 12 and 19; ADR-006;
@@ -78,8 +79,12 @@ Constraints that already apply:
     margin; nothing is backfilled later; recorded inventory value is disclosed as incomplete while any item is
     `UNVALUED` (section 23).
 18. **COGS and inventory asset postings** follow fixed rules (sections 24 and 25).
-19. Reversals restore **exactly the snapshotted value** (section 26).
-20. Audit, idempotency, concurrency, rollout and operator checks (sections 27 to 30).
+19. Reversals restore **exactly the snapshotted value** (section 26). The `REVERSAL` journal remains an exact
+    line-by-line mirror (section 12).
+20. When that exact inventory-value reversal would leave an invalid recorded-value state, a same-transaction
+    **`REVERSAL_RESIDUAL`** stock valuation and `ORIGINAL` journal restore a valid, non-negative projection
+    (section 26.1; amendment 2026-10-29, section 38). Residual lines are never added to the `REVERSAL` entry.
+21. Audit, idempotency, concurrency, rollout and operator checks (sections 27 to 30).
 
 ## 3. Ledger module boundaries
 
@@ -215,6 +220,11 @@ Lines are aggregated per account and memo kind for one source document; per-item
 - Reversal date: the reversal carries the **business date on which the reversal is recorded**, not the original's
   (maintainer decision M12; accountant confirmation A13). The original keeps its own date. Future accounting-period
   controls may prevent postings into closed periods; a reversal never posts into the original's date.
+- **Amended 2026-10-29 (section 38):** a residual inventory-value correction after a document reversal is **not**
+  extra lines on this `REVERSAL` entry. The `REVERSAL` remains an exact mirror (same typed source, currency,
+  accounts/system roles, amounts, memo kinds, number and order of lines, opposite DEBIT/CREDIT). The correction is
+  a separate `ORIGINAL` journal sourced by a `REVERSAL_RESIDUAL` stock valuation (section 26.1). Exact-mirror
+  validation is not relaxed.
 
 ## 13. Typed source relationships
 
@@ -333,7 +343,7 @@ Build 2 quantity history is not rewritten. Valuation is a parallel projection pl
 | `business_id`, `movement_id` | Primary key; composite FK to `inventory_movements`.                                      |
 | `cost_basis`                 | `SUPPLIED_COST`, `WEIGHTED_AVERAGE`, `REVERSAL_OF_ORIGINAL` or `NOT_VALUED`.              |
 | `value_delta_minor`          | Signed change to the item's value (zero when `NOT_VALUED`).                              |
-| `value_after_minor`, `status_after` | Item value and status after this movement.                                       |
+| `value_after_minor`, `status_after` | Item value and status immediately after this movement. `value_after_minor` is the intermediate fact, not the current projection (see rules below). |
 | `supplied_cost_minor`        | The total cost the user supplied, when any (also kept when not applied, as evidence).    |
 | `journal_entry_id`           | The entry that posted this value change, when non-zero.                                  |
 
@@ -341,7 +351,14 @@ Rules:
 
 - A stock item with no valuation row is `UNVALUED` with value zero. All Build 2 stock starts `UNVALUED`.
 - **Invariant:** for every business, the balance of the `INVENTORY` account equals the sum of `value_minor` over its
-  stock items. Checked by the operator script (section 30).
+  stock items. Checked by the operator script (section 30). `inventory_valuations.value_minor` (the **current
+  projection**) is always `>= 0`.
+- **Amended 2026-10-29 (section 38):** `inventory_movement_valuations.value_after_minor` may represent the exact
+  intermediate value immediately after an exact reversal movement and **before** a same-transaction
+  `REVERSAL_RESIDUAL` correction. A negative movement-fact `value_after_minor` is allowed **only** when
+  `cost_basis = REVERSAL_OF_ORIGINAL` and the required residual correction is written in the same transaction.
+  Ordinary WAC and non-reversal facts still require non-negative value-after. The reversal fact's
+  `value_delta_minor` remains the exact negative of the original delta; it is never altered to avoid a residual.
 - `VALUED` means the recorded value is authoritative for the whole on-hand quantity. `UNVALUED` means it is not:
   `value_minor` may be stale or zero, and Tali shows no inventory value, average cost or margin for the item.
 - Transitions:
@@ -355,11 +372,14 @@ Rules:
 ### 20.1 Stock valuation document
 
 - New append-only document table `stock_valuations` (referenced by the journal source column `valuation_id`): one
-  stock item per document, `kind` (section 20.2 or 20.3), `quantity_at_valuation_minor`,
+  stock item per document, `kind` (section 20.2, 20.3 or 20.4), `quantity_at_valuation_minor`,
   `balance_version_at_valuation` (staleness, as for stocktakes), `new_value_minor`, `previous_value_minor`, a
-  **required** reason (1 to 500 characters), journal entry id, envelope fields.
-- Every valuation is an explicit, authorized, keyed and audited action (`inventory.valuation_recorded`, section 27).
-  It values the item's **current** on-hand quantity at its current balance version.
+  **required** reason (1 to 500 characters), journal entry id, envelope fields, and `trigger_movement_id`
+  (section 20.4).
+- Client-facing `RecordStockValuation` is an explicit, authorized, keyed and audited action
+  (`inventory.valuation_recorded`, section 27). It values the item's **current** on-hand quantity at its current
+  balance version and creates only `INITIAL_OPENING` or `OPERATIONAL`. `REVERSAL_RESIDUAL` is never accepted from a
+  client request (section 20.4).
 - The user enters either a total value or a unit cost per stock unit for the item's current on-hand quantity; a unit
   cost is converted to the total with `HALF_EVEN` (accountant-approved, A19) and the total is what is stored.
 - If the item's balance version changed after the user saw the quantity, the action fails with `VALUATION_STALE` and
@@ -367,7 +387,8 @@ Rules:
 - Valuing an item with zero on-hand sets it `VALUED` with value zero.
 - Permission: new `inventory:value`, **OWNER and MANAGER only** (maintainer decision M5).
 - Only `UNVALUED` items can be valued. Revaluing an already `VALUED` item is **not** offered in Build 3.
-- The `kind` is decided by the server from `first_valued_at`, never chosen by the client.
+- For `RecordStockValuation`, the `kind` is decided by the server from `first_valued_at`, never chosen by the client.
+  `REVERSAL_RESIDUAL` is decided only by the residual rule inside an authorized document reversal (section 26.1).
 
 ### 20.2 Initial opening valuation (`kind = INITIAL_OPENING`)
 
@@ -398,6 +419,17 @@ Rules:
 - Effect: sets `value_minor = new_value` and the status to `VALUED`. The new total value is authoritative **from that
   point forward** only. It never rewrites prior movements, sales, COGS or journal entries, and it does not backfill
   COGS for sales recorded while the item was `UNVALUED` (section 23).
+
+### 20.4 Reversal residual valuation (`kind = REVERSAL_RESIDUAL`) (added 2026-10-29)
+
+- System/domain generated only, inside an authorized document-reversal transaction when section 26.1 Case B or
+  Case C is triggered. Never a client `RecordStockValuation` kind.
+- Carries the same business, location, variant, authorized actor/envelope and reversal reason as that reversal.
+- `trigger_movement_id` is **required**; composite FK to the reversal `inventory_movements` row in the same
+  business. At most one residual valuation per trigger movement. For `INITIAL_OPENING` and `OPERATIONAL`,
+  `trigger_movement_id` is NULL. No generic source references.
+- Its journal is a separate `ORIGINAL` entry with source `valuation_id`, posting rule `INVENTORY_REVERSAL_RESIDUAL`
+  version 1 (section 26.1). It is not a `REVERSAL` entry.
 
 ## 21. Cost capture for future receipts and opening stock
 
@@ -479,10 +511,46 @@ behaviour in the valuation slice; their quantity rules are unchanged.
 
 - Reversing a document reverses its journal entry exactly (section 12) and adds back exactly the snapshotted
   `value_delta_minor` of each original movement (`cost_basis = REVERSAL_OF_ORIGINAL`). The current average is never
-  used for a reversal.
-- This holds whatever the item's status is now, so the `INVENTORY` invariant (section 19) always holds. If the item
-  is now `UNVALUED`, its `value_minor` changes but stays non-authoritative until it is valued.
+  used for a reversal. There is no current-WAC recalculation on reversal.
+- This holds whatever the item's status is now. If the item is now `UNVALUED`, its recorded `value_minor` may change
+  but stays non-authoritative until it is valued.
 - A reversal of a `NOT_VALUED` movement posts no value.
+- **Amended 2026-10-29:** the exact reversal itself is unchanged when it would leave an invalid recorded-value
+  state. A separate residual correction (section 26.1) then restores a valid projection so the `INVENTORY`
+  invariant (section 19) holds at commit. Residual lines are never added to the `REVERSAL` journal.
+
+### 26.1 Residual correction after an exact inventory-value reversal (added 2026-10-29)
+
+Accountant choice C (2026-10-29; `docs/reviews/build-3-accountant-review.md` section 14.2), accepted by the
+maintainer: apply the exact reversal, then create a separate inventory gain/shrinkage adjustment to bring inventory
+value back to a valid state.
+
+After applying the exact snapshotted inventory-value reversal, compute the **raw resulting recorded value** (current
+projection plus the exact reversal `value_delta_minor` values). Do not invent a WAC restatement.
+
+| Case | Condition | Residual |
+| ---- | --------- | -------- |
+| A | raw resulting value `>= 0` and no other invalid valued-state condition | None. |
+| B | raw resulting value `< 0` | Exact reversal unchanged. Separate `REVERSAL_RESIDUAL` amount `abs(raw resulting value)`: Dr `INVENTORY` / Cr `INVENTORY_GAIN`. Final projection value `0`. If status before/after the reversal is `UNVALUED`, it remains `UNVALUED`; correcting to zero does not make missing cost authoritative. |
+| C | resulting quantity `= 0` **and** status after the exact reversal would be `VALUED` **and** raw resulting value `> 0` | Exact reversal unchanged. Separate `REVERSAL_RESIDUAL` amount equal to the residual value: Dr `INVENTORY_SHRINKAGE` / Cr `INVENTORY`. Final projection value `0`; the item remains `VALUED`. |
+| D | resulting quantity `= 0` **and** raw value `= 0` | None. |
+
+The residual journal is:
+
+- `entry_kind = ORIGINAL` (not `REVERSAL`);
+- typed source = `valuation_id` of the `REVERSAL_RESIDUAL` stock valuation;
+- `posting_rule = INVENTORY_REVERSAL_RESIDUAL`, `posting_rule_version = 1`.
+
+It does not change `LedgerPostingService` exact-reversal validation.
+
+The reversal movement valuation fact retains `value_delta_minor` = the exact negative of the original delta. If that
+delta makes the raw value after that movement negative, the fact preserves that intermediate `value_after_minor`
+(allowed to be negative only for `REVERSAL_OF_ORIGINAL` in this paired case). The following `REVERSAL_RESIDUAL`
+document is what brings the **final** `inventory_valuations` projection to zero.
+
+All of the following commit in **one** database transaction, or none do: document reversal; reversal inventory
+movement(s); exact `REVERSAL` journal; movement valuation facts; residual stock valuation document (when required);
+residual `ORIGINAL` journal (when required); final valuation projection; audit; idempotency state.
 
 ## 27. Audit
 
@@ -490,6 +558,12 @@ New ADR-006 actions, flat bounded payloads; detail stays in the immutable record
 
 - `ledger.chart_provisioned`: template version, account count.
 - `inventory.valuation_recorded`: valuation id, kind, variant id, quantity, previous and new value, journal entry id.
+  `REVERSAL_RESIDUAL` uses this same action when the accepted payload can represent the kind without ambiguity
+  (kind is already enumerated). If a negative previous/raw value or `triggerMovementId` cannot be represented,
+  make the smallest ADR-006-compliant `payload_schema_version` change. The residual payload identifies valuation
+  id, kind `REVERSAL_RESIDUAL`, variant, previous/raw value as appropriate, final value, residual journal entry id,
+  and a bounded reason/envelope. It does not serialize complete journals or movements. The document reversal's
+  existing audit remains a separate record.
 - Existing inventory actions and the sale actions (ADR-011) gain optional `journalEntryId`, `valueDeltaMinor` and
   `valuationStatusAfter` fields (new `payload_schema_version`).
 - Journal entries are not separately audited: the source mutation's audit record identifies the entry. Journal lines
@@ -525,7 +599,17 @@ Read-only scripts that report and never repair, following `db:inventory-consiste
   entry and every reversed sale exactly one reversal.
 - `db:inventory-consistency` (extended): `value_minor` equals the sum of `value_delta_minor` plus valuation-document
   deltas per item; per business the `INVENTORY` account balance equals the sum of `value_minor`; every movement
-  recorded after the valuation slice has a valuation row; a `VALUED` item with zero on-hand has zero value.
+  recorded after the valuation slice has a valuation row; a `VALUED` item with zero on-hand has **projection**
+  value zero; `inventory_valuations.value_minor >= 0`.
+- **Amended 2026-10-29 (section 26.1):** residual pairing:
+  - when a `REVERSAL_OF_ORIGINAL` movement fact would leave a negative raw value: exactly one `REVERSAL_RESIDUAL`
+    valuation references that reversal movement; its amount brings the final recorded value exactly to zero; its
+    `ORIGINAL` journal matches Dr `INVENTORY` / Cr `INVENTORY_GAIN`;
+  - when a `VALUED` item reaches quantity zero with positive residual value: exactly one `REVERSAL_RESIDUAL`
+    valuation references the triggering reversal movement; its amount equals the entire residual; its `ORIGINAL`
+    journal is Dr `INVENTORY_SHRINKAGE` / Cr `INVENTORY`; final value `0`;
+  - no residual document exists when no residual correction is needed;
+  - the exact `REVERSAL` journal still passes the ordinary line-by-line mirror check.
 
 ## 31. Illustrative postings (accountant-approved: A to L under A21, M and N under A22)
 
@@ -568,6 +652,16 @@ Starting position for the examples: a `VALUED` item with 10 units on hand and va
 - **N. Operational valuation, decrease (A22).** Same starting point as M, valued instead at 4,500.00 (difference
   -446.67): Dr Inventory shrinkage 446.67; Cr Inventory 446.67. Value 4,500.00 for 20 units, `VALUED`.
   Neither M nor N uses Opening balance equity, and neither changes COGS of earlier sales.
+- **O. Residual after exact reversal, negative raw value (section 26.1 Case B; added 2026-10-29).** Illustrative:
+  reversing a snapshotted receipt of 500.00 when the item's recorded value is only 100.00. The `REVERSAL` journal
+  still mirrors the original (Inventory credit 500.00 against the original debit). The reversal movement fact keeps
+  `value_delta_minor = -500`. Raw resulting value `-400`. Then a separate `REVERSAL_RESIDUAL` `ORIGINAL` journal:
+  Dr Inventory 400.00; Cr Inventory gain 400.00. Final projection value `0`. If the item is `UNVALUED`, it stays
+  `UNVALUED`.
+- **P. Residual after exact reversal, VALUED zero quantity with leftover value (section 26.1 Case C; added
+  2026-10-29).** Illustrative: exact reversal leaves quantity `0` and raw value `50.00` while status remains
+  `VALUED`. The `REVERSAL` journal is unchanged. A separate `REVERSAL_RESIDUAL` `ORIGINAL` journal: Dr Inventory
+  shrinkage 50.00; Cr Inventory 50.00. Final projection value `0`; status remains `VALUED`.
 
 ## 32. Accountant review
 
@@ -582,7 +676,11 @@ plain-language version with the answer table is `docs/reviews/build-3-accountant
   uses an inventory gain / adjustment treatment with the approved adjustment accounts, Dr `INVENTORY` /
   Cr `INVENTORY_GAIN` for an increase and Dr `INVENTORY_SHRINKAGE` / Cr `INVENTORY` for a decrease, never
   `OPENING_BALANCE_EQUITY` (section 20.3).
-- **A1 to A22 are all accountant-approved.** No accounting question remains open for this ADR.
+- **A1 to A22 are all accountant-approved** as of 2026-10-15.
+- **Reversal residual (post-acceptance clarification, 2026-10-29):** when an exact snapshotted-value reversal would
+  leave a negative recorded value or a `VALUED` zero-quantity leftover value, the accountant chose treatment C:
+  keep the exact reversal and post a separate inventory gain/shrinkage adjustment (section 26.1 / 38). This does
+  not reopen A1 to A22.
 
 The questions as reviewed:
 
@@ -614,7 +712,8 @@ The questions as reviewed:
 - A19. `HALF_EVEN` rounding for COGS removal, unit-cost-to-total conversion and line amounts; and line-level rounding.
 - A20. Tax rounding (`HALF_EVEN` per line, ADR-010).
 - A21. Whether any example in section 31 needs correction (reviewed examples A to L; M and N were added afterwards
-  to illustrate the A22 answer and apply it exactly).
+  to illustrate the A22 answer and apply it exactly; O and P were added 2026-10-29 to illustrate section 26.1
+  and were not part of the 2026-10-15 example review).
 - A22. When an item that was valued became `UNVALUED` during normal operations (for example after a receipt without
   cost) and is later explicitly valued (section 20.3), which account or treatment takes the other side of the value
   recorded? Drafted without a proposal; answered by the accountant's clarification above.
@@ -629,6 +728,9 @@ The questions as reviewed:
 - Valued stock changes in Build 2 use cases now post journal entries; their quantity behaviour is unchanged.
 - A later purchasing build must clear `GOODS_RECEIVED_NOT_INVOICED` against supplier invoices.
 - Reporting completion (step 7) builds on derived balances and may add verified caches.
+- **Amended 2026-10-29:** an exact inventory-value reversal that would leave a negative recorded value or a `VALUED`
+  zero-quantity leftover value is completed by a same-transaction `REVERSAL_RESIDUAL` `ORIGINAL` adjustment. The
+  `REVERSAL` journal stays an exact mirror.
 
 ## 34. Compliance with governance rules
 
@@ -662,9 +764,42 @@ correction of past COGS for previously unvalued sales, external accounting expor
   the accountant's explicit clarification of the same date (section 32).
 - With ADR-010 and ADR-011, this acceptance completes Build 3 slice S0 and unblocks S1
   (`docs/plans/005-build-3-sales-ledger.md`). It approves no tax rate or pilot tax configuration (ADR-010).
+- **Amendment 2026-10-29:** the human maintainer accepted the accountant's reversal-residual choice C and the
+  architecture rules in section 38. The ADR remains ACCEPTED. Historical sections 1 to 37 are not erased.
 
 Maintainer review decisions applied (2026-10-15; full list in Plan 005 section 4): M1 (untracked lines
 `NOT_APPLICABLE`, section 22), M3 (no catalog cost field, section 18), M4 (costless receipt into a valued item
 allowed and turns it `UNVALUED`, section 21), M5 (cost entry and valuation OWNER/MANAGER only, sections 20 and 21),
 M6 (cost visibility OWNER/MANAGER/ACCOUNTANT, section 17), M12 (reversal business date, section 12), M14
 (`ledger:read` OWNER/ACCOUNTANT, section 17), M16 (operator-command provisioning, section 29).
+
+## 38. Amendment 2026-10-29: reversal residual accounting
+
+**Status:** ACCEPTED ADR remains ACCEPTED. This section records a maintainer-directed amendment after accountant
+clarification. It does not erase the 2026-10-15 acceptance (section 37) or reopen A1 to A22.
+
+**Authority:** accountant Osasu, 2026-10-29 (`docs/reviews/build-3-accountant-review.md` section 14.2); accepted by
+the human maintainer on the same date, subject to the architecture rules below.
+
+**Accountant answer (choice C):** apply the exact reversal and then create a separate inventory gain/shrinkage
+adjustment to bring the inventory value back to a valid state.
+
+**Architecture interpretation (non-negotiable):**
+
+1. ADR-009's exact journal reversal invariant remains intact (section 12). A `REVERSAL` entry is still an exact
+   mirror of the original: same typed source, currency, accounts/system roles, amounts, memo kinds, number and
+   order of lines, opposite DEBIT/CREDIT, **no extra lines**.
+2. The residual correction is **not** included in the `REVERSAL` entry. It is a new `ORIGINAL` journal whose
+   source is the `valuation_id` of a `REVERSAL_RESIDUAL` stock valuation (section 20.4), posting rule
+   `INVENTORY_REVERSAL_RESIDUAL` version 1.
+3. Residual rules, intermediate movement-fact semantics, same-transaction all-or-nothing commit, consistency
+   pairing and audit are those in sections 20.4, 26.1, 27 and 30.
+
+**Not chosen:** putting residual INVENTORY / INVENTORY_GAIN / INVENTORY_SHRINKAGE lines on the same `REVERSAL`
+journal; inventing a current-WAC restatement; stopping the reversal indefinitely once the policy is implemented.
+
+**Implementation:** this amendment is governance. Slice 3 code must still be updated to match; it must not be
+treated as already implemented.
+
+**Documents updated with this amendment:** this ADR; `docs/decisions/README.md` index row; Plan 005 S3;
+`docs/audits/build-3-slice-3.md`; `docs/reviews/build-3-accountant-review.md` section 14.2.

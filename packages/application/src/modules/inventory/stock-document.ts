@@ -43,10 +43,28 @@ import type { StockDocumentSnapshot } from "./codecs.js";
 import { sourceOfSnapshot } from "./codecs.js";
 import type { NormalizedStockLine, StockLineSyntax } from "./inventory-common.js";
 import { fingerprintLines, normalizeStockLines } from "./inventory-common.js";
-import type { InventoryMovementRepository, StockBalanceRepository } from "./ports.js";
+import { PermissionDeniedError } from "../../errors/application-error.js";
+import { hasPermission } from "../../authorization/permissions.js";
+import { Money, parseCurrencyCode } from "@tali/domain";
+import { inventoryPermissions } from "../identity/index.js";
+import { createLedgerPostingService } from "../ledger/posting.js";
+import type { LedgerPostingDependencies } from "../ledger/posting.js";
+import type {
+  InventoryMovementValuationRepository,
+  InventoryValuationRepository,
+  StockBalanceRepository,
+  StockValuationRepository,
+  InventoryMovementRepository,
+} from "./ports.js";
+import {
+  journalSourceOf,
+  persistMovementValuations,
+  planMovementValuations,
+  postingRuleFor,
+} from "./valuation-posting.js";
 
 /** What every keyed stock document needs, whatever its header table. */
-export interface StockDocumentDependencies {
+export interface StockDocumentDependencies extends LedgerPostingDependencies {
   readonly unitOfWork: UnitOfWork;
   readonly memberships: MembershipRepository;
   readonly products: ProductRepository;
@@ -54,6 +72,9 @@ export interface StockDocumentDependencies {
   readonly units: UnitReferenceRepository;
   readonly movements: InventoryMovementRepository;
   readonly balances: StockBalanceRepository;
+  readonly valuations: InventoryValuationRepository;
+  readonly movementValuations: InventoryMovementValuationRepository;
+  readonly stockValuations: StockValuationRepository;
   readonly idempotency: KeyedIdempotency;
   readonly hasher: FingerprintHasher;
   readonly ids: IdGenerator;
@@ -316,8 +337,58 @@ async function applyStockDocument<Header extends StockDocumentHeader, Snapshot e
     }),
   );
 
+  const costs = costsByVariant(context, lines);
+  const lockedValuations = await dependencies.valuations.lockForUpdate(scope, locked, variantIds);
+  const preQuantity = new Map(
+    locked.balances.map((balance) => [balance.variantId as string, balance.quantity.amountMinor]),
+  );
+  const currentByVariant = new Map(
+    lockedValuations.valuations.map((valuation) => [valuation.variantId as string, valuation]),
+  );
+  const [firstMovement] = plan.movements;
+  if (firstMovement === undefined) {
+    throw new ConflictError("a stock document requires at least one movement");
+  }
+  const plannedValuation = planMovementValuations({
+    movements: plan.movements,
+    currentByVariant,
+    preQuantityByVariant: preQuantity,
+    costsByVariant: costs,
+    originalFacts: new Map(),
+    now: header.occurredAt,
+  });
+  const source = journalSourceOf(firstMovement.source.kind, header.id);
+  const posting = createLedgerPostingService(dependencies);
+
   await request.insertHeader(scope, header);
   await dependencies.movements.insertMany(scope, plan.movements);
   await dependencies.balances.apply(scope, locked, plan.balances);
+  await persistMovementValuations(dependencies, posting, scope, context, {
+    locked: lockedValuations,
+    planned: plannedValuation,
+    source,
+    postingRule: postingRuleFor(firstMovement.source.kind),
+    description: `${request.kind.resourceType} ${header.id}`,
+  });
   await request.audit(scope, header, key, lines.length);
+}
+
+function costsByVariant(context: LocationBoundContext, lines: readonly NormalizedStockLine[]): Map<string, Money> {
+  const costs = new Map<string, Money>();
+  const valuePermission = inventoryPermissions.permissions["inventory:value"];
+  for (const line of lines) {
+    if (line.totalCost === undefined) continue;
+    if (!hasPermission(context.permissions, valuePermission)) {
+      throw new PermissionDeniedError("Entering a cost requires inventory:value");
+    }
+    const currency = parseCurrencyCode(line.totalCost.currency);
+    const money = Money.fromMinorUnitsString(line.totalCost.amountMinor, currency);
+    if (money.currency !== context.currency) {
+      throw new ValidationError("totalCost currency must match the business currency", [
+        { path: ["lines"], message: "CURRENCY_MISMATCH" },
+      ]);
+    }
+    costs.set(line.variantId, money);
+  }
+  return costs;
 }

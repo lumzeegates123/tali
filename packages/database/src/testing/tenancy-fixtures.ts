@@ -31,6 +31,11 @@ type Env = FixtureEnv;
  * `units_of_measure` are reference data and are never truncated.
  */
 export const TENANCY_TABLES = [
+  "journal_lines",
+  "inventory_movement_valuations",
+  "stock_valuations",
+  "journal_entries",
+  "inventory_valuations",
   "ledger_accounts",
   "inventory_balances",
   "inventory_stock_thresholds",

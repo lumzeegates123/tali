@@ -26,7 +26,8 @@ export type ApplicationErrorCode =
   | "INSUFFICIENT_STOCK"
   | "STOCKTAKE_STALE"
   | "LEDGER_NOT_PROVISIONED"
-  | "LEDGER_CHART_INCOMPLETE";
+  | "LEDGER_CHART_INCOMPLETE"
+  | "VALUATION_STALE";
 
 /** Whether a client may retry the same request unchanged (ADR-004 section 11; ADR-005 section 13.1). */
 const RETRYABLE: Readonly<Record<ApplicationErrorCode, boolean>> = {
@@ -49,6 +50,7 @@ const RETRYABLE: Readonly<Record<ApplicationErrorCode, boolean>> = {
   STOCKTAKE_STALE: false,
   LEDGER_NOT_PROVISIONED: false,
   LEDGER_CHART_INCOMPLETE: false,
+  VALUATION_STALE: false,
 };
 
 export interface ValidationIssue {
@@ -253,5 +255,15 @@ export class LedgerNotProvisionedError extends ApplicationError {
 export class LedgerChartIncompleteError extends ApplicationError {
   constructor(message = "The ledger chart of accounts is incomplete or inconsistent for this business") {
     super("LEDGER_CHART_INCOMPLETE", message);
+  }
+}
+
+/**
+ * The stock item's balance version is not the version the caller reviewed
+ * (ADR-009 section 20.1). Nothing was written. Not retryable unchanged.
+ */
+export class ValuationStaleError extends ApplicationError {
+  constructor(message = "Stock changed since this valuation was reviewed; reload and try again") {
+    super("VALUATION_STALE", message);
   }
 }

@@ -46,15 +46,18 @@ import {
   createRecordAdjustment,
   createRecordOpeningStock,
   createRecordStocktakeCount,
+  createRecordStockValuation,
   createRecordWriteOff,
   createRemoveStocktakeLine,
   createReverseAdjustment,
   createReverseGoodsReceipt,
   createSetLowStockThreshold,
 } from "../modules/inventory/index.js";
+import type { RecordStockValuation } from "../modules/inventory/index.js";
 import type { CatalogHarness } from "./catalog-harness.js";
 import { createCatalogHarness } from "./catalog-harness.js";
 import { InMemoryInventoryStore } from "./in-memory-inventory-store.js";
+import type { InMemoryLedgerStore } from "./in-memory-ledger-store.js";
 
 /**
  * Wraps a port so every method call is appended to `log` as `name.method`
@@ -81,6 +84,7 @@ function logged<T extends object>(name: string, target: T, log: string[]): T {
 export interface InventoryHarness {
   readonly catalog: CatalogHarness;
   readonly inventory: InMemoryInventoryStore;
+  readonly ledger: InMemoryLedgerStore;
   /**
    * Every repository, idempotency-store and audit-writer call made by the
    * inventory use cases, in order (for example `idempotency.find`,
@@ -88,6 +92,7 @@ export interface InventoryHarness {
    */
   readonly calls: string[];
   readonly recordOpeningStock: RecordOpeningStock;
+  readonly recordStockValuation: RecordStockValuation;
   readonly postGoodsReceipt: PostGoodsReceipt;
   readonly recordAdjustment: RecordAdjustment;
   readonly recordWriteOff: RecordWriteOff;
@@ -135,6 +140,7 @@ export function createInventoryHarness(options: {
   const { tenancy } = catalog;
   const { unitOfWork, clock, ids, hasher } = tenancy;
   const inventory = new InMemoryInventoryStore({ unitOfWork, catalog: catalog.catalog, tenancy: tenancy.store });
+  const ledger = tenancy.ledger;
   const calls: string[] = [];
   const audit = new AuditRecorder({
     registry: taliAuditRegistry,
@@ -155,6 +161,11 @@ export function createInventoryHarness(options: {
     units: logged("units", catalog.catalog.unitRepository, calls),
     movements: logged("movements", inventory.movementRepository, calls),
     balances: logged("balances", inventory.balanceRepository, calls),
+    valuations: logged("valuations", inventory.valuationRepository, calls),
+    movementValuations: logged("movementValuations", inventory.movementValuationRepository, calls),
+    stockValuations: logged("stockValuations", inventory.stockValuationRepository, calls),
+    accounts: logged("ledgerAccounts", ledger, calls),
+    journals: logged("journals", ledger, calls),
     idempotency,
     hasher,
     audit,
@@ -181,8 +192,10 @@ export function createInventoryHarness(options: {
   return {
     catalog,
     inventory,
+    ledger,
     calls,
     recordOpeningStock: createRecordOpeningStock({ ...shared, openings }),
+    recordStockValuation: createRecordStockValuation({ ...shared }),
     postGoodsReceipt: createPostGoodsReceipt({ ...shared, receipts }),
     recordAdjustment: createRecordAdjustment({ ...shared, adjustments }),
     recordWriteOff: createRecordWriteOff({ ...shared, adjustments }),
@@ -251,6 +264,16 @@ export function createInventoryHarness(options: {
         ]),
         audit: tenancy.auditWriter.businessRecords.length,
         keys: tenancy.businessIdempotencyStore.records.length,
+        valuations: inventory.valuations.map((v) => [
+          v.variantId,
+          v.status,
+          v.value.toMinorUnitsString(),
+          v.version,
+          v.startedFromBalanceVersion,
+        ]),
+        movementValuations: inventory.movementValuations.map((row) => [row.movementId, row.costBasis]),
+        stockValuations: inventory.stockValuationDocuments.map((row) => [row.id, row.kind]),
+        journals: ledger.entries.map((entry) => [entry.id, entry.entryKind, entry.source.kind]),
       });
     },
   };

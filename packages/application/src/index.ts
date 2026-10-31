@@ -46,6 +46,7 @@ export {
   InsufficientStockError,
   LedgerChartIncompleteError,
   LedgerNotProvisionedError,
+  ValuationStaleError,
   LocationRequiredError,
   NotFoundError,
   PermissionDeniedError,

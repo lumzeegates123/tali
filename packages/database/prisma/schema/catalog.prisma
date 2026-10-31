@@ -105,6 +105,8 @@ model ProductVariant {
   inventoryBalances   InventoryBalance[]
   inventoryThresholds InventoryStockThreshold[]
   stocktakeLines      StocktakeLine[]
+  inventoryValuations InventoryValuation[]
+  stockValuations     StockValuation[]
 
   @@unique([businessId, id])
   @@unique([businessId, skuNormalized])

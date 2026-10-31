@@ -21,6 +21,7 @@ import {
   InventoryMovementsResponseSchema,
   LowStockThresholdResponseSchema,
   OpeningBatchResponseSchema,
+  RecordStockValuationResponseSchema,
   RegisterDeviceResponseSchema,
 } from "@tali/shared";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -498,6 +499,16 @@ describe("Build 2 Slice 5 inventory API over HTTP", () => {
           { lines: [{ ...line, direction: "INCREASE" }], reasonCode: "FOUND_STOCK" },
         ],
         ["inventory/write-offs", ["CASHIER", "STOCK_KEEPER", "ACCOUNTANT"], { lines: [line], reasonCode: "DAMAGED" }],
+        [
+          "inventory/valuations",
+          ["CASHIER", "STOCK_KEEPER", "ACCOUNTANT"],
+          {
+            variantId: milk.variantId,
+            expectedBalanceVersion: 0,
+            newTotalValue: { amountMinor: "1", currency: "KES" },
+            reason: "x",
+          },
+        ],
       ];
       for (const [path, roles, body] of denied) {
         for (const role of roles) {
@@ -885,7 +896,7 @@ describe("Build 2 Slice 5 inventory API over HTTP", () => {
       expect(await readInventorySnapshot()).toEqual(before);
     });
 
-    it("fails closed on all 22 inventory routes for every untrusted device case, and a trusted device reaches every handler", async () => {
+    it("fails closed on all 23 inventory routes for every untrusted device case, and a trusted device reaches every handler", async () => {
       const milk = await client().product();
       const opened = await client().product();
       const opening = OpeningBatchResponseSchema.parse(
@@ -918,6 +929,12 @@ describe("Build 2 Slice 5 inventory API over HTTP", () => {
       };
       const bodies: Record<string, unknown> = {
         "POST /inventory/opening-stock": { lines: [line] },
+        "POST /inventory/valuations": {
+          variantId: milk.variantId,
+          expectedBalanceVersion: 0,
+          newTotalValue: { amountMinor: "1", currency: "KES" },
+          reason: "opening value",
+        },
         "POST /inventory/goods-receipts": { lines: [line] },
         "POST /inventory/adjustments": { lines: [{ ...line, direction: "INCREASE" }], reasonCode: "FOUND_STOCK" },
         "POST /inventory/write-offs": { lines: [line], reasonCode: "DAMAGED" },
@@ -946,7 +963,7 @@ describe("Build 2 Slice 5 inventory API over HTTP", () => {
 
       const cases = await untrustedDeviceCases(api, as("OWNER"), world.a, { owner: world.ownerB, businessId: world.b });
       const before = { inventory: await readInventorySnapshot(), audit: (await readTenancySnapshot()).businessAudit };
-      expect(INVENTORY_ROUTES).toHaveLength(22);
+      expect(INVENTORY_ROUTES).toHaveLength(23);
       for (const [label, headers] of cases) {
         for (const route of INVENTORY_ROUTES) {
           const response = await call(route, headers);
@@ -1069,6 +1086,63 @@ describe("Build 2 Slice 5 inventory API over HTTP", () => {
       expect(
         (await audited(() => client().post(`${thresholdPath}/clear`, { expectedVersion: 2 }).expect(200))).rows,
       ).toEqual([]);
+    });
+  });
+
+  describe("stock valuations", () => {
+    it("records a valuation, replays, returns 404 across tenants, 409 when stale, and has no sales or ledger routes", async () => {
+      expect(INVENTORY_ROUTES.some((route) => /sales|ledger/i.test(route))).toBe(false);
+      const milk = await client().product();
+      const sugar = await client().product();
+      await client()
+        .keyed("inventory/opening-stock", {
+          lines: [
+            { variantId: milk.variantId, ...pieces("4") },
+            { variantId: sugar.variantId, ...pieces("2") },
+          ],
+        })
+        .expect(201);
+      const created = RecordStockValuationResponseSchema.parse(
+        (
+          await client()
+            .keyed("inventory/valuations", {
+              variantId: milk.variantId,
+              expectedBalanceVersion: 1,
+              newTotalValue: { amountMinor: "4000", currency: "KES" },
+              reason: "counted opening",
+            })
+            .expect(201)
+        ).body,
+      );
+      expect(created.kind).toBe("INITIAL_OPENING");
+
+      const key = randomUUID();
+      const sugarBody = {
+        variantId: sugar.variantId,
+        expectedBalanceVersion: 1,
+        newTotalValue: { amountMinor: "2000", currency: "KES" },
+        reason: "Opening value",
+      };
+      const first = await client().keyed("inventory/valuations", sugarBody, as("MANAGER"), key).expect(201);
+      const replay = await client().keyed("inventory/valuations", sugarBody, as("MANAGER"), key).expect(201);
+      expect(replay.headers["idempotent-replayed"]).toBe("true");
+      expect(replay.body).toEqual(first.body);
+
+      const other = await client().keyed("inventory/valuations", sugarBody, world.ownerB, randomUUID(), world.b);
+      expect(other.status).toBe(404);
+      expect(code(other.body)).toBe("NOT_FOUND");
+
+      await client()
+        .keyed("inventory/goods-receipts", { lines: [{ variantId: milk.variantId, ...pieces("1") }] })
+        .expect(201);
+      const stale = await client().keyed("inventory/valuations", {
+        variantId: milk.variantId,
+        expectedBalanceVersion: 1,
+        newTotalValue: { amountMinor: "1", currency: "KES" },
+        reason: "stale",
+      });
+      expect(stale.status).toBe(409);
+      expect(code(stale.body)).toBe("VALUATION_STALE");
     });
   });
 });

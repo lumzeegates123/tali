@@ -390,6 +390,35 @@ describe("LedgerPostingService reversal source identity (ADR-009 section 13)", (
     expect(stored).toEqual(snapshot);
     expect(stored?.source).toEqual(source);
   });
+
+  it("rejects extra residual lines on a reversal plan and writes nothing", async () => {
+    const harness = await postOriginal();
+    const { posting, roles, tenancy, plan, original, source, ledger } = harness;
+    const mirrored = reversePostingPlan(plan);
+    const extra = createPostingPlan(roles.OWNER.currency, [
+      ...mirrored.lines,
+      { role: "INVENTORY", direction: "DEBIT", amount: money(roles.OWNER, 1n), memoKind: "INVENTORY_GAIN" },
+      { role: "INVENTORY_GAIN", direction: "CREDIT", amount: money(roles.OWNER, 1n), memoKind: "INVENTORY_GAIN" },
+    ]);
+    await expect(
+      tenancy.unitOfWork.run((scope) =>
+        posting.post(scope, roles.OWNER, {
+          plan: extra,
+          source,
+          postingRuleVersion: 1,
+          postingRule: "SALE_REVERSED",
+          description: "Sale S-000100 reversal",
+          entryKind: "REVERSAL",
+          reversesEntryId: original.id,
+        }),
+      ),
+    ).rejects.toMatchObject({
+      code: "VALIDATION_FAILED",
+      message: "reversal plan must mirror the original entry",
+    });
+    expect(ledger.entries).toHaveLength(1);
+    expect(ledger.entries.filter((entry) => entry.entryKind === "REVERSAL")).toHaveLength(0);
+  });
 });
 
 describe("ledger:read permissions", () => {

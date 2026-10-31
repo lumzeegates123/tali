@@ -39,6 +39,11 @@ export interface PostJournalRequest {
    * ADR-009 section 15). Callers never pass a device-reported time here.
    */
   readonly occurredAt?: Date;
+  /**
+   * Pre-generated entry identity. Used when a cyclic FK requires the journal
+   * id to be known before insert (stock valuations, ADR-009 section 13).
+   */
+  readonly entryId?: JournalEntryId | string;
 }
 
 export interface PostJournalResult {
@@ -168,7 +173,14 @@ export function createLedgerPostingService(dependencies: LedgerPostingDependenci
             { path: ["source"], message: "mismatch" },
           ]);
         }
-        // Ensure the caller's plan mirrors the original (roles/amounts/order).
+        if (original.currency !== plan.currency) {
+          throw new ValidationError("reversal plan currency must match the original entry", [
+            { path: ["plan", "currency"], message: "mismatch" },
+          ]);
+        }
+        // ADR-009 sections 12 and 26: the reversal copies every original line
+        // with opposite direction, same account/role, amount and memo. Extra
+        // residual lines are not a reversal.
         const expected = reversePostingPlan(
           createPostingPlan(
             original.currency,
@@ -180,17 +192,19 @@ export function createLedgerPostingService(dependencies: LedgerPostingDependenci
             })),
           ),
         );
-        const mirrors = expected.lines.every((line, index) => {
-          const actual = plan.lines[index];
-          return (
-            actual !== undefined &&
-            line.role === actual.role &&
-            line.direction === actual.direction &&
-            line.amount.equals(actual.amount) &&
-            line.memoKind === actual.memoKind
-          );
-        });
-        if (expected.lines.length !== plan.lines.length || !mirrors) {
+        const mirrors =
+          expected.lines.length === plan.lines.length &&
+          expected.lines.every((line, index) => {
+            const actual = plan.lines[index];
+            return (
+              actual !== undefined &&
+              line.role === actual.role &&
+              line.direction === actual.direction &&
+              line.amount.equals(actual.amount) &&
+              line.memoKind === actual.memoKind
+            );
+          });
+        if (!mirrors) {
           throw new ValidationError("reversal plan must mirror the original entry", [
             { path: ["plan"], message: "mirror mismatch" },
           ]);
@@ -240,7 +254,10 @@ export function createLedgerPostingService(dependencies: LedgerPostingDependenci
       const locationId = context.locationId;
 
       const entry: JournalEntry = Object.freeze({
-        id: dependencies.ids.newId("JournalEntry"),
+        id:
+          request.entryId === undefined
+            ? dependencies.ids.newId("JournalEntry")
+            : withDomainRules(() => parseJournalEntryId(String(request.entryId)), "entryId"),
         businessId: context.businessId,
         currency: context.currency,
         occurredAt,

@@ -30,7 +30,8 @@ model InventoryOpeningBatch {
   actor    BusinessMembership @relation("OpeningBatchActor", fields: [businessId, actorMembershipId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
   device   Device?            @relation(fields: [businessId, deviceId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
 
-  movements InventoryMovement[]
+  movements     InventoryMovement[]
+  journalEntries JournalEntry[]
 
   @@unique([businessId, id])
   @@map("inventory_opening_batches")
@@ -61,7 +62,8 @@ model GoodsReceipt {
   reversedBy BusinessMembership? @relation("GoodsReceiptReversedBy", fields: [businessId, reversedByMembershipId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
   device     Device?             @relation(fields: [businessId, deviceId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
 
-  movements InventoryMovement[]
+  movements      InventoryMovement[]
+  journalEntries JournalEntry[]
 
   @@unique([businessId, id])
   @@map("goods_receipts")
@@ -96,7 +98,8 @@ model InventoryAdjustment {
   reversedBy BusinessMembership? @relation("InventoryAdjustmentReversedBy", fields: [businessId, reversedByMembershipId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict, map: "inventory_adjustments_reversed_by_membership_fkey")
   device     Device?             @relation(fields: [businessId, deviceId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
 
-  movements InventoryMovement[]
+  movements      InventoryMovement[]
+  journalEntries JournalEntry[]
 
   @@unique([businessId, id])
   @@unique([businessId, id, kind])
@@ -151,8 +154,10 @@ model InventoryMovement {
   pack          ProductPack?           @relation(fields: [businessId, packId, variantId], references: [businessId, id, variantId], onDelete: Restrict, onUpdate: Restrict)
   reverses      InventoryMovement?     @relation("MovementReversal", fields: [businessId, reversesMovementId, locationId, variantId, type], references: [businessId, id, locationId, variantId, type], onDelete: Restrict, onUpdate: Restrict, map: "inventory_movements_reversal_fkey")
 
-  reversals      InventoryMovement[] @relation("MovementReversal")
-  lastOfBalances InventoryBalance[]
+  reversals           InventoryMovement[] @relation("MovementReversal")
+  lastOfBalances      InventoryBalance[]
+  valuation           InventoryMovementValuation?
+  residualValuations  StockValuation[]    @relation("StockValuationTrigger")
 
   @@unique([businessId, id])
   @@unique([businessId, id, locationId, variantId, type], map: "inventory_movements_reversal_target_key")
@@ -232,8 +237,9 @@ model Stocktake {
   postedBy    BusinessMembership? @relation("StocktakePostedBy", fields: [businessId, postedByMembershipId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
   cancelledBy BusinessMembership? @relation("StocktakeCancelledBy", fields: [businessId, cancelledByMembershipId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
 
-  lines     StocktakeLine[]
-  movements InventoryMovement[]
+  lines          StocktakeLine[]
+  movements      InventoryMovement[]
+  journalEntries JournalEntry[]
 
   @@unique([businessId, id])
   @@unique([businessId, id, locationId])
@@ -269,4 +275,87 @@ model StocktakeLine {
 
   @@id([businessId, stocktakeId, variantId])
   @@map("stocktake_lines")
+}
+
+// Per-item valuation projection (ADR-009 section 19). Missing row means
+// UNVALUED value 0. started_from_balance_version is the Build 2 cutover
+// watermark and is never updated. Value columns may be updated in place.
+model InventoryValuation {
+  businessId                 String    @map("business_id") @db.Uuid
+  locationId                 String    @map("location_id") @db.Uuid
+  variantId                  String    @map("variant_id") @db.Uuid
+  status                     String
+  valueMinor                 BigInt    @map("value_minor")
+  currency                   String    @db.VarChar(3)
+  firstValuedAt              DateTime? @map("first_valued_at") @db.Timestamptz(3)
+  version                    Int
+  startedFromBalanceVersion  Int       @map("started_from_balance_version")
+  updatedAt                  DateTime  @map("updated_at") @db.Timestamptz(3)
+
+  business Business         @relation("InventoryValuationBusiness", fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  location BusinessLocation @relation(fields: [businessId, locationId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  variant  ProductVariant   @relation(fields: [businessId, variantId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  money    Business         @relation("InventoryValuationCurrency", fields: [businessId, currency], references: [id, currencyCode], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([businessId, locationId, variantId])
+  @@map("inventory_valuations")
+}
+
+// Append-only movement valuation facts (ADR-009 section 19).
+model InventoryMovementValuation {
+  businessId        String  @map("business_id") @db.Uuid
+  movementId        String  @map("movement_id") @db.Uuid
+  costBasis         String  @map("cost_basis")
+  valueDeltaMinor   BigInt  @map("value_delta_minor")
+  valueAfterMinor   BigInt  @map("value_after_minor")
+  currency          String  @db.VarChar(3)
+  statusAfter       String  @map("status_after")
+  suppliedCostMinor BigInt? @map("supplied_cost_minor")
+  journalEntryId    String? @map("journal_entry_id") @db.Uuid
+
+  business Business          @relation("MovementValuationBusiness", fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  movement InventoryMovement @relation(fields: [businessId, movementId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  journal  JournalEntry?     @relation(fields: [businessId, journalEntryId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  money    Business          @relation("MovementValuationCurrency", fields: [businessId, currency], references: [id, currencyCode], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([businessId, movementId])
+  @@map("inventory_movement_valuations")
+}
+
+// Append-only explicit stock valuation documents (ADR-009 section 20).
+model StockValuation {
+  businessId                 String   @map("business_id") @db.Uuid
+  id                         String   @id @db.Uuid
+  locationId                 String   @map("location_id") @db.Uuid
+  variantId                  String   @map("variant_id") @db.Uuid
+  kind                       String
+  triggerMovementId          String?  @map("trigger_movement_id") @db.Uuid
+  quantityAtValuationMinor   BigInt   @map("quantity_at_valuation_minor")
+  balanceVersionAtValuation  Int      @map("balance_version_at_valuation")
+  previousValueMinor         BigInt   @map("previous_value_minor")
+  newValueMinor              BigInt   @map("new_value_minor")
+  currency                   String   @db.VarChar(3)
+  reason                     String
+  journalEntryId             String?  @map("journal_entry_id") @db.Uuid
+  actorMembershipId          String   @map("actor_membership_id") @db.Uuid
+  deviceId                   String?  @map("device_id") @db.Uuid
+  sourceChannel              String   @map("source_channel")
+  correlationId              String   @map("correlation_id")
+  occurredAt                 DateTime @map("occurred_at") @db.Timestamptz(3)
+  businessDate               DateTime @map("business_date") @db.Date
+  recordedAt                 DateTime @map("recorded_at") @db.Timestamptz(3)
+
+  business   Business            @relation("StockValuationBusiness", fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  location   BusinessLocation    @relation(fields: [businessId, locationId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  variant    ProductVariant      @relation(fields: [businessId, variantId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  money      Business            @relation("StockValuationCurrency", fields: [businessId, currency], references: [id, currencyCode], onDelete: Restrict, onUpdate: Restrict)
+  actor      BusinessMembership  @relation("StockValuationActor", fields: [businessId, actorMembershipId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  device     Device?             @relation(fields: [businessId, deviceId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  journal         JournalEntry?      @relation("StockValuationPostedJournal", fields: [businessId, journalEntryId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  journalSources  JournalEntry[]     @relation("JournalSourceValuation")
+  triggerMovement InventoryMovement? @relation("StockValuationTrigger", fields: [businessId, locationId, variantId, triggerMovementId], references: [businessId, locationId, variantId, id], onDelete: Restrict, onUpdate: Restrict, map: "stock_valuations_trigger_movement_fkey")
+
+  @@unique([businessId, id])
+  @@unique([businessId, journalEntryId])
+  @@map("stock_valuations")
 }

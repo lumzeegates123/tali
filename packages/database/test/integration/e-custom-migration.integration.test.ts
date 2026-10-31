@@ -18,6 +18,8 @@ const COMMITTED_MIGRATIONS = [
   "20261006120000_build2_inventory_core",
   "20261008120000_build2_stocktake",
   "20261016120000_build3_ledger_accounts",
+  "20261018120000_build3_valuation_journal",
+  "20261030120000_build3_reversal_residual",
 ];
 
 const BUILD_1_TABLES = [
@@ -58,8 +60,17 @@ const BUILD_2_INVENTORY_TABLES = [
 /** Build 2 Slice 6 adds stocktake headers and lines. */
 const BUILD_2_STOCKTAKE_TABLES = ["public.stocktake_lines", "public.stocktakes"];
 
-/** Build 3 Slice 2 adds ledger accounts; journal tables arrive with their typed sources in S3. */
+/** Build 3 Slice 2 adds ledger accounts. */
 const BUILD_3_LEDGER_TABLES = ["public.ledger_accounts"];
+
+/** Build 3 Slice 3 adds journals and valuation tables. */
+const BUILD_3_VALUATION_TABLES = [
+  "public.inventory_movement_valuations",
+  "public.inventory_valuations",
+  "public.journal_entries",
+  "public.journal_lines",
+  "public.stock_valuations",
+];
 
 const STOCKTAKE_MIGRATION_SQL = readFileSync(
   fileURLToPath(new URL("../../prisma/migrations/20261008120000_build2_stocktake/migration.sql", import.meta.url)),
@@ -76,8 +87,9 @@ const STOCKTAKE_MIGRATION_CODE = STOCKTAKE_MIGRATION_SQL.split("\n")
  * approved cleanup migration that removes the temporary foundation_spike
  * schema, the two Build 1 identity and tenancy migrations, the Slice 5
  * invitations and devices migration, the Build 2 catalog migration, the
- * Build 2 inventory core migration, the Build 2 stocktake migration and the
- * Build 3 ledger accounts migration.
+ * Build 2 inventory core migration, the Build 2 stocktake migration, the
+ * Build 3 ledger accounts migration and the Build 3 valuation/journal
+ * migration.
  */
 describe("E. migration chain", () => {
   const { owner } = useFixtureHarness();
@@ -128,7 +140,7 @@ describe("E. migration chain", () => {
     expect(objects.rows).toEqual([]);
   });
 
-  it("the migration chain creates exactly the Build 1, catalog, inventory, stocktake and ledger account tables (and Prisma's migration table)", async () => {
+  it("the migration chain creates exactly the Build 1, catalog, inventory, stocktake, ledger and valuation tables (and Prisma's migration table)", async () => {
     const { rows } = await owner.query<{ name: string }>(
       `SELECT schemaname || '.' || tablename AS name FROM pg_tables
        WHERE schemaname NOT IN ('pg_catalog', 'information_schema', 'test_fixtures') ORDER BY (schemaname || '.' || tablename) COLLATE "C"`,
@@ -141,6 +153,7 @@ describe("E. migration chain", () => {
         ...BUILD_2_INVENTORY_TABLES,
         ...BUILD_2_STOCKTAKE_TABLES,
         ...BUILD_3_LEDGER_TABLES,
+        ...BUILD_3_VALUATION_TABLES,
       ].sort(),
     );
   });

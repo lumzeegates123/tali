@@ -5,6 +5,7 @@ import { CHART_TEMPLATE_V1 } from "@tali/domain";
 import { describe, expect, it } from "vitest";
 import { LEDGER_TEMPLATE_ROWS_SQL } from "../../src/ledger/consistency-query.js";
 import { readLedgerConsistency, readLedgerSnapshot, testDatabaseUrls } from "../../src/testing/index.js";
+import { inventoryProduct, inventoryTenant } from "../support/inventory.js";
 import { asBusinessCreatedBeforeLedger } from "../support/ledger.js";
 import { useTenancyHarness } from "../support/tenancy.js";
 
@@ -175,6 +176,117 @@ describe("ZK. db:ledger-consistency (operator script)", () => {
     expect(lines(broken.stderr)[0]).toBe(
       `INCONSISTENT ACCOUNT_WITHOUT_SYSTEM_ROLE business=${businessId} account=${rows[0]?.id}`,
     );
+  });
+
+  it("reports an unbalanced journal entry by identifiers and kind only", async () => {
+    const tenancy = harness.compose();
+    const t = await inventoryTenant(harness, "ledger-unbalanced");
+    const soap = await inventoryProduct(harness, t, { name: "Soap" });
+    const opening = await tenancy.recordOpeningStock.execute(t.context, {
+      lines: [{ variantId: soap.variant.id, quantityMinor: "2", unit: "PIECE" }],
+      idempotencyKey: harness.world().ids.newId("IdempotencyKey"),
+    });
+    const inventory = await harness.owner.query<{ id: string }>(
+      `SELECT id::text FROM ledger_accounts WHERE business_id = $1 AND system_role = 'INVENTORY'`,
+      [t.businessId],
+    );
+    const entryId = harness.world().ids.newId("JournalEntry");
+    const at = "2026-10-18T08:00:00.000Z";
+    await harness.owner.query(
+      `INSERT INTO journal_entries (
+         business_id, id, currency, occurred_at, business_date, recorded_at, entry_kind,
+         opening_batch_id, posting_rule, posting_rule_version, description,
+         actor_membership_id, location_id, source_channel, correlation_id
+       ) VALUES ($1, $2, 'NGN', $3, '2026-10-18', $3, 'ORIGINAL',
+         $4, 'OPENING_STOCK_VALUED', 1, 'unbalanced probe', $5, $6, 'web', 'zk-unbalanced')`,
+      [t.businessId, entryId, at, opening.document.id, t.membershipId, t.locationId],
+    );
+    await harness.owner.query(
+      `INSERT INTO journal_lines (
+         business_id, entry_id, line_number, account_id, direction, amount_minor, currency
+       ) VALUES ($1, $2, 1, $3, 'DEBIT', 100, 'NGN')`,
+      [t.businessId, entryId, inventory.rows[0]?.id],
+    );
+    const before = await readLedgerSnapshot();
+    const broken = await checkLedgerConsistency(appUrl);
+    expect(broken.code).toBe(1);
+    expect(lines(broken.stderr)[0]).toBe(`INCONSISTENT UNBALANCED_ENTRY business=${t.businessId} account=${entryId}`);
+    expect(broken.stdout).toBe("");
+    expect(await readLedgerSnapshot()).toEqual(before);
+  });
+
+  it("reports a reversal that does not mirror original line directions", async () => {
+    const tenancy = harness.compose();
+    const t = await inventoryTenant(harness, "ledger-reversal-mirror");
+    const soap = await inventoryProduct(harness, t, { name: "Soap" });
+    await tenancy.recordOpeningStock.execute(t.context, {
+      lines: [
+        {
+          variantId: soap.variant.id,
+          quantityMinor: "2",
+          unit: "PIECE",
+          totalCost: { amountMinor: "200", currency: "NGN" },
+        },
+      ],
+      idempotencyKey: harness.world().ids.newId("IdempotencyKey"),
+    });
+    const original = await harness.owner.query<{ id: string; opening_batch_id: string }>(
+      `SELECT id::text, opening_batch_id::text FROM journal_entries WHERE business_id = $1 AND entry_kind = 'ORIGINAL'`,
+      [t.businessId],
+    );
+    const originalId = original.rows[0]?.id;
+    const openingBatchId = original.rows[0]?.opening_batch_id;
+    const originalLines = await harness.owner.query<{
+      line_number: number;
+      account_id: string;
+      direction: string;
+      amount_minor: string;
+      memo_kind: string | null;
+    }>(
+      `SELECT line_number, account_id::text, direction, amount_minor::text, memo_kind
+       FROM journal_lines WHERE business_id = $1 AND entry_id = $2 ORDER BY line_number`,
+      [t.businessId, originalId],
+    );
+    const reversalId = harness.world().ids.newId("JournalEntry");
+    const at = "2026-10-18T09:00:00.000Z";
+    await harness.owner.query(
+      `INSERT INTO journal_entries (
+         business_id, id, currency, occurred_at, business_date, recorded_at, entry_kind,
+         opening_batch_id, reverses_entry_id, posting_rule, posting_rule_version, description,
+         actor_membership_id, location_id, source_channel, correlation_id
+       ) VALUES ($1, $2, 'NGN', $3, '2026-10-18', $3, 'REVERSAL',
+         $4, $5, 'OPENING_STOCK_REVERSED', 1, 'mirror probe', $6, $7, 'web', 'zk-mirror')`,
+      [t.businessId, reversalId, at, openingBatchId, originalId, t.membershipId, t.locationId],
+    );
+    for (const line of originalLines.rows) {
+      await harness.owner.query(
+        `INSERT INTO journal_lines (
+           business_id, entry_id, line_number, account_id, direction, amount_minor, currency, memo_kind
+         ) VALUES ($1, $2, $3, $4, $5, $6, 'NGN', $7)`,
+        [
+          t.businessId,
+          reversalId,
+          line.line_number,
+          line.account_id,
+          line.direction,
+          line.amount_minor,
+          line.memo_kind,
+        ],
+      );
+    }
+    const broken = await checkLedgerConsistency(appUrl);
+    expect(broken.code).toBe(1);
+    expect(lines(broken.stderr)[0]).toBe(
+      `INCONSISTENT REVERSAL_DIRECTION_MISMATCH business=${t.businessId} account=${reversalId}`,
+    );
+    await harness.owner.query(`DELETE FROM journal_lines WHERE business_id = $1 AND entry_id = $2`, [
+      t.businessId,
+      reversalId,
+    ]);
+    await harness.owner.query(`DELETE FROM journal_entries WHERE business_id = $1 AND id = $2`, [
+      t.businessId,
+      reversalId,
+    ]);
   });
 
   it("exits 1 without DATABASE_URL, and on a connection failure prints no credentials", async () => {
