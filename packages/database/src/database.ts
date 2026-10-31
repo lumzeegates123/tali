@@ -9,7 +9,10 @@ import {
   type InventoryAdjustmentRepository,
   type InventoryItemReader,
   type InventoryMovementRepository,
+  type InventoryMovementValuationRepository,
+  type InventoryValuationRepository,
   type InvitationRepository,
+  type JournalRepository,
   type LedgerAccountRepository,
   type LocationRepository,
   type MembershipRepository,
@@ -21,6 +24,7 @@ import {
   type StockBalanceRepository,
   type StockThresholdRepository,
   type StocktakeLineRepository,
+  type StockValuationRepository,
   type StocktakeRepository,
   type UnitOfWork,
   type UnitReferenceRepository,
@@ -41,7 +45,11 @@ import { createInventoryMovementRepository } from "./repositories/inventory-move
 import { createOpeningBatchRepository } from "./repositories/inventory-opening-batch-repository.js";
 import { createInventoryStockThresholdRepository } from "./repositories/inventory-stock-threshold-repository.js";
 import { createInvitationRepository } from "./repositories/invitation-repository.js";
+import { createInventoryMovementValuationRepository } from "./repositories/inventory-movement-valuation-repository.js";
+import { createInventoryValuationRepository } from "./repositories/inventory-valuation-repository.js";
+import { createJournalRepository } from "./repositories/journal-repository.js";
 import { createLedgerAccountRepository } from "./repositories/ledger-account-repository.js";
+import { createStockValuationRepository } from "./repositories/stock-valuation-repository.js";
 import { createLocationRepository } from "./repositories/location-repository.js";
 import { createMembershipRepository } from "./repositories/membership-repository.js";
 import { createProductCategoryRepository } from "./repositories/product-category-repository.js";
@@ -101,6 +109,10 @@ export interface DatabaseRepositories {
   readonly stocktakeLines: StocktakeLineRepository;
   readonly inventoryItems: InventoryItemReader;
   readonly ledgerAccounts: LedgerAccountRepository;
+  readonly journals: JournalRepository;
+  readonly inventoryValuations: InventoryValuationRepository;
+  readonly inventoryMovementValuations: InventoryMovementValuationRepository;
+  readonly stockValuations: StockValuationRepository;
 }
 
 /**
@@ -143,6 +155,10 @@ export function createRepositories(): DatabaseRepositories {
     stocktakeLines: createStocktakeLineRepository(),
     inventoryItems: createInventoryItemReader(),
     ledgerAccounts: createLedgerAccountRepository(),
+    journals: createJournalRepository(),
+    inventoryValuations: createInventoryValuationRepository(),
+    inventoryMovementValuations: createInventoryMovementValuationRepository(),
+    stockValuations: createStockValuationRepository(),
   });
 }
 

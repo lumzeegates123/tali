@@ -185,11 +185,11 @@ describe("ZH. ledger account constraints and privileges (PostgreSQL)", () => {
       expect(publicGrants.rows).toEqual([]);
     });
 
-    it("no journal entry or journal line table exists yet (they arrive with typed sources in S3)", async () => {
+    it("journal entry and journal line tables exist with the valuation-slice sources", async () => {
       const { rows } = await harness.owner.query(
         `SELECT to_regclass('public.journal_entries')::text AS entries, to_regclass('public.journal_lines')::text AS lines`,
       );
-      expect(rows[0]).toEqual({ entries: null, lines: null });
+      expect(rows[0]).toEqual({ entries: "journal_entries", lines: "journal_lines" });
     });
   });
 });

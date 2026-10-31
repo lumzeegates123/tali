@@ -4,6 +4,8 @@ import type {
   InventoryAdjustment,
   InventoryMovement,
   InventoryMovementSource,
+  InventoryMovementValuation,
+  InventoryValuationState,
   LocationId,
   MembershipId,
   OpeningBatch,
@@ -11,11 +13,20 @@ import type {
   ProductVariantId,
   StockBalance,
   StockThreshold,
+  StockValuationDocument,
   Stocktake,
   StocktakeId,
   StocktakeLine,
 } from "@tali/domain";
-import { deriveLowStock, emptyStockBalance, Quantity, restoreStocktakeLine } from "@tali/domain";
+import {
+  deriveLowStock,
+  emptyInventoryValuation,
+  emptyStockBalance,
+  parseCurrencyCode,
+  Quantity,
+  restoreStockValuation,
+  restoreStocktakeLine,
+} from "@tali/domain";
 import { ConcurrentModificationError, ConflictError } from "../errors/application-error.js";
 import type {
   GoodsReceiptRepository,
@@ -23,10 +34,14 @@ import type {
   InventoryItemReader,
   InventoryItemRow,
   InventoryMovementRepository,
+  InventoryMovementValuationRepository,
+  InventoryValuationRepository,
   LockedBalances,
+  LockedValuations,
   OpeningBatchRepository,
   StockBalanceRepository,
   StockThresholdRepository,
+  StockValuationRepository,
   StocktakeLineCounts,
   StocktakeLineRepository,
   StocktakeRepository,
@@ -38,6 +53,7 @@ import {
   assertThresholdTransition,
   isVisibleInventoryItem,
   sealLockedBalances,
+  sealLockedValuations,
   STOCKTAKE_IN_PROGRESS,
 } from "../modules/inventory/index.js";
 import type { TransactionScope } from "../ports/unit-of-work.js";
@@ -79,8 +95,12 @@ export class InMemoryInventoryStore implements RollbackParticipant {
   readonly #catalog: InMemoryCatalogStore;
   readonly #tenancy: InMemoryTenancyStore;
   readonly #lockTokens = new WeakMap<LockedBalances, TransactionScope>();
+  readonly #valuationLockTokens = new WeakMap<LockedValuations, TransactionScope>();
   #movements: InventoryMovement[] = [];
   #balances = new Map<string, StockBalance>();
+  #valuations = new Map<string, InventoryValuationState>();
+  #movementValuations: InventoryMovementValuation[] = [];
+  #stockValuations = new Map<string, StockValuationDocument>();
   #openings = new Map<string, OpeningBatch>();
   #receipts = new Map<string, GoodsReceipt>();
   #adjustments = new Map<string, InventoryAdjustment>();
@@ -103,6 +123,9 @@ export class InMemoryInventoryStore implements RollbackParticipant {
   captureState(): () => void {
     const movements = [...this.#movements];
     const balances = new Map(this.#balances);
+    const valuations = new Map(this.#valuations);
+    const movementValuations = [...this.#movementValuations];
+    const stockValuations = new Map(this.#stockValuations);
     const openings = new Map(this.#openings);
     const receipts = new Map(this.#receipts);
     const adjustments = new Map(this.#adjustments);
@@ -113,6 +136,9 @@ export class InMemoryInventoryStore implements RollbackParticipant {
     return () => {
       this.#movements = movements;
       this.#balances = balances;
+      this.#valuations = valuations;
+      this.#movementValuations = movementValuations;
+      this.#stockValuations = stockValuations;
       this.#openings = openings;
       this.#receipts = receipts;
       this.#adjustments = adjustments;
@@ -147,6 +173,18 @@ export class InMemoryInventoryStore implements RollbackParticipant {
 
   get balances(): readonly StockBalance[] {
     return [...this.#balances.values()];
+  }
+
+  get valuations(): readonly InventoryValuationState[] {
+    return [...this.#valuations.values()];
+  }
+
+  get movementValuations(): readonly InventoryMovementValuation[] {
+    return [...this.#movementValuations];
+  }
+
+  get stockValuationDocuments(): readonly StockValuationDocument[] {
+    return [...this.#stockValuations.values()];
   }
 
   get openings(): readonly OpeningBatch[] {
@@ -234,6 +272,12 @@ export class InMemoryInventoryStore implements RollbackParticipant {
 
   #keyOf(balance: StockBalance): string {
     return stockItemKey(balance.businessId, balance.locationId, balance.variantId);
+  }
+
+  #currencyOf(businessId: BusinessId) {
+    const business = this.#tenancy.businesses.find((candidate) => candidate.id === businessId);
+    if (business === undefined) throw new Error("a valuation requires its business");
+    return parseCurrencyCode(business.currencyCode);
   }
 
   #enter(scope: TransactionScope, operation: string): void {
@@ -439,6 +483,109 @@ export class InMemoryInventoryStore implements RollbackParticipant {
       this.#enter(scope, "balances.find");
       const balance = this.#balances.get(stockItemKey(businessId, locationId, variantId));
       return balance === undefined ? undefined : this.#presented(balance);
+    },
+  };
+
+  readonly valuationRepository: InventoryValuationRepository = {
+    lockForUpdate: async (scope, lockedBalances, variantIds) => {
+      this.#enter(scope, "valuations.lockForUpdate");
+      const businessId = lockedBalances.businessId;
+      const locationId = lockedBalances.locationId;
+      const currency = this.#currencyOf(businessId);
+      const valuations: InventoryValuationState[] = [];
+      for (const variantId of [...variantIds].sort()) {
+        const key = stockItemKey(businessId, locationId, variantId);
+        let current = this.#valuations.get(key);
+        if (current === undefined) {
+          const balance = lockedBalances.balances.find((row) => row.variantId === variantId);
+          if (balance === undefined) throw new Error("a valuation lock requires its locked balance");
+          current = Object.freeze({
+            ...emptyInventoryValuation({ businessId, locationId, variantId, currency }),
+            startedFromBalanceVersion: balance.version,
+          });
+          this.#valuations.set(key, current);
+        }
+        valuations.push(current);
+      }
+      const locked = sealLockedValuations({ businessId, locationId, valuations });
+      this.#valuationLockTokens.set(locked, scope);
+      return locked;
+    },
+    apply: async (scope, locked, next) => {
+      this.#enter(scope, "valuations.apply");
+      if (this.#valuationLockTokens.get(locked) !== scope) {
+        throw new Error("valuations must be locked in the same unit of work before they are applied");
+      }
+      for (const valuation of next) {
+        const previous = locked.valuations.find((candidate) => candidate.variantId === valuation.variantId);
+        if (
+          previous === undefined ||
+          valuation.businessId !== locked.businessId ||
+          valuation.locationId !== locked.locationId
+        ) {
+          throw new Error("only locked valuations can be applied");
+        }
+        const key = stockItemKey(valuation.businessId, valuation.locationId, valuation.variantId);
+        if (this.#valuations.get(key)?.version !== previous.version) throw new ConcurrentModificationError();
+        if (valuation.startedFromBalanceVersion !== previous.startedFromBalanceVersion) {
+          throw new Error("startedFromBalanceVersion is immutable");
+        }
+        this.#valuations.set(key, valuation);
+      }
+      this.#leave("valuations.apply");
+    },
+    find: async (scope, businessId, locationId, variantId) => {
+      this.#enter(scope, "valuations.find");
+      return this.#valuations.get(stockItemKey(businessId, locationId, variantId));
+    },
+  };
+
+  readonly movementValuationRepository: InventoryMovementValuationRepository = {
+    insertMany: async (scope, rows) => {
+      this.#enter(scope, "movementValuations.insertMany");
+      for (const row of rows) {
+        if (this.#movementValuations.some((existing) => existing.movementId === row.movementId)) {
+          throw new Error("duplicate movement valuation");
+        }
+        this.#movementValuations.push(row);
+      }
+      this.#leave("movementValuations.insertMany");
+    },
+    findByMovement: async (scope, businessId, movementId) => {
+      this.#enter(scope, "movementValuations.findByMovement");
+      return this.#movementValuations.find((row) => row.businessId === businessId && row.movementId === movementId);
+    },
+    listForMovements: async (scope, businessId, movementIds) => {
+      this.#enter(scope, "movementValuations.listForMovements");
+      const wanted = new Set(movementIds);
+      return this.#movementValuations.filter((row) => row.businessId === businessId && wanted.has(row.movementId));
+    },
+  };
+
+  readonly stockValuationRepository: StockValuationRepository = {
+    insert: async (scope, document) => {
+      this.#enter(scope, "stockValuations.insert");
+      const stored = restoreStockValuation(document);
+      if (this.#stockValuations.has(stored.id)) throw new Error("duplicate stock valuation");
+      if (stored.triggerMovementId !== undefined) {
+        for (const existing of this.#stockValuations.values()) {
+          if (existing.triggerMovementId === stored.triggerMovementId) {
+            throw new Error("duplicate residual for trigger movement");
+          }
+        }
+      }
+      this.#stockValuations.set(stored.id, stored);
+    },
+    findById: async (scope, businessId, id) => {
+      this.#enter(scope, "stockValuations.findById");
+      const document = this.#stockValuations.get(id);
+      return document?.businessId === businessId ? document : undefined;
+    },
+    findByTriggerMovement: async (scope, businessId, triggerMovementId) => {
+      this.#enter(scope, "stockValuations.findByTriggerMovement");
+      return [...this.#stockValuations.values()].find(
+        (document) => document.businessId === businessId && document.triggerMovementId === triggerMovementId,
+      );
     },
   };
 

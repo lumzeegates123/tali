@@ -6,6 +6,9 @@
 > Governance note (added 2026-10-15): accounting review complete. ADR-009 A1 to A22 and ADR-010 T1 to T7 are
 > resolved and were accepted into ADR-009 and ADR-010 (both ACCEPTED 2026-10-15 by the human maintainer). Actual
 > pilot tax rates and configuration were not part of this review; they remain a separate reviewed configuration.
+>
+> Addendum (2026-10-29): the reversal residual edge is resolved (section 14.2). The original review text and
+> answer table below are unchanged.
 
 Status: **FOR ACCOUNTANT REVIEW.** Nothing described here is built yet. Your answers decide whether the proposals are
 accepted, changed or reconsidered. Technical detail is in `docs/decisions/ADR-009-ledger-accounting-inventory-valuation.md`
@@ -338,3 +341,24 @@ Example: 20 units with a recorded value of 4,946.67 are valued at 7,000.00. Tali
 Cr Inventory gains 2,053.33. Valued at 4,500.00 instead, it posts Dr Inventory shrinkage 446.67 / Cr Inventory 446.67.
 
 With this clarification, all 23 review questions are resolved (ADR-009 A1 to A22; ADR-010 T1 to T7).
+
+### 14.2 Addendum: reversal residual after an exact inventory-value reversal (2026-10-29)
+
+Recorded by the maintainer from the accountant's clarification of 2026-10-29. The original answer table in
+section 13 is not rewritten. A1 to A22 remain as approved on 2026-10-15.
+
+- Reviewer: Osasu
+- Date: 2026-10-29
+- Question: when an exact snapshotted inventory-value reversal would leave a negative recorded value, or a
+  `VALUED` item at zero quantity with leftover value, what accounting treatment applies?
+- **Answer: C.** Apply the exact reversal and then create a separate inventory gain/shrinkage adjustment to
+  bring the inventory value back to a valid state.
+
+Architecture interpretation accepted by the maintainer (ADR-009 sections 26.1 and 38):
+
+- the exact `REVERSAL` journal remains an untouched line-by-line mirror of the original (no extra residual
+  lines);
+- the correction is a separate `ORIGINAL` journal and a system-generated `REVERSAL_RESIDUAL` stock valuation
+  document, posted in the same transaction as the document reversal.
+
+This addendum does not invent a current-WAC restatement and does not reopen A1 to A22.

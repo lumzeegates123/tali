@@ -1,14 +1,18 @@
 /*
- * The ledger consistency check (ADR-009 section 29; Plan 005 S2). A read-only
- * query that compares every business's ledger accounts with the versioned
- * chart template they were provisioned from. It never repairs anything.
- * Shared by the test helper and the operator script
- * (`scripts/check-ledger-consistency.mjs`, run with Node's type stripping), so
- * this file has no imports and only erasable TypeScript syntax.
+ * The ledger consistency check (ADR-009 sections 29 and 30; Plan 005 S2/S3).
+ * A read-only query that compares every business's ledger accounts with the
+ * versioned chart template they were provisioned from, then checks journal
+ * entries and lines. It never repairs anything. Shared by the test helper and
+ * the operator script (`scripts/check-ledger-consistency.mjs`, run with Node's
+ * type stripping), so this file has no imports and only erasable TypeScript
+ * syntax.
  *
- * Build 3 S2 persists ledger accounts only; journal entries and lines arrive
- * with their typed source columns in S3, which extends this check with the
- * journal invariants (balance per entry, reversal links, tenant agreement).
+ * Chart kinds (S2): MISSING_CHART through CHART_INCOMPLETE. Journal kinds
+ * (S3, ADR-009 section 30): empty/unbalanced entries, currency and tenant
+ * agreement, typed-source shape, and reversal-mirror checks. Duplicate
+ * ORIGINAL-per-source, reversal uniqueness, orphan lines and some tenant
+ * mismatches are also enforced by UNIQUE/FK/CHECK; the query still reports
+ * them when owner-role tests drop or defer those constraints.
  *
  * Every ACTIVE business must have a chart: one with no account at all is
  * MISSING_CHART. After the S2 migration, businesses that already existed
@@ -23,14 +27,36 @@ export const LEDGER_CONSISTENCY_KINDS = [
   "TEMPLATE_MISMATCH",
   "MIXED_TEMPLATE_VERSIONS",
   "CHART_INCOMPLETE",
+  "ENTRY_WITHOUT_LINES",
+  "UNBALANCED_ENTRY",
+  "ENTRY_CURRENCY_MISMATCH",
+  "LINE_CURRENCY_MISMATCH",
+  "LINE_ACCOUNT_TENANT_MISMATCH",
+  "INVALID_SOURCE_SHAPE",
+  "SOURCE_TENANT_MISMATCH",
+  "DUPLICATE_ORIGINAL_SOURCE",
+  "REVERSAL_TARGET_MISSING",
+  "REVERSAL_TARGET_NOT_ORIGINAL",
+  "DUPLICATE_REVERSAL",
+  "REVERSAL_CURRENCY_MISMATCH",
+  "REVERSAL_SOURCE_MISMATCH",
+  "REVERSAL_LINE_COUNT_MISMATCH",
+  "REVERSAL_ACCOUNT_MISMATCH",
+  "REVERSAL_AMOUNT_MISMATCH",
+  "REVERSAL_MEMO_MISMATCH",
+  "REVERSAL_DIRECTION_MISMATCH",
+  "ORPHAN_LINE",
+  "RESIDUAL_JOURNAL_INVALID",
 ] as const;
 
 export type LedgerConsistencyKind = (typeof LEDGER_CONSISTENCY_KINDS)[number];
 
 /**
  * One inconsistency: identifiers and a kind, never names, codes or amounts.
- * `accountId` is null for a business-level issue (a missing or incomplete
- * chart, or mixed template versions).
+ * `accountId` is the ledger account for chart issues, the journal entry id for
+ * entry/reversal issues, and the referenced entry id for an orphan line.
+ * It is null for a business-level issue (a missing or incomplete chart, or
+ * mixed template versions).
  */
 export interface LedgerConsistencyIssue {
   readonly businessId: string;
@@ -71,6 +97,12 @@ export const LEDGER_TEMPLATE_ROWS_SQL = `
  * - every role of that template has an account (no partial chart).
  * Duplicate roles and codes are prevented by unique indexes, so they are not
  * re-checked here.
+ * Journal: empty and unbalanced entries; currency agreement; typed source
+ * shape and tenant; one ORIGINAL per source; reversal target and uniqueness;
+ * exact reversal line mirror (count, account, amount, memo, opposite
+ * direction); orphan lines; REVERSAL_RESIDUAL ORIGINAL journals (entry kind,
+ * source valuation_id, posting rule/version). Residual pairing of amounts and
+ * accounts is reported by the inventory checker.
  */
 export const LEDGER_CONSISTENCY_SQL = `
 WITH template (template_version, system_role, code, name, type, normal_balance) AS (
@@ -83,6 +115,52 @@ business_versions AS (
   SELECT business_id, MIN(template_version) AS min_version, MAX(template_version) AS max_version
   FROM public.ledger_accounts
   GROUP BY business_id
+),
+source_count AS (
+  SELECT e.business_id, e.id,
+         (CASE WHEN e.opening_batch_id IS NOT NULL THEN 1 ELSE 0 END)
+         + (CASE WHEN e.goods_receipt_id IS NOT NULL THEN 1 ELSE 0 END)
+         + (CASE WHEN e.adjustment_id IS NOT NULL THEN 1 ELSE 0 END)
+         + (CASE WHEN e.stocktake_id IS NOT NULL THEN 1 ELSE 0 END)
+         + (CASE WHEN e.valuation_id IS NOT NULL THEN 1 ELSE 0 END) AS sources
+  FROM public.journal_entries e
+),
+line_totals AS (
+  SELECT business_id, entry_id,
+         COUNT(*)::int AS line_count,
+         SUM(CASE WHEN direction = 'DEBIT' THEN amount_minor ELSE 0 END) AS debit,
+         SUM(CASE WHEN direction = 'CREDIT' THEN amount_minor ELSE 0 END) AS credit
+  FROM public.journal_lines
+  GROUP BY business_id, entry_id
+),
+original_sources AS (
+  SELECT business_id, id, 'opening_batch'::text AS source_kind, opening_batch_id AS source_id
+  FROM public.journal_entries WHERE entry_kind = 'ORIGINAL' AND opening_batch_id IS NOT NULL
+  UNION ALL
+  SELECT business_id, id, 'goods_receipt', goods_receipt_id
+  FROM public.journal_entries WHERE entry_kind = 'ORIGINAL' AND goods_receipt_id IS NOT NULL
+  UNION ALL
+  SELECT business_id, id, 'adjustment', adjustment_id
+  FROM public.journal_entries WHERE entry_kind = 'ORIGINAL' AND adjustment_id IS NOT NULL
+  UNION ALL
+  SELECT business_id, id, 'stocktake', stocktake_id
+  FROM public.journal_entries WHERE entry_kind = 'ORIGINAL' AND stocktake_id IS NOT NULL
+  UNION ALL
+  SELECT business_id, id, 'valuation', valuation_id
+  FROM public.journal_entries WHERE entry_kind = 'ORIGINAL' AND valuation_id IS NOT NULL
+),
+duplicate_originals AS (
+  SELECT business_id, source_kind, source_id
+  FROM original_sources
+  GROUP BY business_id, source_kind, source_id
+  HAVING COUNT(*) > 1
+),
+duplicate_reversals AS (
+  SELECT business_id, reverses_entry_id
+  FROM public.journal_entries
+  WHERE reverses_entry_id IS NOT NULL
+  GROUP BY business_id, reverses_entry_id
+  HAVING COUNT(*) > 1
 ),
 issues AS (
   SELECT b.id AS business_id, NULL::uuid AS account_id, 'MISSING_CHART' AS kind
@@ -128,6 +206,162 @@ issues AS (
         WHERE a.business_id = v.business_id AND a.system_role = t.system_role
       )
   )
+  UNION ALL
+  SELECT e.business_id, e.id, 'ENTRY_WITHOUT_LINES'
+  FROM public.journal_entries e
+  WHERE NOT EXISTS (
+    SELECT 1 FROM public.journal_lines l WHERE l.business_id = e.business_id AND l.entry_id = e.id
+  )
+  UNION ALL
+  SELECT e.business_id, e.id, 'UNBALANCED_ENTRY'
+  FROM public.journal_entries e
+  JOIN line_totals t ON t.business_id = e.business_id AND t.entry_id = e.id
+  WHERE t.debit <> t.credit
+  UNION ALL
+  SELECT e.business_id, e.id, 'ENTRY_CURRENCY_MISMATCH'
+  FROM public.journal_entries e
+  JOIN public.businesses b ON b.id = e.business_id
+  WHERE e.currency <> b.currency_code
+  UNION ALL
+  SELECT l.business_id, l.entry_id, 'LINE_CURRENCY_MISMATCH'
+  FROM public.journal_lines l
+  JOIN public.journal_entries e ON e.business_id = l.business_id AND e.id = l.entry_id
+  WHERE l.currency <> e.currency
+  UNION ALL
+  SELECT l.business_id, l.entry_id, 'LINE_ACCOUNT_TENANT_MISMATCH'
+  FROM public.journal_lines l
+  JOIN public.ledger_accounts a ON a.id = l.account_id
+  WHERE a.business_id <> l.business_id
+  UNION ALL
+  SELECT s.business_id, s.id, 'INVALID_SOURCE_SHAPE'
+  FROM source_count s
+  WHERE s.sources <> 1
+  UNION ALL
+  SELECT e.business_id, e.id, 'SOURCE_TENANT_MISMATCH'
+  FROM public.journal_entries e
+  WHERE (e.opening_batch_id IS NOT NULL AND NOT EXISTS (
+           SELECT 1 FROM public.inventory_opening_batches d
+           WHERE d.business_id = e.business_id AND d.id = e.opening_batch_id))
+     OR (e.goods_receipt_id IS NOT NULL AND NOT EXISTS (
+           SELECT 1 FROM public.goods_receipts d
+           WHERE d.business_id = e.business_id AND d.id = e.goods_receipt_id))
+     OR (e.adjustment_id IS NOT NULL AND NOT EXISTS (
+           SELECT 1 FROM public.inventory_adjustments d
+           WHERE d.business_id = e.business_id AND d.id = e.adjustment_id))
+     OR (e.stocktake_id IS NOT NULL AND NOT EXISTS (
+           SELECT 1 FROM public.stocktakes d
+           WHERE d.business_id = e.business_id AND d.id = e.stocktake_id))
+     OR (e.valuation_id IS NOT NULL AND NOT EXISTS (
+           SELECT 1 FROM public.stock_valuations d
+           WHERE d.business_id = e.business_id AND d.id = e.valuation_id))
+  UNION ALL
+  SELECT o.business_id, o.id, 'DUPLICATE_ORIGINAL_SOURCE'
+  FROM original_sources o
+  JOIN duplicate_originals d
+    ON d.business_id = o.business_id AND d.source_kind = o.source_kind AND d.source_id = o.source_id
+  UNION ALL
+  SELECT e.business_id, e.id, 'REVERSAL_TARGET_MISSING'
+  FROM public.journal_entries e
+  WHERE e.entry_kind = 'REVERSAL'
+    AND (e.reverses_entry_id IS NULL OR NOT EXISTS (
+      SELECT 1 FROM public.journal_entries o
+      WHERE o.business_id = e.business_id AND o.id = e.reverses_entry_id
+    ))
+  UNION ALL
+  SELECT e.business_id, e.id, 'REVERSAL_TARGET_NOT_ORIGINAL'
+  FROM public.journal_entries e
+  JOIN public.journal_entries o ON o.business_id = e.business_id AND o.id = e.reverses_entry_id
+  WHERE e.entry_kind = 'REVERSAL' AND o.entry_kind <> 'ORIGINAL'
+  UNION ALL
+  SELECT e.business_id, e.id, 'DUPLICATE_REVERSAL'
+  FROM public.journal_entries e
+  JOIN duplicate_reversals d ON d.business_id = e.business_id AND d.reverses_entry_id = e.reverses_entry_id
+  UNION ALL
+  SELECT e.business_id, e.id, 'REVERSAL_CURRENCY_MISMATCH'
+  FROM public.journal_entries e
+  JOIN public.journal_entries o ON o.business_id = e.business_id AND o.id = e.reverses_entry_id
+  WHERE e.entry_kind = 'REVERSAL' AND e.currency <> o.currency
+  UNION ALL
+  SELECT e.business_id, e.id, 'REVERSAL_SOURCE_MISMATCH'
+  FROM public.journal_entries e
+  JOIN public.journal_entries o ON o.business_id = e.business_id AND o.id = e.reverses_entry_id
+  WHERE e.entry_kind = 'REVERSAL'
+    AND (e.opening_batch_id IS DISTINCT FROM o.opening_batch_id
+      OR e.goods_receipt_id IS DISTINCT FROM o.goods_receipt_id
+      OR e.adjustment_id IS DISTINCT FROM o.adjustment_id
+      OR e.stocktake_id IS DISTINCT FROM o.stocktake_id
+      OR e.valuation_id IS DISTINCT FROM o.valuation_id)
+  UNION ALL
+  SELECT e.business_id, e.id, 'REVERSAL_LINE_COUNT_MISMATCH'
+  FROM public.journal_entries e
+  JOIN public.journal_entries o ON o.business_id = e.business_id AND o.id = e.reverses_entry_id
+  LEFT JOIN line_totals rt ON rt.business_id = e.business_id AND rt.entry_id = e.id
+  LEFT JOIN line_totals ot ON ot.business_id = o.business_id AND ot.entry_id = o.id
+  WHERE e.entry_kind = 'REVERSAL'
+    AND COALESCE(rt.line_count, 0) <> COALESCE(ot.line_count, 0)
+  UNION ALL
+  SELECT DISTINCT e.business_id, e.id, 'REVERSAL_ACCOUNT_MISMATCH'
+  FROM public.journal_entries e
+  JOIN public.journal_entries o ON o.business_id = e.business_id AND o.id = e.reverses_entry_id
+  JOIN public.journal_lines ol ON ol.business_id = o.business_id AND ol.entry_id = o.id
+  LEFT JOIN public.journal_lines rl
+    ON rl.business_id = e.business_id AND rl.entry_id = e.id AND rl.line_number = ol.line_number
+  WHERE e.entry_kind = 'REVERSAL' AND (rl.account_id IS DISTINCT FROM ol.account_id)
+  UNION ALL
+  SELECT DISTINCT e.business_id, e.id, 'REVERSAL_AMOUNT_MISMATCH'
+  FROM public.journal_entries e
+  JOIN public.journal_entries o ON o.business_id = e.business_id AND o.id = e.reverses_entry_id
+  JOIN public.journal_lines ol ON ol.business_id = o.business_id AND ol.entry_id = o.id
+  LEFT JOIN public.journal_lines rl
+    ON rl.business_id = e.business_id AND rl.entry_id = e.id AND rl.line_number = ol.line_number
+  WHERE e.entry_kind = 'REVERSAL' AND (rl.amount_minor IS DISTINCT FROM ol.amount_minor)
+  UNION ALL
+  SELECT DISTINCT e.business_id, e.id, 'REVERSAL_MEMO_MISMATCH'
+  FROM public.journal_entries e
+  JOIN public.journal_entries o ON o.business_id = e.business_id AND o.id = e.reverses_entry_id
+  JOIN public.journal_lines ol ON ol.business_id = o.business_id AND ol.entry_id = o.id
+  LEFT JOIN public.journal_lines rl
+    ON rl.business_id = e.business_id AND rl.entry_id = e.id AND rl.line_number = ol.line_number
+  WHERE e.entry_kind = 'REVERSAL' AND (rl.memo_kind IS DISTINCT FROM ol.memo_kind)
+  UNION ALL
+  SELECT DISTINCT e.business_id, e.id, 'REVERSAL_DIRECTION_MISMATCH'
+  FROM public.journal_entries e
+  JOIN public.journal_entries o ON o.business_id = e.business_id AND o.id = e.reverses_entry_id
+  JOIN public.journal_lines ol ON ol.business_id = o.business_id AND ol.entry_id = o.id
+  LEFT JOIN public.journal_lines rl
+    ON rl.business_id = e.business_id AND rl.entry_id = e.id AND rl.line_number = ol.line_number
+  WHERE e.entry_kind = 'REVERSAL'
+    AND NOT (
+      (ol.direction = 'DEBIT' AND rl.direction = 'CREDIT')
+      OR (ol.direction = 'CREDIT' AND rl.direction = 'DEBIT')
+    )
+  UNION ALL
+  SELECT l.business_id, l.entry_id, 'ORPHAN_LINE'
+  FROM public.journal_lines l
+  WHERE NOT EXISTS (
+    SELECT 1 FROM public.journal_entries e
+    WHERE e.business_id = l.business_id AND e.id = l.entry_id
+  )
+  UNION ALL
+  SELECT e.business_id, e.id, 'RESIDUAL_JOURNAL_INVALID'
+  FROM public.journal_entries e
+  JOIN public.stock_valuations s ON s.business_id = e.business_id AND s.id = e.valuation_id
+  WHERE s.kind = 'REVERSAL_RESIDUAL'
+    AND (
+      e.entry_kind <> 'ORIGINAL'
+      OR e.posting_rule <> 'INVENTORY_REVERSAL_RESIDUAL'
+      OR e.posting_rule_version <> 1
+    )
+  UNION ALL
+  SELECT s.business_id, s.journal_entry_id, 'RESIDUAL_JOURNAL_INVALID'
+  FROM public.stock_valuations s
+  WHERE s.kind = 'REVERSAL_RESIDUAL'
+    AND s.journal_entry_id IS NOT NULL
+    AND NOT EXISTS (
+      SELECT 1 FROM public.journal_entries e
+      WHERE e.business_id = s.business_id AND e.id = s.journal_entry_id
+        AND e.entry_kind = 'ORIGINAL' AND e.valuation_id = s.id
+    )
 )
 SELECT business_id::text AS "businessId", account_id::text AS "accountId", kind
 FROM issues

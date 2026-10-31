@@ -10,6 +10,7 @@ export const INVENTORY_ROUTES = [
   "GET /v1/businesses/:businessId/inventory/stocktakes/:stocktakeId",
   "GET /v1/businesses/:businessId/inventory/stocktakes/:stocktakeId/lines",
   "POST /v1/businesses/:businessId/inventory/opening-stock",
+  "POST /v1/businesses/:businessId/inventory/valuations",
   "POST /v1/businesses/:businessId/inventory/goods-receipts",
   "POST /v1/businesses/:businessId/inventory/adjustments",
   "POST /v1/businesses/:businessId/inventory/write-offs",

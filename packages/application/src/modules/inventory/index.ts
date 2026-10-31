@@ -23,6 +23,7 @@ export {
   inventoryStocktakeCancelled,
   inventoryStocktakePosted,
   inventoryStocktakeStarted,
+  inventoryValuationRecorded,
   inventoryWrittenOff,
 } from "./audit-actions.js";
 export type {
@@ -86,10 +87,14 @@ export type {
   InventoryItemReader,
   InventoryItemRow,
   InventoryMovementRepository,
+  InventoryMovementValuationRepository,
+  InventoryValuationRepository,
   LockedBalances,
+  LockedValuations,
   OpeningBatchRepository,
   StockBalanceRepository,
   StockThresholdRepository,
+  StockValuationRepository,
   StocktakeLineCounts,
   StocktakeLineRepository,
   StocktakeLineVariance,
@@ -102,8 +107,15 @@ export {
   assertStocktakeTransition,
   assertThresholdTransition,
   sealLockedBalances,
+  sealLockedValuations,
   STOCKTAKE_IN_PROGRESS,
 } from "./ports.js";
+export type {
+  RecordStockValuation,
+  RecordStockValuationInput,
+  RecordStockValuationResult,
+} from "./record-stock-valuation.js";
+export { createRecordStockValuation, RECORD_STOCK_VALUATION_OPERATION } from "./record-stock-valuation.js";
 export type {
   DocumentReversalResult,
   ReverseAdjustment,

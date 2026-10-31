@@ -60,6 +60,7 @@ import {
   createReactivateProduct,
   createRecordAdjustment,
   createRecordOpeningStock,
+  createRecordStockValuation,
   createRecordStocktakeCount,
   createRecordWriteOff,
   createRegisterCurrentUser,
@@ -112,6 +113,7 @@ import {
   type ReactivateProduct,
   type RecordAdjustment,
   type RecordOpeningStock,
+  type RecordStockValuation,
   type RecordStocktakeCount,
   type RecordWriteOff,
   type RegisterCurrentUser,
@@ -179,6 +181,7 @@ export interface ApiServices {
   readonly listProductPriceHistory: ListProductPriceHistory;
   readonly listUnitsOfMeasure: ListUnitsOfMeasure;
   readonly recordOpeningStock: RecordOpeningStock;
+  readonly recordStockValuation: RecordStockValuation;
   readonly postGoodsReceipt: PostGoodsReceipt;
   readonly recordAdjustment: RecordAdjustment;
   readonly recordWriteOff: RecordWriteOff;
@@ -202,9 +205,10 @@ export interface ApiServices {
   readonly listStocktakeLines: ListStocktakeLines;
 }
 
-/** The ApiServices keys of the Build 2 inventory and stocktake use cases, in route order. */
+/** The ApiServices keys of the inventory, valuation and stocktake use cases, in route order. */
 export const INVENTORY_SERVICE_KEYS = [
   "recordOpeningStock",
+  "recordStockValuation",
   "postGoodsReceipt",
   "recordAdjustment",
   "recordWriteOff",
@@ -284,6 +288,11 @@ export function composeApiServices(dependencies: {
     units,
     movements: repos.inventoryMovements,
     balances: repos.inventoryBalances,
+    valuations: repos.inventoryValuations,
+    movementValuations: repos.inventoryMovementValuations,
+    stockValuations: repos.stockValuations,
+    accounts: repos.ledgerAccounts,
+    journals: repos.journals,
     idempotency: businessScoped,
     hasher,
     audit,
@@ -428,6 +437,7 @@ export function composeApiServices(dependencies: {
     listProductPriceHistory: createListProductPriceHistory({ unitOfWork, products, prices }),
     listUnitsOfMeasure: createListUnitsOfMeasure({ unitOfWork, units }),
     recordOpeningStock: createRecordOpeningStock({ ...stock, openings: repos.inventoryOpeningBatches }),
+    recordStockValuation: createRecordStockValuation(stock),
     postGoodsReceipt: createPostGoodsReceipt({ ...stock, receipts: repos.goodsReceipts }),
     recordAdjustment: createRecordAdjustment({ ...stock, adjustments: repos.inventoryAdjustments }),
     recordWriteOff: createRecordWriteOff({ ...stock, adjustments: repos.inventoryAdjustments }),

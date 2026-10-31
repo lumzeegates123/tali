@@ -16,7 +16,7 @@ export const POST_GOODS_RECEIPT_OPERATION = "inventory.goods_receipt.post.v1";
 
 const GOODS_RECEIPT: StockDocumentKind<GoodsReceiptSnapshot> = {
   operation: POST_GOODS_RECEIPT_OPERATION,
-  commandSchemaVersion: 1,
+  commandSchemaVersion: 2,
   resourceType: "goods_receipt",
   movementType: "PURCHASE_RECEIPT",
   archivedAllowed: false,

@@ -16,7 +16,7 @@ export const RECORD_OPENING_STOCK_OPERATION = "inventory.opening_batch.record.v1
 
 const OPENING_STOCK: StockDocumentKind<OpeningBatchSnapshot> = {
   operation: RECORD_OPENING_STOCK_OPERATION,
-  commandSchemaVersion: 1,
+  commandSchemaVersion: 2,
   resourceType: "inventory_opening_batch",
   movementType: "OPENING",
   archivedAllowed: false,

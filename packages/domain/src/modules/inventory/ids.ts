@@ -7,6 +7,7 @@ export type GoodsReceiptId = Id<"GoodsReceipt">;
 export type InventoryAdjustmentId = Id<"InventoryAdjustment">;
 export type StockThresholdId = Id<"StockThreshold">;
 export type StocktakeId = Id<"Stocktake">;
+export type StockValuationId = Id<"StockValuation">;
 
 export function parseInventoryMovementId(value: string): InventoryMovementId {
   return parseId("InventoryMovement", value);
@@ -30,4 +31,8 @@ export function parseStockThresholdId(value: string): StockThresholdId {
 
 export function parseStocktakeId(value: string): StocktakeId {
   return parseId("Stocktake", value);
+}
+
+export function parseStockValuationId(value: string): StockValuationId {
+  return parseId("StockValuation", value);
 }

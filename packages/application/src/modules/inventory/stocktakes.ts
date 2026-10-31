@@ -30,8 +30,6 @@ import { idempotencyActorOf } from "../../idempotency/business-idempotency-store
 import { canonicalCommandEncoding } from "../../idempotency/canonical-command.js";
 import type { FingerprintHasher } from "../../idempotency/fingerprint-hasher.js";
 import type { KeyedIdempotency } from "../../idempotency/keyed-idempotency.js";
-import type { Clock } from "../../ports/clock.js";
-import type { IdGenerator } from "../../ports/id-generator.js";
 import type { TransactionScope, UnitOfWork } from "../../ports/unit-of-work.js";
 import type { MembershipRepository } from "../business/index.js";
 import { requireActingMembership, requireUserActor } from "../business/index.js";
@@ -58,6 +56,9 @@ import type {
   StocktakeRepository,
 } from "./ports.js";
 import { planRecording, prepareInventoryCommand } from "./stock-document.js";
+import type { ValuationPostingDependencies } from "./valuation-posting.js";
+import { persistMovementValuations, planMovementValuations } from "./valuation-posting.js";
+import { createLedgerPostingService } from "../ledger/posting.js";
 import type { StocktakeLineView, StocktakeView, StocktakeVisibility } from "./stocktake-views.js";
 import { stocktakeLineView, stocktakeView, stocktakeVisibilityFor } from "./stocktake-views.js";
 
@@ -156,7 +157,7 @@ export interface CancelStocktake {
   execute(context: LocationBoundContext, input: CancelStocktakeInput): Promise<StocktakeChangeResult>;
 }
 
-export interface StocktakeDependencies {
+export interface StocktakeDependencies extends ValuationPostingDependencies {
   readonly unitOfWork: UnitOfWork;
   readonly memberships: MembershipRepository;
   readonly products: ProductRepository;
@@ -169,8 +170,6 @@ export interface StocktakeDependencies {
   readonly idempotency: KeyedIdempotency;
   readonly hasher: FingerprintHasher;
   readonly audit: AuditRecorder;
-  readonly ids: IdGenerator;
-  readonly clock: Clock;
 }
 
 const countPermission = inventoryPermissions.permissions["inventory:count"];
@@ -473,8 +472,31 @@ export function createPostStocktake(dependencies: StocktakeDependencies): PostSt
           }),
         );
         if (plan.movements.length > 0) {
+          const movementVariantIds = new Set(plan.movements.map((movement) => movement.variantId));
+          const lockedValuations = await dependencies.valuations.lockForUpdate(scope, locked, movementVariantIds);
+          const preQuantity = new Map(
+            locked.balances.map((balance) => [balance.variantId as string, balance.quantity.amountMinor]),
+          );
+          const currentByVariant = new Map(
+            lockedValuations.valuations.map((valuation) => [valuation.variantId as string, valuation]),
+          );
+          const plannedValuation = planMovementValuations({
+            movements: plan.movements,
+            currentByVariant,
+            preQuantityByVariant: preQuantity,
+            costsByVariant: new Map(),
+            originalFacts: new Map(),
+            now: recording.occurredAt,
+          });
           await dependencies.movements.insertMany(scope, plan.movements);
           await dependencies.balances.apply(scope, locked, plan.balances);
+          await persistMovementValuations(dependencies, createLedgerPostingService(dependencies), scope, context, {
+            locked: lockedValuations,
+            planned: plannedValuation,
+            source: { kind: "stocktake", id: stocktake.id },
+            postingRule: "STOCKTAKE_VALUED",
+            description: `stocktake ${stocktake.id}`,
+          });
         }
         const lineVersions = new Map(counted.map((line) => [line.variantId as string, line.version]));
         await dependencies.stocktakeLines.applyPostingVariances(

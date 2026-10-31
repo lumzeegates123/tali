@@ -31,6 +31,10 @@ const PROTECTED_TABLES = [
   "public.inventory_movements",
   "public.inventory_opening_batches",
   "public.ledger_accounts",
+  "public.journal_entries",
+  "public.journal_lines",
+  "public.inventory_movement_valuations",
+  "public.stock_valuations",
 ];
 
 /**
@@ -58,6 +62,7 @@ const NO_DELETE_TABLES = [
   "public.inventory_stock_thresholds",
   "public.stocktakes",
   "public.stocktake_lines",
+  "public.inventory_valuations",
 ];
 
 /**
@@ -116,6 +121,11 @@ const EXPECTED_APP_PRIVILEGES = {
   "public.stocktakes": ["INSERT", "SELECT"],
   "public.stocktake_lines": ["INSERT", "SELECT"],
   "public.ledger_accounts": ["INSERT", "SELECT"],
+  "public.journal_entries": ["INSERT", "SELECT"],
+  "public.journal_lines": ["INSERT", "SELECT"],
+  "public.inventory_valuations": ["INSERT", "SELECT"],
+  "public.inventory_movement_valuations": ["INSERT", "SELECT"],
+  "public.stock_valuations": ["INSERT", "SELECT"],
 };
 
 /**
@@ -153,6 +163,7 @@ const EXPECTED_APP_COLUMN_PRIVILEGES = {
   "public.inventory_adjustments": updatable(REVERSAL_COLUMNS),
   "public.stocktakes": updatable(STOCKTAKE_LIFECYCLE_COLUMNS),
   "public.stocktake_lines": updatable(STOCKTAKE_LINE_COUNT_COLUMNS),
+  "public.inventory_valuations": updatable(["first_valued_at", "status", "updated_at", "value_minor", "version"]),
 };
 
 const ENVELOPE_SOURCE_CHANNELS =
@@ -887,6 +898,156 @@ const EXPECTED_CHECKS = [
   ...INVENTORY_CHECKS,
   ...STOCKTAKE_CHECKS,
   ...LEDGER_CHECKS,
+  ...inventoryRecordingChecks("journal_entries"),
+  {
+    table: "journal_entries",
+    name: "journal_entries_entry_kind_valid",
+    definition: "CHECK ((entry_kind = ANY (ARRAY['ORIGINAL'::text, 'REVERSAL'::text])))",
+  },
+  {
+    table: "journal_entries",
+    name: "journal_entries_reversal_shape",
+    definition: "CHECK (((entry_kind = 'REVERSAL'::text) = (reverses_entry_id IS NOT NULL)))",
+  },
+  {
+    table: "journal_entries",
+    name: "journal_entries_one_source",
+    definition: `CHECK ((((((
+CASE
+    WHEN (opening_batch_id IS NOT NULL) THEN 1
+    ELSE 0
+END +
+CASE
+    WHEN (goods_receipt_id IS NOT NULL) THEN 1
+    ELSE 0
+END) +
+CASE
+    WHEN (adjustment_id IS NOT NULL) THEN 1
+    ELSE 0
+END) +
+CASE
+    WHEN (stocktake_id IS NOT NULL) THEN 1
+    ELSE 0
+END) +
+CASE
+    WHEN (valuation_id IS NOT NULL) THEN 1
+    ELSE 0
+END) = 1))`,
+  },
+  {
+    table: "journal_entries",
+    name: "journal_entries_posting_rule_valid",
+    definition: "CHECK ((posting_rule ~ '^[A-Z][A-Z0-9_]{0,63}$'::text))",
+  },
+  {
+    table: "journal_entries",
+    name: "journal_entries_posting_rule_version_positive",
+    definition: "CHECK ((posting_rule_version >= 1))",
+  },
+  {
+    table: "journal_entries",
+    name: "journal_entries_description_valid",
+    definition:
+      "CHECK ((((char_length(description) >= 1) AND (char_length(description) <= 120)) AND (description ~ '^[\\x20-\\x7E]+$'::text)))",
+  },
+  {
+    table: "journal_lines",
+    name: "journal_lines_line_number_positive",
+    definition: "CHECK ((line_number >= 1))",
+  },
+  {
+    table: "journal_lines",
+    name: "journal_lines_direction_valid",
+    definition: "CHECK ((direction = ANY (ARRAY['DEBIT'::text, 'CREDIT'::text])))",
+  },
+  {
+    table: "journal_lines",
+    name: "journal_lines_amount_positive",
+    definition: "CHECK ((amount_minor > 0))",
+  },
+  {
+    table: "journal_lines",
+    name: "journal_lines_memo_kind_valid",
+    definition:
+      "CHECK (((memo_kind IS NULL) OR (memo_kind = ANY (ARRAY['TENDER_CASH'::text, 'TENDER_BANK_TRANSFER'::text, 'TENDER_POS_CARD'::text, 'TENDER_OTHER'::text, 'REVENUE'::text, 'DISCOUNT'::text, 'TAX'::text, 'COGS'::text, 'INVENTORY'::text, 'INVENTORY_GAIN'::text, 'INVENTORY_SHRINKAGE'::text, 'OPENING_VALUATION'::text, 'OPERATIONAL_VALUATION'::text, 'GOODS_RECEIPT'::text]))))",
+  },
+  {
+    table: "inventory_valuations",
+    name: "inventory_valuations_status_valid",
+    definition: "CHECK ((status = ANY (ARRAY['VALUED'::text, 'UNVALUED'::text])))",
+  },
+  {
+    table: "inventory_valuations",
+    name: "inventory_valuations_value_non_negative",
+    definition: "CHECK ((value_minor >= 0))",
+  },
+  {
+    table: "inventory_valuations",
+    name: "inventory_valuations_version_non_negative",
+    definition: "CHECK ((version >= 0))",
+  },
+  {
+    table: "inventory_valuations",
+    name: "inventory_valuations_started_from_non_negative",
+    definition: "CHECK ((started_from_balance_version >= 0))",
+  },
+  {
+    table: "inventory_movement_valuations",
+    name: "inventory_movement_valuations_cost_basis_valid",
+    definition:
+      "CHECK ((cost_basis = ANY (ARRAY['SUPPLIED_COST'::text, 'WEIGHTED_AVERAGE'::text, 'REVERSAL_OF_ORIGINAL'::text, 'NOT_VALUED'::text])))",
+  },
+  {
+    table: "inventory_movement_valuations",
+    name: "inventory_movement_valuations_status_after_valid",
+    definition: "CHECK ((status_after = ANY (ARRAY['VALUED'::text, 'UNVALUED'::text])))",
+  },
+  {
+    table: "inventory_movement_valuations",
+    name: "inventory_movement_valuations_value_after_shape",
+    definition: "CHECK (((value_after_minor >= 0) OR (cost_basis = 'REVERSAL_OF_ORIGINAL'::text)))",
+  },
+  {
+    table: "inventory_movement_valuations",
+    name: "inventory_movement_valuations_not_valued_zero_delta",
+    definition: "CHECK (((cost_basis <> 'NOT_VALUED'::text) OR (value_delta_minor = 0)))",
+  },
+  ...inventoryRecordingChecks("stock_valuations"),
+  {
+    table: "stock_valuations",
+    name: "stock_valuations_kind_valid",
+    definition: "CHECK ((kind = ANY (ARRAY['INITIAL_OPENING'::text, 'OPERATIONAL'::text, 'REVERSAL_RESIDUAL'::text])))",
+  },
+  {
+    table: "stock_valuations",
+    name: "stock_valuations_quantity_non_negative",
+    definition: "CHECK ((quantity_at_valuation_minor >= 0))",
+  },
+  {
+    table: "stock_valuations",
+    name: "stock_valuations_previous_value_shape",
+    definition: "CHECK (((kind = 'REVERSAL_RESIDUAL'::text) OR (previous_value_minor >= 0)))",
+  },
+  {
+    table: "stock_valuations",
+    name: "stock_valuations_trigger_shape",
+    definition: "CHECK (((kind = 'REVERSAL_RESIDUAL'::text) = (trigger_movement_id IS NOT NULL)))",
+  },
+  {
+    table: "stock_valuations",
+    name: "stock_valuations_residual_clears_value",
+    definition: "CHECK (((kind <> 'REVERSAL_RESIDUAL'::text) OR (new_value_minor = 0)))",
+  },
+  {
+    table: "stock_valuations",
+    name: "stock_valuations_new_value_non_negative",
+    definition: "CHECK ((new_value_minor >= 0))",
+  },
+  {
+    table: "stock_valuations",
+    name: "stock_valuations_reason_valid",
+    definition: "CHECK ((((char_length(reason) >= 1) AND (char_length(reason) <= 500)) AND (reason = btrim(reason))))",
+  },
 ];
 
 /** @type {{ schema: string; name: string; columns: string; predicate: string }[]} */
@@ -950,6 +1111,42 @@ const EXPECTED_PARTIAL_UNIQUE_INDEXES = [
     name: "inventory_movements_count_correction_unique",
     columns: "business_id,stocktake_id,variant_id",
     predicate: "(stocktake_id IS NOT NULL)",
+  },
+  {
+    schema: "public",
+    name: "journal_entries_original_opening_batch_key",
+    columns: "business_id,opening_batch_id",
+    predicate: "((entry_kind = 'ORIGINAL'::text) AND (opening_batch_id IS NOT NULL))",
+  },
+  {
+    schema: "public",
+    name: "journal_entries_original_goods_receipt_key",
+    columns: "business_id,goods_receipt_id",
+    predicate: "((entry_kind = 'ORIGINAL'::text) AND (goods_receipt_id IS NOT NULL))",
+  },
+  {
+    schema: "public",
+    name: "journal_entries_original_adjustment_key",
+    columns: "business_id,adjustment_id",
+    predicate: "((entry_kind = 'ORIGINAL'::text) AND (adjustment_id IS NOT NULL))",
+  },
+  {
+    schema: "public",
+    name: "journal_entries_original_stocktake_key",
+    columns: "business_id,stocktake_id",
+    predicate: "((entry_kind = 'ORIGINAL'::text) AND (stocktake_id IS NOT NULL))",
+  },
+  {
+    schema: "public",
+    name: "journal_entries_original_valuation_key",
+    columns: "business_id,valuation_id",
+    predicate: "((entry_kind = 'ORIGINAL'::text) AND (valuation_id IS NOT NULL))",
+  },
+  {
+    schema: "public",
+    name: "stock_valuations_one_residual_per_trigger",
+    columns: "business_id,trigger_movement_id",
+    predicate: "(trigger_movement_id IS NOT NULL)",
   },
 ];
 
@@ -1100,6 +1297,182 @@ const EXPECTED_TENANT_FOREIGN_KEYS = [
     name: "ledger_accounts_business_id_fkey",
     definition: "FOREIGN KEY (business_id) REFERENCES businesses(id) ON UPDATE RESTRICT ON DELETE RESTRICT",
   },
+  {
+    table: "journal_entries",
+    name: "journal_entries_business_id_fkey",
+    definition: "FOREIGN KEY (business_id) REFERENCES businesses(id) ON UPDATE RESTRICT ON DELETE RESTRICT",
+  },
+  {
+    table: "journal_entries",
+    name: "journal_entries_business_id_opening_batch_id_fkey",
+    definition:
+      "FOREIGN KEY (business_id, opening_batch_id) REFERENCES inventory_opening_batches(business_id, id) ON UPDATE RESTRICT ON DELETE RESTRICT",
+  },
+  {
+    table: "journal_entries",
+    name: "journal_entries_business_id_goods_receipt_id_fkey",
+    definition:
+      "FOREIGN KEY (business_id, goods_receipt_id) REFERENCES goods_receipts(business_id, id) ON UPDATE RESTRICT ON DELETE RESTRICT",
+  },
+  {
+    table: "journal_entries",
+    name: "journal_entries_business_id_adjustment_id_fkey",
+    definition:
+      "FOREIGN KEY (business_id, adjustment_id) REFERENCES inventory_adjustments(business_id, id) ON UPDATE RESTRICT ON DELETE RESTRICT",
+  },
+  {
+    table: "journal_entries",
+    name: "journal_entries_business_id_stocktake_id_fkey",
+    definition:
+      "FOREIGN KEY (business_id, stocktake_id) REFERENCES stocktakes(business_id, id) ON UPDATE RESTRICT ON DELETE RESTRICT",
+  },
+  {
+    table: "journal_entries",
+    name: "journal_entries_business_id_valuation_id_fkey",
+    definition:
+      "FOREIGN KEY (business_id, valuation_id) REFERENCES stock_valuations(business_id, id) ON UPDATE RESTRICT ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED",
+  },
+  {
+    table: "journal_entries",
+    name: "journal_entries_business_id_reverses_entry_id_fkey",
+    definition:
+      "FOREIGN KEY (business_id, reverses_entry_id) REFERENCES journal_entries(business_id, id) ON UPDATE RESTRICT ON DELETE RESTRICT",
+  },
+  {
+    table: "journal_entries",
+    name: "journal_entries_business_id_actor_membership_id_fkey",
+    definition:
+      "FOREIGN KEY (business_id, actor_membership_id) REFERENCES business_memberships(business_id, id) ON UPDATE RESTRICT ON DELETE RESTRICT",
+  },
+  {
+    table: "journal_entries",
+    name: "journal_entries_business_id_device_id_fkey",
+    definition:
+      "FOREIGN KEY (business_id, device_id) REFERENCES devices(business_id, id) ON UPDATE RESTRICT ON DELETE RESTRICT",
+  },
+  {
+    table: "journal_entries",
+    name: "journal_entries_business_id_location_id_fkey",
+    definition:
+      "FOREIGN KEY (business_id, location_id) REFERENCES business_locations(business_id, id) ON UPDATE RESTRICT ON DELETE RESTRICT",
+  },
+  {
+    table: "journal_entries",
+    name: "journal_entries_business_id_currency_fkey",
+    definition:
+      "FOREIGN KEY (business_id, currency) REFERENCES businesses(id, currency_code) ON UPDATE RESTRICT ON DELETE RESTRICT",
+  },
+  {
+    table: "journal_lines",
+    name: "journal_lines_business_id_entry_id_fkey",
+    definition:
+      "FOREIGN KEY (business_id, entry_id) REFERENCES journal_entries(business_id, id) ON UPDATE RESTRICT ON DELETE RESTRICT",
+  },
+  {
+    table: "journal_lines",
+    name: "journal_lines_business_id_account_id_fkey",
+    definition:
+      "FOREIGN KEY (business_id, account_id) REFERENCES ledger_accounts(business_id, id) ON UPDATE RESTRICT ON DELETE RESTRICT",
+  },
+  {
+    table: "journal_lines",
+    name: "journal_lines_business_id_entry_id_currency_fkey",
+    definition:
+      "FOREIGN KEY (business_id, entry_id, currency) REFERENCES journal_entries(business_id, id, currency) ON UPDATE RESTRICT ON DELETE RESTRICT",
+  },
+  {
+    table: "inventory_valuations",
+    name: "inventory_valuations_business_id_fkey",
+    definition: "FOREIGN KEY (business_id) REFERENCES businesses(id) ON UPDATE RESTRICT ON DELETE RESTRICT",
+  },
+  {
+    table: "inventory_valuations",
+    name: "inventory_valuations_business_id_location_id_fkey",
+    definition:
+      "FOREIGN KEY (business_id, location_id) REFERENCES business_locations(business_id, id) ON UPDATE RESTRICT ON DELETE RESTRICT",
+  },
+  {
+    table: "inventory_valuations",
+    name: "inventory_valuations_business_id_variant_id_fkey",
+    definition:
+      "FOREIGN KEY (business_id, variant_id) REFERENCES product_variants(business_id, id) ON UPDATE RESTRICT ON DELETE RESTRICT",
+  },
+  {
+    table: "inventory_valuations",
+    name: "inventory_valuations_business_id_currency_fkey",
+    definition:
+      "FOREIGN KEY (business_id, currency) REFERENCES businesses(id, currency_code) ON UPDATE RESTRICT ON DELETE RESTRICT",
+  },
+  {
+    table: "inventory_movement_valuations",
+    name: "inventory_movement_valuations_business_id_fkey",
+    definition: "FOREIGN KEY (business_id) REFERENCES businesses(id) ON UPDATE RESTRICT ON DELETE RESTRICT",
+  },
+  {
+    table: "inventory_movement_valuations",
+    name: "inventory_movement_valuations_business_id_movement_id_fkey",
+    definition:
+      "FOREIGN KEY (business_id, movement_id) REFERENCES inventory_movements(business_id, id) ON UPDATE RESTRICT ON DELETE RESTRICT",
+  },
+  {
+    table: "inventory_movement_valuations",
+    name: "inventory_movement_valuations_business_id_journal_entry_id_fkey",
+    definition:
+      "FOREIGN KEY (business_id, journal_entry_id) REFERENCES journal_entries(business_id, id) ON UPDATE RESTRICT ON DELETE RESTRICT",
+  },
+  {
+    table: "inventory_movement_valuations",
+    name: "inventory_movement_valuations_business_id_currency_fkey",
+    definition:
+      "FOREIGN KEY (business_id, currency) REFERENCES businesses(id, currency_code) ON UPDATE RESTRICT ON DELETE RESTRICT",
+  },
+  {
+    table: "stock_valuations",
+    name: "stock_valuations_business_id_fkey",
+    definition: "FOREIGN KEY (business_id) REFERENCES businesses(id) ON UPDATE RESTRICT ON DELETE RESTRICT",
+  },
+  {
+    table: "stock_valuations",
+    name: "stock_valuations_business_id_location_id_fkey",
+    definition:
+      "FOREIGN KEY (business_id, location_id) REFERENCES business_locations(business_id, id) ON UPDATE RESTRICT ON DELETE RESTRICT",
+  },
+  {
+    table: "stock_valuations",
+    name: "stock_valuations_business_id_variant_id_fkey",
+    definition:
+      "FOREIGN KEY (business_id, variant_id) REFERENCES product_variants(business_id, id) ON UPDATE RESTRICT ON DELETE RESTRICT",
+  },
+  {
+    table: "stock_valuations",
+    name: "stock_valuations_business_id_currency_fkey",
+    definition:
+      "FOREIGN KEY (business_id, currency) REFERENCES businesses(id, currency_code) ON UPDATE RESTRICT ON DELETE RESTRICT",
+  },
+  {
+    table: "stock_valuations",
+    name: "stock_valuations_business_id_actor_membership_id_fkey",
+    definition:
+      "FOREIGN KEY (business_id, actor_membership_id) REFERENCES business_memberships(business_id, id) ON UPDATE RESTRICT ON DELETE RESTRICT",
+  },
+  {
+    table: "stock_valuations",
+    name: "stock_valuations_business_id_device_id_fkey",
+    definition:
+      "FOREIGN KEY (business_id, device_id) REFERENCES devices(business_id, id) ON UPDATE RESTRICT ON DELETE RESTRICT",
+  },
+  {
+    table: "stock_valuations",
+    name: "stock_valuations_business_id_journal_entry_id_fkey",
+    definition:
+      "FOREIGN KEY (business_id, journal_entry_id) REFERENCES journal_entries(business_id, id) ON UPDATE RESTRICT ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED",
+  },
+  {
+    table: "stock_valuations",
+    name: "stock_valuations_trigger_movement_fkey",
+    definition:
+      "FOREIGN KEY (business_id, location_id, variant_id, trigger_movement_id) REFERENCES inventory_movements(business_id, location_id, variant_id, id) ON UPDATE RESTRICT ON DELETE RESTRICT",
+  },
 ];
 
 /**
@@ -1173,6 +1546,26 @@ const EXPECTED_UNIQUE_INDEXES = [
   { schema: "public", name: "ledger_accounts_business_id_id_key", columns: "business_id,id" },
   { schema: "public", name: "ledger_accounts_business_id_code_key", columns: "business_id,code" },
   { schema: "public", name: "ledger_accounts_business_id_system_role_key", columns: "business_id,system_role" },
+  { schema: "public", name: "journal_entries_business_id_id_key", columns: "business_id,id" },
+  { schema: "public", name: "journal_entries_business_id_id_currency_key", columns: "business_id,id,currency" },
+  {
+    schema: "public",
+    name: "journal_entries_business_id_reverses_entry_id_key",
+    columns: "business_id,reverses_entry_id",
+  },
+  { schema: "public", name: "journal_lines_pkey", columns: "business_id,entry_id,line_number" },
+  {
+    schema: "public",
+    name: "inventory_valuations_pkey",
+    columns: "business_id,location_id,variant_id",
+  },
+  { schema: "public", name: "inventory_movement_valuations_pkey", columns: "business_id,movement_id" },
+  { schema: "public", name: "stock_valuations_business_id_id_key", columns: "business_id,id" },
+  {
+    schema: "public",
+    name: "stock_valuations_business_id_journal_entry_id_key",
+    columns: "business_id,journal_entry_id",
+  },
 ];
 
 /** Reference rows every migrated database must contain (ADR-005 section 5: the pilot currency). */

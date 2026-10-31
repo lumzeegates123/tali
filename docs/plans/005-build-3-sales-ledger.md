@@ -1,11 +1,12 @@
 # Plan 005. Build 3: sales and ledger posting foundation
 
-Status: **APPROVED / S0 COMPLETE / S1 COMPLETE / S2 COMPLETE.** ADR-009, ADR-010 and ADR-011 were **ACCEPTED on 2026-10-15** by the
+Status: **APPROVED / S0 COMPLETE / S1 COMPLETE / S2 COMPLETE / S3 COMPLETE.** ADR-009, ADR-010 and ADR-011 were **ACCEPTED on 2026-10-15** by the
 human maintainer. Accountant review is **COMPLETE** (Osasu, 2026-10-15; `docs/reviews/build-3-accountant-review.md`
-sections 14 and 14.1): ADR-009 A1 to A22 and ADR-010 T1 to T7 approved. Maintainer questions M1 to M17 are resolved
+sections 14 and 14.1): ADR-009 A1 to A22 and ADR-010 T1 to T7 approved. Reversal-residual clarification
+**2026-10-29** (section 14.2; ADR-009 amendment section 38). Maintainer questions M1 to M17 are resolved
 (section 4). S1 (ledger domain and application) is **COMPLETE (2026-10-16)**. S2 (ledger account persistence and
-chart provisioning; journal tables moved to S3 by the maintainer's split decision) is **COMPLETE (2026-10-16)**; S3
-to S9 are not started.
+chart provisioning; journal tables moved to S3 by the maintainer's split decision) is **COMPLETE (2026-10-16)**. S3
+(valuation, journals, residual ORIGINAL corrections) is **COMPLETE (2026-10-30)**. S4 to S9 are not started.
 
 Scope: the ledger posting foundation, the default chart of accounts, perpetual weighted average cost valuation with
 explicit valuation status, and online, fully tendered sales with full reversal (ADR-009, ADR-011). Configurable tax
@@ -22,7 +23,7 @@ selling; price override; sale-level discounts; account management UI; period clo
 | S0    | Decisions                              | (produces the ADRs)  | **Complete** (2026-10-15)  |
 | S1    | Ledger domain and application          | ADR-009              | **Complete** (2026-10-16)  |
 | S2    | Ledger persistence and consistency     | ADR-009              | **Complete** (2026-10-16); accounts and chart only; journal tables moved to S3 |
-| S3    | Valuation and cost foundation          | ADR-009              | Not started (after S2)     |
+| S3    | Valuation and cost foundation          | ADR-009              | **Complete** (2026-10-30); residual ORIGINAL journals per ADR-009 §38 |
 | S4    | Sales domain and application           | ADR-011, ADR-009     | Not started (after S1)     |
 | S5    | Sales persistence and SALE integration | ADR-011, ADR-009     | Not started (after S3, S4) |
 | S6    | API                                    | ADR-011, ADR-009     | Not started (after S5)     |
@@ -131,6 +132,12 @@ Each slice: outcome, dependencies, modules and files, tests, gate, stop conditio
   replay, audit.
 - Gate: all Build 2 tests green; invariant holds in the soak.
 - Stop: any rule that would rewrite existing movements or invent a cost.
+- Status: **COMPLETE (2026-10-30)** on `feature/build-3-slice-3-valuation-journal`. Cutover A
+  (`started_from_balance_version` watermark). Strict exact reversal. Accountant choice C (2026-10-29;
+  ADR-009 section 38): keep the exact `REVERSAL` mirror, then a same-transaction `REVERSAL_RESIDUAL`
+  `ORIGINAL` journal (Dr `INVENTORY` / Cr `INVENTORY_GAIN` when raw value would be negative; Dr
+  `INVENTORY_SHRINKAGE` / Cr `INVENTORY` when a `VALUED` item would remain at quantity zero with leftover
+  value). Legacy reversals `NOT_VALUED`; currently `VALUED` projections become `UNVALUED` without a residual.
 
 ### S4. Sales domain and application
 
@@ -242,8 +249,8 @@ None. All maintainer questions (M1 to M17) are decided.
 
 ### 4.2 Accountant questions
 
-Accountant review **COMPLETE** (Osasu, 2026-10-15; `docs/reviews/build-3-accountant-review.md` section 14). No
-accountant question remains open.
+Accountant review **COMPLETE** (Osasu, 2026-10-15; `docs/reviews/build-3-accountant-review.md` section 14).
+Reversal-residual addendum **2026-10-29** (section 14.2). No accountant question remains open.
 
 - ADR-009 A1 to A21: approved.
 - ADR-009 A22: approved / resolved by the accountant's explicit clarification: operational valuation increase
@@ -254,8 +261,11 @@ accountant question remains open.
 
 ## 5. Risks
 
-- Accountant changes to posting rules late in the build: mitigated by S0 (complete) gating everything; any later
-  change needs a new ADR, because ADR-009 and ADR-011 are accepted and immutable.
+- Accountant changes to posting rules late in the build: mitigated by S0 (complete) gating everything. ADR-009
+  and ADR-011 stay ACCEPTED. The 2026-10-29 reversal-residual treatment is a maintainer-directed in-place
+  amendment of ADR-009 (section 38), recorded without erasing the original acceptance (same pattern as the
+  ADR-002 spike amendment). Further material posting-rule changes still require an ADR amendment or a
+  superseding ADR.
 - Valuation touching every Build 2 stock use case: mitigated by keeping quantity logic unchanged and the existing
   suites as regression gates.
 - Receipt sequence lock serializing sales per business: acceptable at pilot volume; measured in the soak.

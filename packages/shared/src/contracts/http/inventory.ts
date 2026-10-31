@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { PackFactorMinorWireSchema } from "./catalog.js";
+import { MoneyWireSchema } from "./money.js";
 import { QuantityWireSchema, UnitCodeWireSchema } from "./quantity.js";
 import { PageQuerySchema } from "./tenancy.js";
 
@@ -83,11 +84,46 @@ export type DirectNonNegativeQuantityWire = z.infer<typeof DirectNonNegativeQuan
  * `quantityMinor` with `unit`, `decimal` with `unit`, or `packId` with `packCount`.
  */
 export const StockLineWireSchema = z.union([
-  z.strictObject({ variantId: IdClaimWireSchema, quantityMinor: PositiveMinorWireSchema, unit: UnitCodeWireSchema }),
-  z.strictObject({ variantId: IdClaimWireSchema, decimal: DecimalWireSchema, unit: UnitCodeWireSchema }),
-  z.strictObject({ variantId: IdClaimWireSchema, packId: IdClaimWireSchema, packCount: PackCountWireSchema }),
+  z.strictObject({
+    variantId: IdClaimWireSchema,
+    quantityMinor: PositiveMinorWireSchema,
+    unit: UnitCodeWireSchema,
+  }),
+  z.strictObject({
+    variantId: IdClaimWireSchema,
+    decimal: DecimalWireSchema,
+    unit: UnitCodeWireSchema,
+  }),
+  z.strictObject({
+    variantId: IdClaimWireSchema,
+    packId: IdClaimWireSchema,
+    packCount: PackCountWireSchema,
+  }),
 ]);
 export type StockLineWire = z.infer<typeof StockLineWireSchema>;
+
+/** Opening-stock and goods-receipt lines may carry an optional total cost (Build 3 S3). */
+export const CostedStockLineWireSchema = z.union([
+  z.strictObject({
+    variantId: IdClaimWireSchema,
+    quantityMinor: PositiveMinorWireSchema,
+    unit: UnitCodeWireSchema,
+    totalCost: MoneyWireSchema.optional(),
+  }),
+  z.strictObject({
+    variantId: IdClaimWireSchema,
+    decimal: DecimalWireSchema,
+    unit: UnitCodeWireSchema,
+    totalCost: MoneyWireSchema.optional(),
+  }),
+  z.strictObject({
+    variantId: IdClaimWireSchema,
+    packId: IdClaimWireSchema,
+    packCount: PackCountWireSchema,
+    totalCost: MoneyWireSchema.optional(),
+  }),
+]);
+export type CostedStockLineWire = z.infer<typeof CostedStockLineWireSchema>;
 
 /** An adjustment line: an explicit direction and a positive magnitude in one of the stock-line forms. */
 export const AdjustmentLineWireSchema = z.union([
@@ -166,14 +202,14 @@ const documentLines = <T extends z.ZodType>(line: T) => z.array(line).min(1).max
 
 /** `POST .../inventory/opening-stock` (`inventory:opening`; requires `Idempotency-Key`). */
 export const RecordOpeningStockRequestSchema = z.strictObject({
-  lines: documentLines(StockLineWireSchema),
+  lines: documentLines(CostedStockLineWireSchema),
   note: NoteWireSchema.optional(),
 });
 export type RecordOpeningStockRequest = z.infer<typeof RecordOpeningStockRequestSchema>;
 
 /** `POST .../inventory/goods-receipts` (`inventory:receive`; requires `Idempotency-Key`). No supplier, cost or order. */
 export const PostGoodsReceiptRequestSchema = z.strictObject({
-  lines: documentLines(StockLineWireSchema),
+  lines: documentLines(CostedStockLineWireSchema),
   reference: ReferenceWireSchema.optional(),
   note: NoteWireSchema.optional(),
 });
@@ -202,6 +238,21 @@ export const ReverseDocumentRequestSchema = z.strictObject({
   reason: ReasonNoteWireSchema.regex(/\S/, "a reversal reason is required"),
 });
 export type ReverseDocumentRequest = z.infer<typeof ReverseDocumentRequestSchema>;
+
+/** `POST .../inventory/valuations` (`inventory:value`; requires `Idempotency-Key`). */
+export const RecordStockValuationRequestSchema = z.strictObject({
+  variantId: IdClaimWireSchema,
+  expectedBalanceVersion: NonNegativeVersionWireSchema,
+  newTotalValue: MoneyWireSchema,
+  reason: ReasonNoteWireSchema.regex(/\S/, "a valuation reason is required"),
+});
+export type RecordStockValuationRequest = z.infer<typeof RecordStockValuationRequestSchema>;
+
+export const RecordStockValuationResponseSchema = z.strictObject({
+  valuationId: IdWireSchema,
+  kind: z.enum(["INITIAL_OPENING", "OPERATIONAL"]),
+});
+export type RecordStockValuationResponse = z.infer<typeof RecordStockValuationResponseSchema>;
 
 /** `PUT .../inventory/items/:variantId/threshold` (`inventory:threshold`). No pack form. */
 export const SetLowStockThresholdRequestSchema = z.strictObject({

@@ -25,6 +25,7 @@ const APPLICATION_STATUS: Record<ApplicationErrorCode, number> = {
   STOCKTAKE_STALE: HttpStatus.CONFLICT,
   LEDGER_NOT_PROVISIONED: HttpStatus.CONFLICT,
   LEDGER_CHART_INCOMPLETE: HttpStatus.CONFLICT,
+  VALUATION_STALE: HttpStatus.CONFLICT,
 };
 
 const HTTP_CODE: Readonly<Record<number, string>> = {

@@ -44,9 +44,12 @@ describe("keyed inventory documents: plan and apply (plan decision D21)", () => 
       "products.lockVariantsForShare",
       "packs.findForEntry",
       "balances.lockForUpdate",
+      "valuations.lockForUpdate",
       "goodsReceipts.insert",
       "movements.insertMany",
       "balances.apply",
+      "movementValuations.insertMany",
+      "valuations.apply",
       "audit.recordBusinessEvent",
       "movements.listOriginals",
     ]);

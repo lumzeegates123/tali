@@ -36,6 +36,8 @@ export const inventoryPermissions = definePermissionCatalogue([
   "inventory:adjust",
   "inventory:count",
   "inventory:count-post",
+  "inventory:value",
+  "inventory:cost-read",
 ]);
 
 /**
@@ -78,6 +80,8 @@ export const rolePermissions: Readonly<Record<MembershipRole, readonly Permissio
     c["product:manage"],
     c["product:price"],
     ...allInventoryChanges,
+    i["inventory:value"],
+    i["inventory:cost-read"],
     l["ledger:read"],
   ]),
   MANAGER: Object.freeze([
@@ -87,6 +91,8 @@ export const rolePermissions: Readonly<Record<MembershipRole, readonly Permissio
     c["product:manage"],
     c["product:price"],
     ...allInventoryChanges,
+    i["inventory:value"],
+    i["inventory:cost-read"],
   ]),
   CASHIER: Object.freeze([...everyRole]),
   STOCK_KEEPER: Object.freeze([
@@ -96,7 +102,7 @@ export const rolePermissions: Readonly<Record<MembershipRole, readonly Permissio
     i["inventory:receive"],
     i["inventory:count"],
   ]),
-  ACCOUNTANT: Object.freeze([...everyRole, l["ledger:read"]]),
+  ACCOUNTANT: Object.freeze([...everyRole, i["inventory:cost-read"], l["ledger:read"]]),
 });
 
 /** Expands a membership's role into its PermissionSet during context resolution. */

@@ -45,6 +45,8 @@ const ALL_INVENTORY = [
   "inventory:adjust",
   "inventory:count",
   "inventory:count-post",
+  "inventory:value",
+  "inventory:cost-read",
 ] as const;
 
 /** ADR-008 section 15, inventory rows only. */
@@ -53,7 +55,7 @@ const INVENTORY_ROLE_PERMISSIONS = {
   MANAGER: ALL_INVENTORY,
   CASHIER: ["inventory:read"],
   STOCK_KEEPER: ["inventory:read", "inventory:threshold", "inventory:receive", "inventory:count"],
-  ACCOUNTANT: ["inventory:read"],
+  ACCOUNTANT: ["inventory:read", "inventory:cost-read"],
 } as const;
 
 /** The whole ADR-008 section 15 table: ten permissions by five roles. */
@@ -68,6 +70,8 @@ const BUILD_2_MATRIX: Readonly<Record<string, readonly string[]>> = {
   "inventory:adjust": ["OWNER", "MANAGER"],
   "inventory:count": ["OWNER", "MANAGER", "STOCK_KEEPER"],
   "inventory:count-post": ["OWNER", "MANAGER"],
+  "inventory:value": ["OWNER", "MANAGER"],
+  "inventory:cost-read": ["OWNER", "MANAGER", "ACCOUNTANT"],
 };
 
 /** ADR-009 section 17 / M14: ledger:read is OWNER and ACCOUNTANT only. */
@@ -114,7 +118,7 @@ describe("Build 1 permission catalogue (ADR-005 section 8)", () => {
 });
 
 describe("Build 2 catalog and inventory permissions (ADR-008 section 15)", () => {
-  it("declares exactly the three product permissions and the seven inventory permissions", () => {
+  it("declares exactly the three product permissions and the nine inventory permissions", () => {
     expect([...catalogPermissions.all].sort()).toEqual(["product:manage", "product:price", "product:read"]);
     expect([...inventoryPermissions.all].sort()).toEqual([...ALL_INVENTORY].sort());
   });

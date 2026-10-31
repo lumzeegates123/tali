@@ -63,6 +63,7 @@ import {
   createReactivateProduct,
   createRecordAdjustment,
   createRecordOpeningStock,
+  createRecordStockValuation,
   createRecordStocktakeCount,
   createRecordWriteOff,
   createRegisterCurrentUser,
@@ -105,6 +106,7 @@ import {
   type ReactivateProduct,
   type RecordAdjustment,
   type RecordOpeningStock,
+  type RecordStockValuation,
   type RecordStocktakeCount,
   type RecordWriteOff,
   type RegisterCurrentUser,
@@ -178,6 +180,7 @@ export interface Tenancy {
   readonly addPack: AddPack;
   readonly retirePack: RetirePack;
   readonly recordOpeningStock: RecordOpeningStock;
+  readonly recordStockValuation: RecordStockValuation;
   readonly postGoodsReceipt: PostGoodsReceipt;
   readonly recordAdjustment: RecordAdjustment;
   readonly recordWriteOff: RecordWriteOff;
@@ -276,6 +279,11 @@ export function useTenancyHarness() {
       units: repos.units,
       movements: repos.inventoryMovements,
       balances: repos.inventoryBalances,
+      valuations: repos.inventoryValuations,
+      movementValuations: repos.inventoryMovementValuations,
+      stockValuations: repos.stockValuations,
+      accounts: repos.ledgerAccounts,
+      journals: repos.journals,
       idempotency: businessIdempotency,
       hasher,
       audit,
@@ -370,6 +378,7 @@ export function useTenancyHarness() {
       addPack: createAddPack({ ...catalog, idempotency: businessIdempotency, hasher }),
       retirePack: createRetirePack(catalog),
       recordOpeningStock: createRecordOpeningStock({ ...stock, openings: repos.inventoryOpeningBatches }),
+      recordStockValuation: createRecordStockValuation(stock),
       postGoodsReceipt: createPostGoodsReceipt({ ...stock, receipts: repos.goodsReceipts }),
       recordAdjustment: createRecordAdjustment({ ...stock, adjustments: repos.inventoryAdjustments }),
       recordWriteOff: createRecordWriteOff({ ...stock, adjustments: repos.inventoryAdjustments }),
