@@ -175,6 +175,11 @@ export class InMemoryLedgerStore implements LedgerAccountRepository, JournalRepo
     return Object.freeze(rows);
   }
 
+  /** Test helper: journal entries for one business only. */
+  entriesFor(businessId: BusinessId): readonly JournalEntry[] {
+    return this.#entries.filter((entry) => entry.businessId === businessId);
+  }
+
   /** Test helper: accounts for one business only. */
   accountsFor(businessId: BusinessId): readonly LedgerAccount[] {
     return this.#accounts.filter((account) => account.businessId === businessId);

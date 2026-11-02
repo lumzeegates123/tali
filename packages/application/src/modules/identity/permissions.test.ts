@@ -8,6 +8,7 @@ import {
   ledgerPermissions,
   permissionsForRole,
   rolePermissions,
+  salesPermissions,
 } from "./permissions.js";
 
 const BUILD_1_EVERY_ROLE = ["business:read", "location:read", "device:register"];
@@ -73,6 +74,15 @@ const BUILD_2_MATRIX: Readonly<Record<string, readonly string[]>> = {
   "inventory:value": ["OWNER", "MANAGER"],
   "inventory:cost-read": ["OWNER", "MANAGER", "ACCOUNTANT"],
 };
+
+/** ADR-011 section 20. */
+const SALES_ROLE_PERMISSIONS = {
+  OWNER: ["sales:read", "sales:read-own", "sales:create", "sales:discount", "sales:reverse"],
+  MANAGER: ["sales:read", "sales:read-own", "sales:create", "sales:discount", "sales:reverse"],
+  CASHIER: ["sales:read-own", "sales:create"],
+  STOCK_KEEPER: [] as const,
+  ACCOUNTANT: ["sales:read", "sales:read-own"],
+} as const;
 
 /** ADR-009 section 17 / M14: ledger:read is OWNER and ACCOUNTANT only. */
 const LEDGER_ROLE_PERMISSIONS = {
@@ -152,6 +162,7 @@ describe("Build 2 catalog and inventory permissions (ADR-008 section 15)", () =>
           ...CATALOG_ROLE_PERMISSIONS[role],
           ...INVENTORY_ROLE_PERMISSIONS[role],
           ...LEDGER_ROLE_PERMISSIONS[role],
+          ...SALES_ROLE_PERMISSIONS[role],
         ].sort(),
       );
     },
@@ -174,6 +185,20 @@ describe("Build 3 ledger permissions (ADR-009 section 17)", () => {
   it.each(MEMBERSHIP_ROLES)("maps %s to exactly its ledger permissions", (role) => {
     const ledger = rolePermissions[role].map(String).filter((name) => ledgerPermissions.has(name));
     expect(ledger.sort()).toEqual([...LEDGER_ROLE_PERMISSIONS[role]].sort());
+  });
+
+  it("grants the ADR-011 section 20 sales matrix", () => {
+    expect([...salesPermissions.all].sort()).toEqual([
+      "sales:create",
+      "sales:discount",
+      "sales:read",
+      "sales:read-own",
+      "sales:reverse",
+    ]);
+    for (const role of MEMBERSHIP_ROLES) {
+      const sales = rolePermissions[role].map(String).filter((name) => salesPermissions.has(name));
+      expect(sales.sort(), role).toEqual([...SALES_ROLE_PERMISSIONS[role]].sort());
+    }
   });
 
   it("grants ledger:read only to OWNER and ACCOUNTANT", () => {

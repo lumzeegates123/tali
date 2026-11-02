@@ -243,10 +243,10 @@ module.exports = {
       name: "ai-no-catalog-inventory",
       severity: "error",
       comment:
-        "AI source never reaches the database or the catalog, inventory and ledger application modules (their use cases, posting service and repository ports), directly or through any re-export such as the @tali/application root index (ADR-008, ADR-009; 40-ai-safety.mdc). Execution goes through authorized use cases composed outside AI code. Domain value objects and shared contracts stay reachable.",
+        "AI source never reaches the database or the catalog, inventory, ledger and sales application modules (their use cases, posting service and repository ports), directly or through any re-export such as the @tali/application root index (ADR-008, ADR-009, ADR-011; 40-ai-safety.mdc). Execution goes through authorized use cases composed outside AI code. Domain value objects and shared contracts stay reachable.",
       from: { path: ["^packages/ai/", "^packages/application/src/modules/ai/"], pathNot: TEST_FILE },
       to: {
-        path: ["^packages/database/", "^packages/application/src/modules/(catalog|inventory|ledger)/"],
+        path: ["^packages/database/", "^packages/application/src/modules/(catalog|inventory|ledger|sales)/"],
         reachable: true,
       },
     },

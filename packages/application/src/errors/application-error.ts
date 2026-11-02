@@ -27,7 +27,12 @@ export type ApplicationErrorCode =
   | "STOCKTAKE_STALE"
   | "LEDGER_NOT_PROVISIONED"
   | "LEDGER_CHART_INCOMPLETE"
-  | "VALUATION_STALE";
+  | "VALUATION_STALE"
+  | "PRICE_NOT_SET"
+  | "PRICE_CHANGED"
+  | "PRODUCT_ARCHIVED"
+  | "DISCOUNT_EXCEEDS_LINE"
+  | "TENDER_TOTAL_MISMATCH";
 
 /** Whether a client may retry the same request unchanged (ADR-004 section 11; ADR-005 section 13.1). */
 const RETRYABLE: Readonly<Record<ApplicationErrorCode, boolean>> = {
@@ -51,6 +56,11 @@ const RETRYABLE: Readonly<Record<ApplicationErrorCode, boolean>> = {
   LEDGER_NOT_PROVISIONED: false,
   LEDGER_CHART_INCOMPLETE: false,
   VALUATION_STALE: false,
+  PRICE_NOT_SET: false,
+  PRICE_CHANGED: false,
+  PRODUCT_ARCHIVED: false,
+  DISCOUNT_EXCEEDS_LINE: false,
+  TENDER_TOTAL_MISMATCH: false,
 };
 
 export interface ValidationIssue {
@@ -194,9 +204,20 @@ export class VersionConflictError extends ApplicationError {
  * on-hand stock below zero (ADR-008 section 10). Nothing was written. Not
  * retryable unchanged: the stock must change first.
  */
+export interface StockShortageDetail {
+  readonly variantId: string;
+  readonly availableQuantityMinor: string;
+}
+
 export class InsufficientStockError extends ApplicationError {
-  constructor(message = "There is not enough stock on hand for this change") {
+  readonly shortages: readonly StockShortageDetail[];
+
+  constructor(
+    message = "There is not enough stock on hand for this change",
+    shortages: readonly StockShortageDetail[] = [],
+  ) {
     super("INSUFFICIENT_STOCK", message);
+    this.shortages = Object.freeze([...shortages]);
   }
 }
 
@@ -265,5 +286,87 @@ export class LedgerChartIncompleteError extends ApplicationError {
 export class ValuationStaleError extends ApplicationError {
   constructor(message = "Stock changed since this valuation was reviewed; reload and try again") {
     super("VALUATION_STALE", message);
+  }
+}
+
+export interface PriceChangeDetail {
+  readonly variantId: string;
+  readonly currentPriceMinor: string;
+  readonly currentPriceVersion: number;
+}
+
+const MAX_SALE_ERROR_IDS = 200;
+
+function boundedIds(ids: readonly string[], label: string): readonly string[] {
+  const unique = [...new Set(ids)].sort();
+  if (unique.length === 0 || unique.length > MAX_SALE_ERROR_IDS) {
+    throw new Error(`${label} needs 1 to ${MAX_SALE_ERROR_IDS} variant ids`);
+  }
+  return Object.freeze(unique);
+}
+
+/** A variant on the sale has no current price (ADR-011 section 10). Nothing was written. */
+export class PriceNotSetError extends ApplicationError {
+  readonly variantIds: readonly string[];
+
+  constructor(variantIds: readonly string[]) {
+    super("PRICE_NOT_SET", "A product on this sale has no price");
+    this.variantIds = boundedIds(variantIds, "PRICE_NOT_SET");
+  }
+}
+
+/**
+ * A displayed price version is no longer current (ADR-011 section 10).
+ * Details are only the variant, its current price and its current version.
+ */
+export class PriceChangedError extends ApplicationError {
+  readonly changes: readonly PriceChangeDetail[];
+
+  constructor(changes: readonly PriceChangeDetail[]) {
+    super("PRICE_CHANGED", "A price changed since it was displayed");
+    if (changes.length === 0 || changes.length > MAX_SALE_ERROR_IDS) {
+      throw new Error(`PRICE_CHANGED needs 1 to ${MAX_SALE_ERROR_IDS} changes`);
+    }
+    this.changes = Object.freeze(
+      [...changes].sort((left, right) =>
+        left.variantId < right.variantId ? -1 : left.variantId > right.variantId ? 1 : 0,
+      ),
+    );
+  }
+}
+
+/** A line names an archived product (ADR-011 section 16). Nothing was written. */
+export class ProductArchivedError extends ApplicationError {
+  readonly variantIds: readonly string[];
+
+  constructor(variantIds: readonly string[]) {
+    super("PRODUCT_ARCHIVED", "An archived product cannot be sold");
+    this.variantIds = boundedIds(variantIds, "PRODUCT_ARCHIVED");
+  }
+}
+
+/** A line discount would leave a zero or negative line (ADR-011 section 11). */
+export class DiscountExceedsLineError extends ApplicationError {
+  readonly lineNumber: number;
+
+  constructor(lineNumber: number) {
+    super("DISCOUNT_EXCEEDS_LINE", "A line discount must leave a positive line total");
+    if (!Number.isSafeInteger(lineNumber) || lineNumber < 1) {
+      throw new Error("DISCOUNT_EXCEEDS_LINE needs a line number");
+    }
+    this.lineNumber = lineNumber;
+  }
+}
+
+/** Tender amounts do not equal the server sale total (ADR-011 section 13). */
+export class TenderTotalMismatchError extends ApplicationError {
+  readonly serverTotalMinor: string;
+
+  constructor(serverTotalMinor: string) {
+    super("TENDER_TOTAL_MISMATCH", "Tender amounts must equal the sale total");
+    if (!/^(0|[1-9][0-9]*)$/.test(serverTotalMinor)) {
+      throw new Error("TENDER_TOTAL_MISMATCH needs a non-negative minor-unit total");
+    }
+    this.serverTotalMinor = serverTotalMinor;
   }
 }

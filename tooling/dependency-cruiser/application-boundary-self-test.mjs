@@ -123,6 +123,18 @@ const CASES = [
     expectedRule: AI_RULE,
   },
   {
+    file: "packages/ai/src/forbidden-sales-module.ts",
+    source:
+      'import { createRecordSale } from "../../application/src/modules/sales/index.js";\nexport const value = createRecordSale;\n',
+    expectedRule: AI_RULE,
+  },
+  {
+    file: "packages/ai/src/forbidden-sales-port.ts",
+    source:
+      'import type { SaleRepository } from "../../application/src/modules/sales/ports.js";\nexport type Value = SaleRepository;\n',
+    expectedRule: AI_RULE,
+  },
+  {
     file: "packages/ai/src/forbidden-ledger-module.ts",
     source:
       'import { createLedgerPostingService } from "../../application/src/modules/ledger/posting.js";\nexport const value = createLedgerPostingService;\n',
@@ -183,6 +195,16 @@ const CASES = [
     file: "packages/application/src/modules/ai/forbidden-catalog-port.ts",
     source:
       'import type { ProductPackRepository } from "../catalog/ports.js";\nexport type Value = ProductPackRepository;\n',
+    expectedRule: AI_RULE,
+  },
+  {
+    file: "packages/application/src/modules/ai/forbidden-sales-module.ts",
+    source: 'import { createRecordSale } from "../sales/index.js";\nexport const value = createRecordSale;\n',
+    expectedRule: AI_RULE,
+  },
+  {
+    file: "packages/application/src/modules/ai/forbidden-sales-port.ts",
+    source: 'import type { SaleRepository } from "../sales/ports.js";\nexport type Value = SaleRepository;\n',
     expectedRule: AI_RULE,
   },
   {
@@ -247,7 +269,7 @@ const CASES = [
  */
 const FIXTURE_SOURCES = {
   "packages/application/src/index.ts":
-    'export * from "./modules/business/index.js";\nexport * from "./modules/catalog/index.js";\nexport * from "./modules/inventory/index.js";\nexport * from "./modules/ledger/index.js";\n',
+    'export * from "./modules/business/index.js";\nexport * from "./modules/catalog/index.js";\nexport * from "./modules/inventory/index.js";\nexport * from "./modules/ledger/index.js";\nexport * from "./modules/sales/index.js";\n',
   "packages/application/src/modules/business/index.ts": 'export const business = "business";\n',
   "packages/application/src/modules/catalog/index.ts":
     'export type { ProductPackRepository, ProductRepository } from "./ports.js";\nexport * from "./products.js";\n',
@@ -265,6 +287,9 @@ const FIXTURE_SOURCES = {
   "packages/application/src/modules/ledger/ports.ts":
     'export interface JournalRepository {\n  readonly kind: "journal";\n}\n',
   "packages/application/src/modules/ledger/posting.ts": 'export const createLedgerPostingService = "ledger-posting";\n',
+  "packages/application/src/modules/sales/index.ts":
+    'export type { SaleRepository } from "./ports.js";\nexport const createRecordSale = "record-sale";\n',
+  "packages/application/src/modules/sales/ports.ts": 'export interface SaleRepository {\n  readonly kind: "sale";\n}\n',
   "packages/database/src/repositories/product-repository.ts": 'export const productRepository = "products";\n',
 };
 

@@ -24,7 +24,8 @@ export type AuditEntityType =
   | "inventory_adjustment"
   | "inventory_stock_threshold"
   | "stocktake"
-  | "stock_valuation";
+  | "stock_valuation"
+  | "sale";
 
 export interface AuditActionDefinition<
   Stream extends AuditStream = AuditStream,
