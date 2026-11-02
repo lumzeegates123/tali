@@ -47,6 +47,10 @@ export const LEDGER_CONSISTENCY_KINDS = [
   "REVERSAL_DIRECTION_MISMATCH",
   "ORPHAN_LINE",
   "RESIDUAL_JOURNAL_INVALID",
+  "SALE_ORIGINAL_JOURNAL_MISSING",
+  "SALE_ORIGINAL_JOURNAL_MISMATCH",
+  "SALE_REVERSAL_JOURNAL_MISSING",
+  "SALE_REVERSAL_JOURNAL_MISMATCH",
 ] as const;
 
 export type LedgerConsistencyKind = (typeof LEDGER_CONSISTENCY_KINDS)[number];
@@ -54,8 +58,8 @@ export type LedgerConsistencyKind = (typeof LEDGER_CONSISTENCY_KINDS)[number];
 /**
  * One inconsistency: identifiers and a kind, never names, codes or amounts.
  * `accountId` is the ledger account for chart issues, the journal entry id for
- * entry/reversal issues, and the referenced entry id for an orphan line.
- * It is null for a business-level issue (a missing or incomplete chart, or
+ * entry/reversal issues, the referenced entry id for an orphan line, and the
+ * sale id for a sale journal-link issue. It is null for a business-level issue (a missing or incomplete chart, or
  * mixed template versions).
  */
 export interface LedgerConsistencyIssue {
@@ -103,6 +107,10 @@ export const LEDGER_TEMPLATE_ROWS_SQL = `
  * direction); orphan lines; REVERSAL_RESIDUAL ORIGINAL journals (entry kind,
  * source valuation_id, posting rule/version). Residual pairing of amounts and
  * accounts is reported by the inventory checker.
+ * Sales (ADR-009; S5): every sale has exactly one ORIGINAL journal, and it is
+ * the sale's journal_entry_id; a REVERSED sale has exactly one REVERSAL
+ * journal, and it is the sale's reversal_journal_entry_id; a POSTED sale has
+ * none. The sale's own snapshot agreement is the sales checker's.
  */
 export const LEDGER_CONSISTENCY_SQL = `
 WITH template (template_version, system_role, code, name, type, normal_balance) AS (
@@ -122,7 +130,8 @@ source_count AS (
          + (CASE WHEN e.goods_receipt_id IS NOT NULL THEN 1 ELSE 0 END)
          + (CASE WHEN e.adjustment_id IS NOT NULL THEN 1 ELSE 0 END)
          + (CASE WHEN e.stocktake_id IS NOT NULL THEN 1 ELSE 0 END)
-         + (CASE WHEN e.valuation_id IS NOT NULL THEN 1 ELSE 0 END) AS sources
+         + (CASE WHEN e.valuation_id IS NOT NULL THEN 1 ELSE 0 END)
+         + (CASE WHEN e.sale_id IS NOT NULL THEN 1 ELSE 0 END) AS sources
   FROM public.journal_entries e
 ),
 line_totals AS (
@@ -148,6 +157,9 @@ original_sources AS (
   UNION ALL
   SELECT business_id, id, 'valuation', valuation_id
   FROM public.journal_entries WHERE entry_kind = 'ORIGINAL' AND valuation_id IS NOT NULL
+  UNION ALL
+  SELECT business_id, id, 'sale', sale_id
+  FROM public.journal_entries WHERE entry_kind = 'ORIGINAL' AND sale_id IS NOT NULL
 ),
 duplicate_originals AS (
   SELECT business_id, source_kind, source_id
@@ -254,6 +266,9 @@ issues AS (
      OR (e.valuation_id IS NOT NULL AND NOT EXISTS (
            SELECT 1 FROM public.stock_valuations d
            WHERE d.business_id = e.business_id AND d.id = e.valuation_id))
+     OR (e.sale_id IS NOT NULL AND NOT EXISTS (
+           SELECT 1 FROM public.sales d
+           WHERE d.business_id = e.business_id AND d.id = e.sale_id))
   UNION ALL
   SELECT o.business_id, o.id, 'DUPLICATE_ORIGINAL_SOURCE'
   FROM original_sources o
@@ -290,7 +305,8 @@ issues AS (
       OR e.goods_receipt_id IS DISTINCT FROM o.goods_receipt_id
       OR e.adjustment_id IS DISTINCT FROM o.adjustment_id
       OR e.stocktake_id IS DISTINCT FROM o.stocktake_id
-      OR e.valuation_id IS DISTINCT FROM o.valuation_id)
+      OR e.valuation_id IS DISTINCT FROM o.valuation_id
+      OR e.sale_id IS DISTINCT FROM o.sale_id)
   UNION ALL
   SELECT e.business_id, e.id, 'REVERSAL_LINE_COUNT_MISMATCH'
   FROM public.journal_entries e
@@ -362,6 +378,37 @@ issues AS (
       WHERE e.business_id = s.business_id AND e.id = s.journal_entry_id
         AND e.entry_kind = 'ORIGINAL' AND e.valuation_id = s.id
     )
+  UNION ALL
+  SELECT s.business_id, s.id, 'SALE_ORIGINAL_JOURNAL_MISSING'
+  FROM public.sales s
+  WHERE NOT EXISTS (
+    SELECT 1 FROM public.journal_entries e
+    WHERE e.business_id = s.business_id AND e.sale_id = s.id AND e.entry_kind = 'ORIGINAL'
+  )
+  UNION ALL
+  SELECT s.business_id, s.id, 'SALE_ORIGINAL_JOURNAL_MISMATCH'
+  FROM public.sales s
+  WHERE EXISTS (
+    SELECT 1 FROM public.journal_entries e
+    WHERE e.business_id = s.business_id AND e.sale_id = s.id AND e.entry_kind = 'ORIGINAL'
+      AND e.id <> s.journal_entry_id
+  )
+  UNION ALL
+  SELECT s.business_id, s.id, 'SALE_REVERSAL_JOURNAL_MISSING'
+  FROM public.sales s
+  WHERE s.status = 'REVERSED'
+    AND NOT EXISTS (
+      SELECT 1 FROM public.journal_entries e
+      WHERE e.business_id = s.business_id AND e.sale_id = s.id AND e.entry_kind = 'REVERSAL'
+    )
+  UNION ALL
+  SELECT s.business_id, s.id, 'SALE_REVERSAL_JOURNAL_MISMATCH'
+  FROM public.sales s
+  WHERE EXISTS (
+    SELECT 1 FROM public.journal_entries e
+    WHERE e.business_id = s.business_id AND e.sale_id = s.id AND e.entry_kind = 'REVERSAL'
+      AND (s.status <> 'REVERSED' OR e.id IS DISTINCT FROM s.reversal_journal_entry_id)
+  )
 )
 SELECT business_id::text AS "businessId", account_id::text AS "accountId", kind
 FROM issues

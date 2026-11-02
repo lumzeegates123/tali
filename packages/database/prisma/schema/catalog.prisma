@@ -16,6 +16,7 @@ model UnitOfMeasure {
 
   variants       ProductVariant[]
   stocktakeLines StocktakeLine[]
+  saleLines      SaleLine[]
 
   @@map("units_of_measure")
 }
@@ -107,6 +108,7 @@ model ProductVariant {
   stocktakeLines      StocktakeLine[]
   inventoryValuations InventoryValuation[]
   stockValuations     StockValuation[]
+  saleLines           SaleLine[]
 
   @@unique([businessId, id])
   @@unique([businessId, skuNormalized])

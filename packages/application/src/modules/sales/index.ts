@@ -1,5 +1,12 @@
 export { saleRecorded, saleReversed, salesAuditActions } from "./audit-actions.js";
-export type { SaleReceiptNumberIssuer, SaleRepository, SalesInventoryPort } from "./ports.js";
+export type {
+  SaleReceiptNumberIssuer,
+  SaleRepository,
+  SalesInventoryPort,
+  SaleStockReversalStep,
+  SaleStockReversalWrite,
+  SaleStockWrite,
+} from "./ports.js";
 export type { GetSale, ListSales } from "./queries.js";
 export { createGetSale, createListSales } from "./queries.js";
 export type {

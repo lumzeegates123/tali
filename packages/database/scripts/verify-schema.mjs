@@ -18,7 +18,8 @@ const migrationsDir = fileURLToPath(new URL("../prisma/migrations", import.meta.
  * (ADR-004 sections 4.2 and 8.1). Unit reference data is read-only and price
  * history is insert-only (ADR-008 sections 3.4 and 4.2). Inventory movements
  * and opening batches are append-only (ADR-008 sections 7.1 and 11). Ledger
- * accounts are insert-only in Build 3 (ADR-009 sections 4 and 11).
+ * accounts are insert-only in Build 3 (ADR-009 sections 4 and 11). Sale lines
+ * and tenders are immutable snapshots (ADR-011 sections 5, 6 and 21).
  */
 const PROTECTED_TABLES = [
   "foundation_spike.protected_entry",
@@ -35,6 +36,8 @@ const PROTECTED_TABLES = [
   "public.journal_lines",
   "public.inventory_movement_valuations",
   "public.stock_valuations",
+  "public.sale_lines",
+  "public.sale_tenders",
 ];
 
 /**
@@ -63,6 +66,8 @@ const NO_DELETE_TABLES = [
   "public.stocktakes",
   "public.stocktake_lines",
   "public.inventory_valuations",
+  "public.sales",
+  "public.sale_receipt_sequences",
 ];
 
 /**
@@ -126,6 +131,10 @@ const EXPECTED_APP_PRIVILEGES = {
   "public.inventory_valuations": ["INSERT", "SELECT"],
   "public.inventory_movement_valuations": ["INSERT", "SELECT"],
   "public.stock_valuations": ["INSERT", "SELECT"],
+  "public.sales": ["INSERT", "SELECT"],
+  "public.sale_lines": ["INSERT", "SELECT"],
+  "public.sale_tenders": ["INSERT", "SELECT"],
+  "public.sale_receipt_sequences": ["INSERT", "SELECT"],
 };
 
 /**
@@ -164,6 +173,16 @@ const EXPECTED_APP_COLUMN_PRIVILEGES = {
   "public.stocktakes": updatable(STOCKTAKE_LIFECYCLE_COLUMNS),
   "public.stocktake_lines": updatable(STOCKTAKE_LINE_COUNT_COLUMNS),
   "public.inventory_valuations": updatable(["first_valued_at", "status", "updated_at", "value_minor", "version"]),
+  // A sale changes only by its POSTED to REVERSED transition (ADR-011 section 21).
+  "public.sales": updatable([
+    "reversal_journal_entry_id",
+    "reversal_reason",
+    "reversal_tender_unwound_confirmed",
+    "reversed_at",
+    "reversed_by_membership_id",
+    "status",
+  ]),
+  "public.sale_receipt_sequences": updatable(["next_number", "updated_at"]),
 };
 
 const ENVELOPE_SOURCE_CHANNELS =
@@ -292,7 +311,8 @@ const WRITE_OFF_REASON_CODES =
 /**
  * The Build 2 Slice 5 inventory CHECKs (ADR-008 sections 7, 8 and 11; plan
  * section O), with the four movement CHECKs that Slice 6 replaced to admit
- * COUNT_CORRECTION (ADR-008 section 12).
+ * COUNT_CORRECTION (ADR-008 section 12) and Build 3 Slice 5 replaced again to
+ * admit SALE (ADR-011 section 14).
  */
 const INVENTORY_CHECKS = [
   ...inventoryRecordingChecks("inventory_opening_batches"),
@@ -325,7 +345,7 @@ const INVENTORY_CHECKS = [
     table: "inventory_movements",
     name: "inventory_movements_type_valid",
     definition:
-      "CHECK ((type = ANY (ARRAY['OPENING'::text, 'PURCHASE_RECEIPT'::text, 'ADJUSTMENT'::text, 'WRITE_OFF'::text, 'COUNT_CORRECTION'::text])))",
+      "CHECK ((type = ANY (ARRAY['OPENING'::text, 'PURCHASE_RECEIPT'::text, 'ADJUSTMENT'::text, 'WRITE_OFF'::text, 'COUNT_CORRECTION'::text, 'SALE'::text])))",
   },
   {
     table: "inventory_movements",
@@ -345,7 +365,7 @@ const INVENTORY_CHECKS = [
   {
     table: "inventory_movements",
     name: "inventory_movements_one_source",
-    definition: "CHECK ((num_nonnulls(opening_batch_id, goods_receipt_id, adjustment_id, stocktake_id) = 1))",
+    definition: "CHECK ((num_nonnulls(opening_batch_id, goods_receipt_id, adjustment_id, stocktake_id, sale_id) = 1))",
   },
   {
     table: "inventory_movements",
@@ -366,7 +386,7 @@ const INVENTORY_CHECKS = [
     table: "inventory_movements",
     name: "inventory_movements_direction",
     definition:
-      "CHECK ((((type = 'OPENING'::text) AND (reverses_movement_id IS NULL) AND (quantity_delta_minor > 0)) OR ((type = 'PURCHASE_RECEIPT'::text) AND ((reverses_movement_id IS NULL) = (quantity_delta_minor > 0))) OR ((type = 'WRITE_OFF'::text) AND ((reverses_movement_id IS NULL) = (quantity_delta_minor < 0))) OR (type = 'ADJUSTMENT'::text) OR ((type = 'COUNT_CORRECTION'::text) AND (reverses_movement_id IS NULL))))",
+      "CHECK ((((type = 'OPENING'::text) AND (reverses_movement_id IS NULL) AND (quantity_delta_minor > 0)) OR ((type = 'PURCHASE_RECEIPT'::text) AND ((reverses_movement_id IS NULL) = (quantity_delta_minor > 0))) OR ((type = 'WRITE_OFF'::text) AND ((reverses_movement_id IS NULL) = (quantity_delta_minor < 0))) OR (type = 'ADJUSTMENT'::text) OR ((type = 'COUNT_CORRECTION'::text) AND (reverses_movement_id IS NULL)) OR ((type = 'SALE'::text) AND ((reverses_movement_id IS NULL) = (quantity_delta_minor < 0)))))",
   },
   {
     table: "inventory_movements",
@@ -395,7 +415,7 @@ const INVENTORY_CHECKS = [
   {
     table: "inventory_movements",
     name: "inventory_movements_reason_shape",
-    definition: `CHECK ((((reverses_movement_id IS NULL) AND (type = ANY (ARRAY['OPENING'::text, 'PURCHASE_RECEIPT'::text, 'COUNT_CORRECTION'::text])) AND (reason_code IS NULL) AND (reason_note IS NULL)) OR ((reverses_movement_id IS NULL) AND (type = 'ADJUSTMENT'::text) AND (reason_code IS NOT NULL) AND (reason_code = ANY (${ADJUSTMENT_REASON_CODES})) AND ((reason_code <> 'OTHER'::text) OR (reason_note IS NOT NULL))) OR ((reverses_movement_id IS NULL) AND (type = 'WRITE_OFF'::text) AND (reason_code IS NOT NULL) AND (reason_code = ANY (${WRITE_OFF_REASON_CODES})) AND ((reason_code <> 'OTHER'::text) OR (reason_note IS NOT NULL))) OR ((reverses_movement_id IS NOT NULL) AND (type <> 'COUNT_CORRECTION'::text) AND (reason_code IS NULL) AND (reason_note IS NOT NULL))))`,
+    definition: `CHECK ((((reverses_movement_id IS NULL) AND (type = ANY (ARRAY['OPENING'::text, 'PURCHASE_RECEIPT'::text, 'COUNT_CORRECTION'::text, 'SALE'::text])) AND (reason_code IS NULL) AND (reason_note IS NULL)) OR ((reverses_movement_id IS NULL) AND (type = 'ADJUSTMENT'::text) AND (reason_code IS NOT NULL) AND (reason_code = ANY (${ADJUSTMENT_REASON_CODES})) AND ((reason_code <> 'OTHER'::text) OR (reason_note IS NOT NULL))) OR ((reverses_movement_id IS NULL) AND (type = 'WRITE_OFF'::text) AND (reason_code IS NOT NULL) AND (reason_code = ANY (${WRITE_OFF_REASON_CODES})) AND ((reason_code <> 'OTHER'::text) OR (reason_note IS NOT NULL))) OR ((reverses_movement_id IS NOT NULL) AND (type <> 'COUNT_CORRECTION'::text) AND (reason_code IS NULL) AND (reason_note IS NOT NULL))))`,
   },
   {
     table: "inventory_movements",
@@ -411,6 +431,16 @@ const INVENTORY_CHECKS = [
     table: "inventory_movements",
     name: "inventory_movements_count_correction_no_pack",
     definition: "CHECK (((type <> 'COUNT_CORRECTION'::text) OR (pack_id IS NULL)))",
+  },
+  {
+    table: "inventory_movements",
+    name: "inventory_movements_sale_source",
+    definition: "CHECK (((type = 'SALE'::text) = (sale_id IS NOT NULL)))",
+  },
+  {
+    table: "inventory_movements",
+    name: "inventory_movements_sale_no_pack",
+    definition: "CHECK (((type <> 'SALE'::text) OR (pack_id IS NULL)))",
   },
   {
     table: "inventory_balances",
@@ -559,6 +589,151 @@ const LEDGER_CHECKS = [
     table: "ledger_accounts",
     name: "ledger_accounts_name_valid",
     definition: "CHECK ((((char_length(name) >= 1) AND (char_length(name) <= 120)) AND (name = btrim(name))))",
+  },
+];
+
+/**
+ * The Build 3 Slice 5 sale CHECKs (ADR-011 sections 4 to 14 and 21): shapes
+ * and ranges only. Totals, line arithmetic and posting agreement are verified
+ * by db:sales-consistency.
+ */
+const SALES_CHECKS = [
+  {
+    table: "sales",
+    name: "sales_status_valid",
+    definition: "CHECK ((status = ANY (ARRAY['POSTED'::text, 'REVERSED'::text])))",
+  },
+  { table: "sales", name: "sales_receipt_number_format", definition: "CHECK ((receipt_number ~ '^S-[0-9]+$'::text))" },
+  { table: "sales", name: "sales_gross_total_positive", definition: "CHECK ((gross_total_minor > 0))" },
+  { table: "sales", name: "sales_discount_total_non_negative", definition: "CHECK ((discount_total_minor >= 0))" },
+  { table: "sales", name: "sales_tax_total_non_negative", definition: "CHECK ((tax_total_minor >= 0))" },
+  { table: "sales", name: "sales_total_positive", definition: "CHECK ((total_minor > 0))" },
+  {
+    table: "sales",
+    name: "sales_cost_status_valid",
+    definition:
+      "CHECK ((cost_status = ANY (ARRAY['VALUED'::text, 'PARTIAL'::text, 'UNVALUED'::text, 'NOT_APPLICABLE'::text])))",
+  },
+  { table: "sales", name: "sales_cogs_total_non_negative", definition: "CHECK ((cogs_total_minor >= 0))" },
+  ...inventoryRecordingChecks("sales"),
+  trimmedTextCheck("sales", "reversal_reason", 500),
+  {
+    table: "sales",
+    name: "sales_reversal_journal_distinct",
+    definition: "CHECK (((reversal_journal_entry_id IS NULL) OR (reversal_journal_entry_id <> journal_entry_id)))",
+  },
+  {
+    table: "sales",
+    name: "sales_reversal_shape",
+    definition:
+      "CHECK ((((status = 'POSTED'::text) AND (reversed_at IS NULL) AND (reversed_by_membership_id IS NULL) AND (reversal_reason IS NULL) AND (reversal_journal_entry_id IS NULL) AND (reversal_tender_unwound_confirmed IS NULL)) OR ((status = 'REVERSED'::text) AND (reversed_at IS NOT NULL) AND (reversed_by_membership_id IS NOT NULL) AND (reversal_reason IS NOT NULL) AND (reversal_journal_entry_id IS NOT NULL) AND (reversal_tender_unwound_confirmed IS NOT NULL) AND reversal_tender_unwound_confirmed)))",
+  },
+  {
+    table: "sale_lines",
+    name: "sale_lines_line_number_range",
+    definition: "CHECK (((line_number >= 1) AND (line_number <= 200)))",
+  },
+  {
+    table: "sale_lines",
+    name: "sale_lines_product_name_valid",
+    definition:
+      "CHECK ((((char_length(product_name) >= 1) AND (char_length(product_name) <= 120)) AND (product_name = btrim(product_name))))",
+  },
+  trimmedTextCheck("sale_lines", "sku", 64),
+  { table: "sale_lines", name: "sale_lines_quantity_positive", definition: "CHECK ((quantity_minor > 0))" },
+  {
+    table: "sale_lines",
+    name: "sale_lines_unit_scale_range",
+    definition: "CHECK (((unit_scale >= 0) AND (unit_scale <= 3)))",
+  },
+  { table: "sale_lines", name: "sale_lines_unit_price_positive", definition: "CHECK ((unit_price_minor > 0))" },
+  { table: "sale_lines", name: "sale_lines_price_version_positive", definition: "CHECK ((price_version >= 1))" },
+  { table: "sale_lines", name: "sale_lines_gross_positive", definition: "CHECK ((gross_minor > 0))" },
+  {
+    table: "sale_lines",
+    name: "sale_lines_discount_range",
+    definition: "CHECK (((discount_minor >= 0) AND (discount_minor < gross_minor)))",
+  },
+  { table: "sale_lines", name: "sale_lines_net_positive", definition: "CHECK ((net_minor > 0))" },
+  { table: "sale_lines", name: "sale_lines_tax_non_negative", definition: "CHECK ((tax_minor >= 0))" },
+  {
+    table: "sale_lines",
+    name: "sale_lines_taxable_base_non_negative",
+    definition: "CHECK ((taxable_base_minor >= 0))",
+  },
+  { table: "sale_lines", name: "sale_lines_total_positive", definition: "CHECK ((total_minor > 0))" },
+  {
+    table: "sale_lines",
+    name: "sale_lines_discount_shape",
+    definition:
+      "CHECK ((((discount_kind = 'NONE'::text) AND (discount_value = 0) AND (discount_minor = 0)) OR ((discount_kind = 'FIXED'::text) AND (discount_value > 0) AND (discount_value = discount_minor)) OR ((discount_kind = 'BASIS_POINTS'::text) AND ((discount_value >= 1) AND (discount_value <= 9999)))))",
+  },
+  {
+    table: "sale_lines",
+    name: "sale_lines_tax_kind_valid",
+    definition: "CHECK ((tax_kind = ANY (ARRAY['NONE'::text, 'STANDARD'::text, 'ZERO_RATED'::text, 'EXEMPT'::text])))",
+  },
+  {
+    table: "sale_lines",
+    name: "sale_lines_tax_none_shape",
+    definition:
+      "CHECK (((tax_kind <> 'NONE'::text) OR ((tax_treatment_id IS NULL) AND (tax_name IS NULL) AND (tax_rate_bps IS NULL) AND (tax_pricing_mode IS NULL) AND (tax_rounding_mode IS NULL) AND (taxable_base_minor = net_minor) AND (tax_minor = 0))))",
+  },
+  trimmedTextCheck("sale_lines", "tax_name", 120),
+  {
+    table: "sale_lines",
+    name: "sale_lines_tax_rate_range",
+    definition: "CHECK (((tax_rate_bps IS NULL) OR ((tax_rate_bps >= 0) AND (tax_rate_bps <= 10000))))",
+  },
+  {
+    table: "sale_lines",
+    name: "sale_lines_tax_pricing_mode_valid",
+    definition:
+      "CHECK (((tax_pricing_mode IS NULL) OR (tax_pricing_mode = ANY (ARRAY['EXCLUSIVE'::text, 'INCLUSIVE'::text]))))",
+  },
+  {
+    table: "sale_lines",
+    name: "sale_lines_tax_rounding_mode_format",
+    definition: "CHECK (((tax_rounding_mode IS NULL) OR (tax_rounding_mode ~ '^[A-Z_]{1,32}$'::text)))",
+  },
+  {
+    table: "sale_lines",
+    name: "sale_lines_cost_status_valid",
+    definition: "CHECK ((cost_status = ANY (ARRAY['VALUED'::text, 'UNVALUED'::text, 'NOT_APPLICABLE'::text])))",
+  },
+  {
+    table: "sale_lines",
+    name: "sale_lines_cost_shape",
+    definition:
+      "CHECK ((((NOT tracked) AND (cost_status = 'NOT_APPLICABLE'::text) AND (cost_minor IS NULL) AND (valuation_version_read IS NULL) AND (movement_id IS NULL)) OR (tracked AND (cost_status = 'VALUED'::text) AND (cost_minor IS NOT NULL) AND (cost_minor >= 0) AND (valuation_version_read IS NOT NULL) AND (valuation_version_read >= 0) AND (movement_id IS NOT NULL)) OR (tracked AND (cost_status = 'UNVALUED'::text) AND (cost_minor IS NULL) AND (valuation_version_read IS NOT NULL) AND (valuation_version_read >= 0) AND (movement_id IS NOT NULL))))",
+  },
+  {
+    table: "sale_tenders",
+    name: "sale_tenders_tender_number_range",
+    definition: "CHECK (((tender_number >= 1) AND (tender_number <= 10)))",
+  },
+  {
+    table: "sale_tenders",
+    name: "sale_tenders_method_valid",
+    definition: "CHECK ((method = ANY (ARRAY['CASH'::text, 'BANK_TRANSFER'::text, 'POS_CARD'::text, 'OTHER'::text])))",
+  },
+  { table: "sale_tenders", name: "sale_tenders_amount_positive", definition: "CHECK ((amount_minor > 0))" },
+  trimmedTextCheck("sale_tenders", "reference", 64),
+  {
+    table: "sale_tenders",
+    name: "sale_tenders_verification_status_valid",
+    definition: "CHECK ((verification_status = ANY (ARRAY['NOT_APPLICABLE'::text, 'NOT_VERIFIED'::text])))",
+  },
+  {
+    table: "sale_tenders",
+    name: "sale_tenders_cash_shape",
+    definition:
+      "CHECK ((((method = 'CASH'::text) AND (verification_status = 'NOT_APPLICABLE'::text) AND (((cash_received_minor IS NULL) AND (change_given_minor IS NULL)) OR ((cash_received_minor IS NOT NULL) AND (change_given_minor IS NOT NULL) AND (cash_received_minor >= amount_minor) AND (change_given_minor = (cash_received_minor - amount_minor))))) OR ((method <> 'CASH'::text) AND (verification_status = 'NOT_VERIFIED'::text) AND (cash_received_minor IS NULL) AND (change_given_minor IS NULL))))",
+  },
+  {
+    table: "sale_receipt_sequences",
+    name: "sale_receipt_sequences_next_number_positive",
+    definition: "CHECK ((next_number >= 1))",
   },
 ];
 
@@ -912,7 +1087,7 @@ const EXPECTED_CHECKS = [
   {
     table: "journal_entries",
     name: "journal_entries_one_source",
-    definition: `CHECK ((((((
+    definition: `CHECK (((((((
 CASE
     WHEN (opening_batch_id IS NOT NULL) THEN 1
     ELSE 0
@@ -932,7 +1107,16 @@ END) +
 CASE
     WHEN (valuation_id IS NOT NULL) THEN 1
     ELSE 0
+END) +
+CASE
+    WHEN (sale_id IS NOT NULL) THEN 1
+    ELSE 0
 END) = 1))`,
+  },
+  {
+    table: "journal_entries",
+    name: "journal_entries_sale_location",
+    definition: "CHECK (((sale_id IS NULL) OR (location_id IS NOT NULL)))",
   },
   {
     table: "journal_entries",
@@ -1048,6 +1232,7 @@ END) = 1))`,
     name: "stock_valuations_reason_valid",
     definition: "CHECK ((((char_length(reason) >= 1) AND (char_length(reason) <= 500)) AND (reason = btrim(reason))))",
   },
+  ...SALES_CHECKS,
 ];
 
 /** @type {{ schema: string; name: string; columns: string; predicate: string }[]} */
@@ -1141,6 +1326,12 @@ const EXPECTED_PARTIAL_UNIQUE_INDEXES = [
     name: "journal_entries_original_valuation_key",
     columns: "business_id,valuation_id",
     predicate: "((entry_kind = 'ORIGINAL'::text) AND (valuation_id IS NOT NULL))",
+  },
+  {
+    schema: "public",
+    name: "journal_entries_original_sale_key",
+    columns: "business_id,sale_id",
+    predicate: "((entry_kind = 'ORIGINAL'::text) AND (sale_id IS NOT NULL))",
   },
   {
     schema: "public",
@@ -1473,6 +1664,64 @@ const EXPECTED_TENANT_FOREIGN_KEYS = [
     definition:
       "FOREIGN KEY (business_id, location_id, variant_id, trigger_movement_id) REFERENCES inventory_movements(business_id, location_id, variant_id, id) ON UPDATE RESTRICT ON DELETE RESTRICT",
   },
+  // Sales (ADR-011): every reference stays in its business; the sale is recorded at its own location.
+  ...[
+    ["sales", "location_id", "business_locations"],
+    ["sales", "recorded_by_membership_id", "business_memberships"],
+    ["sales", "reversed_by_membership_id", "business_memberships"],
+    ["sales", "device_id", "devices"],
+    ["sale_lines", "sale_id", "sales"],
+    ["sale_lines", "variant_id", "product_variants"],
+    ["sale_tenders", "sale_id", "sales"],
+  ].map(([table, column, target]) => ({
+    table,
+    name: `${table}_business_id_${column}_fkey`,
+    definition: `FOREIGN KEY (business_id, ${column}) REFERENCES ${target}(business_id, id) ON UPDATE RESTRICT ON DELETE RESTRICT`,
+  })),
+  ...["sales", "sale_lines", "sale_tenders", "sale_receipt_sequences"].map((table) => ({
+    table,
+    name: `${table}_business_id_fkey`,
+    definition: "FOREIGN KEY (business_id) REFERENCES businesses(id) ON UPDATE RESTRICT ON DELETE RESTRICT",
+  })),
+  {
+    table: "sales",
+    name: "sales_business_id_currency_fkey",
+    definition:
+      "FOREIGN KEY (business_id, currency) REFERENCES businesses(id, currency_code) ON UPDATE RESTRICT ON DELETE RESTRICT",
+  },
+  // The original journal is the sale's own and follows the sale in the same transaction.
+  {
+    table: "sales",
+    name: "sales_original_journal_fkey",
+    definition:
+      "FOREIGN KEY (business_id, journal_entry_id, id) REFERENCES journal_entries(business_id, id, sale_id) ON UPDATE RESTRICT ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED",
+  },
+  {
+    table: "sales",
+    name: "sales_reversal_journal_fkey",
+    definition:
+      "FOREIGN KEY (business_id, reversal_journal_entry_id, id) REFERENCES journal_entries(business_id, id, sale_id) ON UPDATE RESTRICT ON DELETE RESTRICT",
+  },
+  // A tracked line's SALE movement is of the same sale and variant, and follows the line.
+  {
+    table: "sale_lines",
+    name: "sale_lines_movement_fkey",
+    definition:
+      "FOREIGN KEY (business_id, movement_id, sale_id, variant_id) REFERENCES inventory_movements(business_id, id, sale_id, variant_id) ON UPDATE RESTRICT ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED",
+  },
+  // A SALE movement and a sale journal are recorded at the sale's location.
+  {
+    table: "inventory_movements",
+    name: "inventory_movements_business_id_sale_id_location_id_fkey",
+    definition:
+      "FOREIGN KEY (business_id, sale_id, location_id) REFERENCES sales(business_id, id, location_id) ON UPDATE RESTRICT ON DELETE RESTRICT",
+  },
+  {
+    table: "journal_entries",
+    name: "journal_entries_business_id_sale_id_location_id_fkey",
+    definition:
+      "FOREIGN KEY (business_id, sale_id, location_id) REFERENCES sales(business_id, id, location_id) ON UPDATE RESTRICT ON DELETE RESTRICT",
+  },
 ];
 
 /**
@@ -1566,6 +1815,22 @@ const EXPECTED_UNIQUE_INDEXES = [
     name: "stock_valuations_business_id_journal_entry_id_key",
     columns: "business_id,journal_entry_id",
   },
+  // Sales (ADR-011 sections 4 to 8 and 14): the composite-reference targets,
+  // one receipt number per business, one line per movement, and line-numbered
+  // and tender-numbered children.
+  { schema: "public", name: "sales_business_id_id_key", columns: "business_id,id" },
+  { schema: "public", name: "sales_business_id_id_location_id_key", columns: "business_id,id,location_id" },
+  { schema: "public", name: "sales_business_id_receipt_number_key", columns: "business_id,receipt_number" },
+  { schema: "public", name: "sale_lines_pkey", columns: "business_id,sale_id,line_number" },
+  { schema: "public", name: "sale_lines_business_id_movement_id_key", columns: "business_id,movement_id" },
+  { schema: "public", name: "sale_tenders_pkey", columns: "business_id,sale_id,tender_number" },
+  { schema: "public", name: "sale_receipt_sequences_pkey", columns: "business_id" },
+  {
+    schema: "public",
+    name: "inventory_movements_sale_line_target_key",
+    columns: "business_id,id,sale_id,variant_id",
+  },
+  { schema: "public", name: "journal_entries_business_id_id_sale_id_key", columns: "business_id,id,sale_id" },
 ];
 
 /** Reference rows every migrated database must contain (ADR-005 section 5: the pilot currency). */

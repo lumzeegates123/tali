@@ -11,7 +11,13 @@ import { formatOnlineReceiptNumber } from "@tali/domain";
 import { ConflictError } from "../errors/application-error.js";
 import type { TransactionScope } from "../ports/unit-of-work.js";
 import type { Page, PageRequest } from "../queries/pagination.js";
-import type { SaleReceiptNumberIssuer, SaleRepository, SalesInventoryPort } from "../modules/sales/ports.js";
+import type {
+  SaleReceiptNumberIssuer,
+  SaleRepository,
+  SalesInventoryPort,
+  SaleStockReversalWrite,
+  SaleStockWrite,
+} from "../modules/sales/ports.js";
 import { FailureInjection } from "./failure-injection.js";
 import type { InMemoryUnitOfWork, RollbackParticipant } from "./in-memory-unit-of-work.js";
 
@@ -27,9 +33,9 @@ const stockKey = (businessId: string, locationId: string, variantId: string) =>
   `${businessId}|${locationId}|${variantId}`;
 
 /**
- * S4 sales fakes. No PostgreSQL. State rolls back with the in-memory unit of
- * work. The inventory port applies an already-decided plan and does not
- * compute weighted-average cost.
+ * In-memory sales fakes. State rolls back with the in-memory unit of work.
+ * The inventory port applies an already-decided plan and does not compute
+ * weighted-average cost.
  */
 export class InMemorySalesStore implements RollbackParticipant {
   readonly failures = new FailureInjection();
@@ -39,6 +45,7 @@ export class InMemorySalesStore implements RollbackParticipant {
   #sales: readonly Sale[] = [];
   #sequences = new Map<string, bigint>();
   #stock = new Map<string, StoredStock>();
+  #writes: readonly (SaleStockWrite | SaleStockReversalWrite)[] = [];
 
   constructor(unitOfWork: InMemoryUnitOfWork) {
     const gate = (scope: TransactionScope): void => {
@@ -63,14 +70,12 @@ export class InMemorySalesStore implements RollbackParticipant {
         this.failures.check("sales.findByIdForUpdate");
         return this.#find(businessId, saleId);
       },
-      attachOriginalJournal: async (scope, sale) => {
-        gate(scope);
-        this.failures.check("sales.attachOriginalJournal");
-        this.#replace(sale);
-      },
       markReversed: async (scope, sale) => {
         gate(scope);
         this.failures.check("sales.markReversed");
+        if (this.#find(sale.businessId, sale.id)?.status !== "POSTED") {
+          throw new ConflictError("sale is no longer posted");
+        }
         this.#replace(sale);
         this.failures.checkAfter("sales.markReversed");
       },
@@ -96,13 +101,13 @@ export class InMemorySalesStore implements RollbackParticipant {
         this.failures.check("sales.inventory.lockForSale");
         return [...variantIds].sort().map((variantId) => this.#position(businessId, locationId, variantId));
       },
-      applySalePlan: async (scope, businessId, locationId, _currency, effects) => {
+      applySalePlan: async (scope, write) => {
         gate(scope);
         this.failures.check("sales.inventory.applySalePlan");
         this.#apply(
-          businessId,
-          locationId,
-          effects.map((effect) => ({
+          write.businessId,
+          write.locationId,
+          write.effects.map((effect) => ({
             variantId: effect.variantId,
             balanceVersionRead: effect.balanceVersionRead,
             nextBalanceVersion: effect.nextBalanceVersion,
@@ -113,12 +118,18 @@ export class InMemorySalesStore implements RollbackParticipant {
             nextValuationStatus: effect.nextValuationStatus,
           })),
         );
+        this.#writes = [...this.#writes, write];
         this.failures.checkAfter("sales.inventory.applySalePlan");
       },
-      applyReversalPlan: async (scope, businessId, locationId, _currency, reversals) => {
+      applyReversalPlan: async (scope, write) => {
         gate(scope);
         this.failures.check("sales.inventory.applyReversalPlan");
-        this.#apply(businessId, locationId, reversals);
+        this.#apply(
+          write.businessId,
+          write.locationId,
+          write.reversals.map((step) => step.plan),
+        );
+        this.#writes = [...this.#writes, write];
         this.failures.checkAfter("sales.inventory.applyReversalPlan");
       },
     };
@@ -153,14 +164,21 @@ export class InMemorySalesStore implements RollbackParticipant {
     return this.#sequences.get(businessId) ?? 1n;
   }
 
+  /** Every committed stock write, in order, with the write context the use case passed. */
+  stockWrites(): readonly (SaleStockWrite | SaleStockReversalWrite)[] {
+    return this.#writes;
+  }
+
   captureState(): () => void {
     const sales = this.#sales;
     const sequences = this.#sequences;
     const stock = this.#stock;
+    const writes = this.#writes;
     return () => {
       this.#sales = sales;
       this.#sequences = sequences;
       this.#stock = stock;
+      this.#writes = writes;
     };
   }
 

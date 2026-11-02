@@ -9,6 +9,7 @@ import {
   parseOpeningBatchId,
   parseProductPackId,
   parseProductVariantId,
+  parseSaleId,
   parseStocktakeId,
   parseUnitCode,
   Quantity,
@@ -26,6 +27,7 @@ function sourceColumns(source: InventoryMovementSource) {
     goodsReceiptId: source.kind === "GOODS_RECEIPT" ? source.id : null,
     adjustmentId: source.kind === "ADJUSTMENT" ? source.id : null,
     stocktakeId: source.kind === "STOCKTAKE" ? source.id : null,
+    saleId: source.kind === "SALE" ? source.id : null,
   };
 }
 
@@ -39,15 +41,20 @@ function sourceFilter(source: InventoryMovementSource) {
       return { adjustmentId: source.id };
     case "STOCKTAKE":
       return { stocktakeId: source.id };
+    case "SALE":
+      return { saleId: source.id };
   }
 }
 
 function toSource(row: InventoryMovementRow): InventoryMovementSource {
-  const set = [row.openingBatchId, row.goodsReceiptId, row.adjustmentId, row.stocktakeId].filter((id) => id !== null);
+  const set = [row.openingBatchId, row.goodsReceiptId, row.adjustmentId, row.stocktakeId, row.saleId].filter(
+    (id) => id !== null,
+  );
   if (set.length !== 1) throw new Error("a stored movement must reference exactly one document");
   if (row.openingBatchId !== null) return { kind: "OPENING_BATCH", id: parseOpeningBatchId(row.openingBatchId) };
   if (row.goodsReceiptId !== null) return { kind: "GOODS_RECEIPT", id: parseGoodsReceiptId(row.goodsReceiptId) };
   if (row.adjustmentId !== null) return { kind: "ADJUSTMENT", id: parseInventoryAdjustmentId(row.adjustmentId) };
+  if (row.saleId !== null) return { kind: "SALE", id: parseSaleId(row.saleId) };
   return { kind: "STOCKTAKE", id: parseStocktakeId(row.stocktakeId as string) };
 }
 

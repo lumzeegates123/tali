@@ -50,6 +50,12 @@ model Business {
   stockValuations StockValuation[] @relation("StockValuationBusiness")
   stockValuationCurrencies StockValuation[] @relation("StockValuationCurrency")
 
+  sales              Sale[]               @relation("SaleBusiness")
+  saleCurrencies     Sale[]               @relation("SaleCurrency")
+  saleLines          SaleLine[]
+  saleTenders        SaleTender[]
+  saleReceiptCounter SaleReceiptSequence?
+
   // Target of the catalog's composite currency foreign keys (ADR-008 section
   // 3.4): a stored price is always in its business's currency.
   @@unique([id, currencyCode])
@@ -89,6 +95,8 @@ model BusinessMembership {
   countedLines        StocktakeLine[]         @relation("StocktakeLineCountedBy")
   journalEntries      JournalEntry[]          @relation("JournalEntryActor")
   stockValuations     StockValuation[]        @relation("StockValuationActor")
+  recordedSales       Sale[]                  @relation("SaleRecordedBy")
+  reversedSales       Sale[]                  @relation("SaleReversedBy")
 
   @@unique([businessId, id])
   @@unique([businessId, userId])
@@ -154,6 +162,7 @@ model Device {
   inventoryMovements      InventoryMovement[]
   journalEntries          JournalEntry[]
   stockValuations         StockValuation[]
+  sales                   Sale[]
 
   @@unique([businessId, id])
   @@index([businessId, status])

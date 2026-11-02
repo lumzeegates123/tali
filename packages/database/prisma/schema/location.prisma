@@ -25,6 +25,7 @@ model BusinessLocation {
   inventoryValuations     InventoryValuation[]
   stockValuations         StockValuation[]
   journalEntries          JournalEntry[]
+  sales                   Sale[]
 
   @@unique([businessId, id])
   @@map("business_locations")

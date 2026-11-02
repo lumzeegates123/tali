@@ -1,8 +1,15 @@
 import { ConflictError, InsufficientStockError, StocktakeStaleError, VersionConflictError } from "@tali/application";
 import type { CatalogProduct, StocktakeId } from "@tali/domain";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { readInventoryConsistency, readInventorySnapshot, readTenancySnapshot } from "../../src/testing/index.js";
+import {
+  readInventoryConsistency,
+  readInventorySnapshot,
+  readLedgerConsistency,
+  readSalesConsistency,
+  readTenancySnapshot,
+} from "../../src/testing/index.js";
 import { type InventoryTenant, inventoryProduct, inventoryTenant } from "../support/inventory.js";
+import { reversalInput, type SaleProduct, saleInput, saleLine } from "../support/sales.js";
 import { type Tenancy, useTenancyHarness } from "../support/tenancy.js";
 
 /**
@@ -26,8 +33,10 @@ const SCENARIO_TIMEOUT_MS = 600_000;
  * Each iteration asserts the exact outcome set; after every iteration the
  * movement and audit counts match the effective changes, no movement is
  * duplicated, every balance equals the sum and count of its movements, and
- * the consistency query is empty. Iteration order and quantities are fixed:
- * there is no randomness, only real scheduling.
+ * the inventory, ledger and sales consistency queries are empty. Build 3
+ * Slice 5 adds sales and sale reversals (ADR-011 section 14) racing the same
+ * stock. Iteration order and quantities are fixed: there is no randomness,
+ * only real scheduling.
  */
 describe(`inventory concurrency soak, ${ITERATIONS} iterations per scenario (PostgreSQL)`, () => {
   const harness = useTenancyHarness();
@@ -36,8 +45,22 @@ describe(`inventory concurrency soak, ${ITERATIONS} iterations per scenario (Pos
   let a: InventoryTenant;
   let beans: CatalogProduct;
   let sugar: CatalogProduct;
+  let sellable: Map<CatalogProduct, SaleProduct>;
 
   const key = () => harness.world().ids.newId("IdempotencyKey");
+  const PRICE = 1_000n;
+  const sell = (lines: readonly [CatalogProduct, string][]) => {
+    const total = lines.reduce((sum, [, quantity]) => sum + PRICE * BigInt(quantity), 0n);
+    return single.recordSale.execute(
+      a.context,
+      saleInput(
+        harness,
+        lines.map(([product, quantity]) => saleLine(sellable.get(product) as SaleProduct, quantity)),
+        total.toString(),
+      ),
+    );
+  };
+  const reverseSale = (saleId: string) => single.reverseSale.execute(a.context, reversalInput(harness, saleId));
   const piece = (product: CatalogProduct, quantityMinor: string) => ({
     variantId: product.variant.id,
     quantityMinor,
@@ -98,14 +121,15 @@ describe(`inventory concurrency soak, ${ITERATIONS} iterations per scenario (Pos
       expect(audit.filter((row) => row.action === action).length, `${label}: ${action}`).toBe(total);
     }
     const expectedAudit = [...expected.audit.values()].reduce((total, value) => total + value, 0);
-    expect(audit.filter((row) => row.action.startsWith("inventory.")).length, `${label}: audit total`).toBe(
-      expectedAudit,
-    );
+    expect(
+      audit.filter((row) => row.action.startsWith("inventory.") || row.action.startsWith("sale.")).length,
+      `${label}: audit total`,
+    ).toBe(expectedAudit);
     const identities = inventory.movements.map((row) =>
       [
         row.type,
         row.variantId,
-        row.openingBatchId ?? row.goodsReceiptId ?? row.adjustmentId ?? row.stocktakeId,
+        row.openingBatchId ?? row.goodsReceiptId ?? row.adjustmentId ?? row.stocktakeId ?? row.saleId,
         row.reversesMovementId,
       ].join("|"),
     );
@@ -118,7 +142,12 @@ describe(`inventory concurrency soak, ${ITERATIONS} iterations per scenario (Pos
       expect(BigInt(balance.quantityText), `${label}: balance equals the movement sum`).toBe(sum);
       expect(balance.version, `${label}: balance version equals the movement count`).toBe(own.length);
     }
+    for (const balance of inventory.balances) {
+      expect(BigInt(balance.quantityText), `${label}: no negative stock`).toBeGreaterThanOrEqual(0n);
+    }
     expect(await readInventoryConsistency(), label).toEqual([]);
+    expect(await readLedgerConsistency(), label).toEqual([]);
+    expect(await readSalesConsistency(), label).toEqual([]);
   }
 
   beforeEach(async () => {
@@ -127,12 +156,23 @@ describe(`inventory concurrency soak, ${ITERATIONS} iterations per scenario (Pos
     a = await inventoryTenant(harness, "inventory-soak");
     beans = await inventoryProduct(harness, a, { name: "Beans" });
     sugar = await inventoryProduct(harness, a, { name: "Sugar" });
+    sellable = new Map();
+    for (const product of [beans, sugar]) {
+      const priced = await tenancy.setSellingPrice.execute(a.context, {
+        productId: product.product.id,
+        expectedVersion: product.product.version,
+        price: { amountMinor: PRICE.toString(), currency: a.currency },
+      });
+      sellable.set(product, { product, variantId: product.variant.id, priceVersion: priced.item.variant.priceVersion });
+    }
     expected.movements = 0;
     expected.audit.clear();
   });
 
   afterEach(async () => {
     expect(await readInventoryConsistency()).toEqual([]);
+    expect(await readLedgerConsistency()).toEqual([]);
+    expect(await readSalesConsistency()).toEqual([]);
   });
 
   it(
@@ -357,6 +397,94 @@ describe(`inventory concurrency soak, ${ITERATIONS} iterations per scenario (Pos
         effective(1, race.results[0].status === "fulfilled" ? "inventory.receipt_reversed" : "inventory.written_off");
         expect(await onHand(sugar)).toBe(0n);
         await settledLedger("reversal versus write-off", i);
+      }
+    },
+    SCENARIO_TIMEOUT_MS,
+  );
+
+  const receiveValued = async (product: CatalogProduct, quantityMinor: string) => {
+    await single.postGoodsReceipt.execute(a.context, {
+      lines: [
+        {
+          ...piece(product, quantityMinor),
+          totalCost: { amountMinor: (100n * BigInt(quantityMinor)).toString(), currency: a.currency },
+        },
+      ],
+      idempotencyKey: key(),
+    });
+    effective(1, "inventory.received");
+  };
+
+  it(
+    "sale versus sale or write-off of the same stock: exactly one wins and stock never goes negative",
+    async () => {
+      for (let i = 0; i < ITERATIONS; i += 1) {
+        await receiveValued(sugar, "6");
+        const competitor = i % 2 === 0 ? sell([[sugar, "6"]]) : writeOff([piece(sugar, "6")]);
+        const race = await settledPair<unknown, unknown>(competitor, sell([[sugar, "6"]]));
+        expect(race.fulfilled).toHaveLength(1);
+        expect(race.rejected).toEqual([expect.any(InsufficientStockError)]);
+        const writeOffWon = i % 2 === 1 && race.results[0].status === "fulfilled";
+        effective(1, writeOffWon ? "inventory.written_off" : "sale.recorded");
+        expect(await onHand(sugar)).toBe(0n);
+        await settledLedger("sale versus sale or write-off", i);
+      }
+    },
+    SCENARIO_TIMEOUT_MS,
+  );
+
+  it(
+    "opposite-order multi-line sales, a sale reversal and a receipt: all succeed",
+    async () => {
+      await receiveValued(beans, "200");
+      await receiveValued(sugar, "200");
+      let previous = (
+        await sell([
+          [beans, "1"],
+          [sugar, "1"],
+        ])
+      ).sale.saleId;
+      effective(2, "sale.recorded");
+      for (let i = 0; i < ITERATIONS; i += 1) {
+        const results = await Promise.allSettled([
+          sell([
+            [sugar, "2"],
+            [beans, "2"],
+          ]),
+          sell([
+            [beans, "1"],
+            [sugar, "1"],
+          ]),
+          reverseSale(previous),
+          receive([piece(sugar, "1"), piece(beans, "1")]),
+        ]);
+        expect(results.filter((result) => result.status === "rejected")).toEqual([]);
+        effective(2, "sale.recorded");
+        effective(2, "sale.recorded");
+        effective(2, "sale.reversed");
+        effective(2, "inventory.received");
+        const [next] = results;
+        if (next.status !== "fulfilled") throw new Error("expected the sale");
+        previous = next.value.sale.saleId;
+        await settledLedger("sales, reversal and receipt", i);
+      }
+    },
+    SCENARIO_TIMEOUT_MS,
+  );
+
+  it(
+    "sale reversal versus reversal of one sale: one reverses, the other is CONFLICT with no extra effect",
+    async () => {
+      await receiveValued(beans, "50");
+      for (let i = 0; i < ITERATIONS; i += 1) {
+        const { sale } = await sell([[beans, "2"]]);
+        effective(1, "sale.recorded");
+        const race = await settledPair(reverseSale(sale.saleId), reverseSale(sale.saleId));
+        expect(race.fulfilled.map((result) => result.sale.status)).toEqual(["REVERSED"]);
+        expect(race.rejected).toEqual([expect.any(ConflictError)]);
+        effective(1, "sale.reversed");
+        expect(await onHand(beans)).toBe(50n);
+        await settledLedger("sale reversal versus reversal", i);
       }
     },
     SCENARIO_TIMEOUT_MS,

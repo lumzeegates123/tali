@@ -20,6 +20,7 @@ const COMMITTED_MIGRATIONS = [
   "20261016120000_build3_ledger_accounts",
   "20261018120000_build3_valuation_journal",
   "20261030120000_build3_reversal_residual",
+  "20261101120000_build3_sales_persistence",
 ];
 
 const BUILD_1_TABLES = [
@@ -72,6 +73,14 @@ const BUILD_3_VALUATION_TABLES = [
   "public.stock_valuations",
 ];
 
+/** Build 3 Slice 5 adds sales, their lines and tenders, and the receipt counter. */
+const BUILD_3_SALES_TABLES = [
+  "public.sale_lines",
+  "public.sale_receipt_sequences",
+  "public.sale_tenders",
+  "public.sales",
+];
+
 const STOCKTAKE_MIGRATION_SQL = readFileSync(
   fileURLToPath(new URL("../../prisma/migrations/20261008120000_build2_stocktake/migration.sql", import.meta.url)),
   "utf8",
@@ -88,8 +97,8 @@ const STOCKTAKE_MIGRATION_CODE = STOCKTAKE_MIGRATION_SQL.split("\n")
  * schema, the two Build 1 identity and tenancy migrations, the Slice 5
  * invitations and devices migration, the Build 2 catalog migration, the
  * Build 2 inventory core migration, the Build 2 stocktake migration, the
- * Build 3 ledger accounts migration and the Build 3 valuation/journal
- * migration.
+ * Build 3 ledger accounts migration, the Build 3 valuation/journal
+ * migration, the reversal residual amendment and the Build 3 sales migration.
  */
 describe("E. migration chain", () => {
   const { owner } = useFixtureHarness();
@@ -140,7 +149,7 @@ describe("E. migration chain", () => {
     expect(objects.rows).toEqual([]);
   });
 
-  it("the migration chain creates exactly the Build 1, catalog, inventory, stocktake, ledger and valuation tables (and Prisma's migration table)", async () => {
+  it("the migration chain creates exactly the Build 1, catalog, inventory, stocktake, ledger, valuation and sales tables (and Prisma's migration table)", async () => {
     const { rows } = await owner.query<{ name: string }>(
       `SELECT schemaname || '.' || tablename AS name FROM pg_tables
        WHERE schemaname NOT IN ('pg_catalog', 'information_schema', 'test_fixtures') ORDER BY (schemaname || '.' || tablename) COLLATE "C"`,
@@ -154,6 +163,7 @@ describe("E. migration chain", () => {
         ...BUILD_2_STOCKTAKE_TABLES,
         ...BUILD_3_LEDGER_TABLES,
         ...BUILD_3_VALUATION_TABLES,
+        ...BUILD_3_SALES_TABLES,
       ].sort(),
     );
   });

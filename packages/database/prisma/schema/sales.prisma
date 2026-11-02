@@ -1,0 +1,138 @@
+// Sales module (ADR-011 sections 4 to 8; Build 3 Slice 5). Online, fully
+// tendered sales with full reversal. Tenant-owned: business_id NOT NULL and
+// composite foreign keys so no reference crosses businesses. Status, amount,
+// cost-shape, discount-shape, tax-snapshot, tender and reversal-shape CHECKs,
+// the deferred cyclic foreign keys (sale -> original journal, line -> SALE
+// movement) and the privileges live in the migration SQL. Lines and tenders
+// are immutable snapshots; only a sale's status and reversal fields are ever
+// updated, and nothing is deleted.
+
+model Sale {
+  businessId                     String    @map("business_id") @db.Uuid
+  id                             String    @id @db.Uuid
+  locationId                     String    @map("location_id") @db.Uuid
+  receiptNumber                  String    @map("receipt_number")
+  status                         String
+  currency                       String    @db.VarChar(3)
+  grossTotalMinor                BigInt    @map("gross_total_minor")
+  discountTotalMinor             BigInt    @map("discount_total_minor")
+  taxTotalMinor                  BigInt    @map("tax_total_minor")
+  totalMinor                     BigInt    @map("total_minor")
+  costStatus                     String    @map("cost_status")
+  cogsTotalMinor                 BigInt    @map("cogs_total_minor")
+  recordedByMembershipId         String    @map("recorded_by_membership_id") @db.Uuid
+  deviceId                       String?   @map("device_id") @db.Uuid
+  sourceChannel                  String    @map("source_channel")
+  correlationId                  String    @map("correlation_id")
+  occurredAt                     DateTime  @map("occurred_at") @db.Timestamptz(3)
+  businessDate                   DateTime  @map("business_date") @db.Date
+  recordedAt                     DateTime  @map("recorded_at") @db.Timestamptz(3)
+  deviceReportedAt               DateTime? @map("device_reported_at") @db.Timestamptz(3)
+  journalEntryId                 String    @map("journal_entry_id") @db.Uuid
+  reversedAt                     DateTime? @map("reversed_at") @db.Timestamptz(3)
+  reversedByMembershipId         String?   @map("reversed_by_membership_id") @db.Uuid
+  reversalReason                 String?   @map("reversal_reason")
+  reversalJournalEntryId         String?   @map("reversal_journal_entry_id") @db.Uuid
+  reversalTenderUnwoundConfirmed Boolean?  @map("reversal_tender_unwound_confirmed")
+
+  business        Business            @relation("SaleBusiness", fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  currencyRow     Business            @relation("SaleCurrency", fields: [businessId, currency], references: [id, currencyCode], onDelete: Restrict, onUpdate: Restrict)
+  location        BusinessLocation    @relation(fields: [businessId, locationId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  recordedBy      BusinessMembership  @relation("SaleRecordedBy", fields: [businessId, recordedByMembershipId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  reversedBy      BusinessMembership? @relation("SaleReversedBy", fields: [businessId, reversedByMembershipId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  device          Device?             @relation(fields: [businessId, deviceId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  originalJournal JournalEntry        @relation("SaleOriginalJournal", fields: [businessId, journalEntryId, id], references: [businessId, id, saleId], onDelete: Restrict, onUpdate: Restrict, map: "sales_original_journal_fkey")
+  reversalJournal JournalEntry?       @relation("SaleReversalJournal", fields: [businessId, reversalJournalEntryId, id], references: [businessId, id, saleId], onDelete: Restrict, onUpdate: Restrict, map: "sales_reversal_journal_fkey")
+
+  lines          SaleLine[]
+  tenders        SaleTender[]
+  journalEntries JournalEntry[]      @relation("JournalEntrySale")
+  movements      InventoryMovement[]
+
+  @@unique([businessId, id])
+  @@unique([businessId, id, locationId])
+  @@unique([businessId, receiptNumber])
+  @@index([businessId, locationId, id])
+  @@index([businessId, locationId, recordedByMembershipId, id])
+  @@map("sales")
+}
+
+// Immutable line snapshots (ADR-011 sections 5 and 10 to 12; ADR-010 section 7).
+// A tracked line references its SALE movement through a deferred composite
+// key, because the movement is written after the line in the same transaction.
+model SaleLine {
+  businessId           String  @map("business_id") @db.Uuid
+  saleId               String  @map("sale_id") @db.Uuid
+  lineNumber           Int     @map("line_number")
+  variantId            String  @map("variant_id") @db.Uuid
+  productName          String  @map("product_name")
+  sku                  String?
+  tracked              Boolean
+  quantityMinor        BigInt  @map("quantity_minor")
+  unit                 String  @db.VarChar(16)
+  unitScale            Int     @map("unit_scale") @db.SmallInt
+  unitPriceMinor       BigInt  @map("unit_price_minor")
+  priceVersion         Int     @map("price_version")
+  grossMinor           BigInt  @map("gross_minor")
+  discountKind         String  @map("discount_kind")
+  discountValue        BigInt  @map("discount_value")
+  discountMinor        BigInt  @map("discount_minor")
+  netMinor             BigInt  @map("net_minor")
+  taxTreatmentId       String? @map("tax_treatment_id") @db.Uuid
+  taxName              String? @map("tax_name")
+  taxKind              String  @map("tax_kind")
+  taxRateBps           Int?    @map("tax_rate_bps")
+  taxPricingMode       String? @map("tax_pricing_mode")
+  taxRoundingMode      String? @map("tax_rounding_mode")
+  taxableBaseMinor     BigInt  @map("taxable_base_minor")
+  taxMinor             BigInt  @map("tax_minor")
+  totalMinor           BigInt  @map("total_minor")
+  costStatus           String  @map("cost_status")
+  costMinor            BigInt? @map("cost_minor")
+  valuationVersionRead Int?    @map("valuation_version_read")
+  movementId           String? @map("movement_id") @db.Uuid
+
+  business Business           @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  sale     Sale               @relation(fields: [businessId, saleId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  variant  ProductVariant     @relation(fields: [businessId, variantId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  unitRow  UnitOfMeasure      @relation(fields: [unit], references: [code], onDelete: Restrict, onUpdate: Restrict)
+  movement InventoryMovement? @relation(fields: [businessId, movementId, saleId, variantId], references: [businessId, id, saleId, variantId], onDelete: Restrict, onUpdate: Restrict, map: "sale_lines_movement_fkey")
+
+  @@id([businessId, saleId, lineNumber])
+  @@unique([businessId, movementId])
+  @@map("sale_lines")
+}
+
+// Tenders (ADR-011 sections 6 and 13). Cash received and change are display snapshots
+// only; non-cash tenders are NOT_VERIFIED evidence of the stated method.
+model SaleTender {
+  businessId          String  @map("business_id") @db.Uuid
+  saleId              String  @map("sale_id") @db.Uuid
+  tenderNumber        Int     @map("tender_number")
+  method              String
+  amountMinor         BigInt  @map("amount_minor")
+  reference           String?
+  verificationStatus  String  @map("verification_status")
+  cashReceivedMinor   BigInt? @map("cash_received_minor")
+  changeGivenMinor    BigInt? @map("change_given_minor")
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  sale     Sale     @relation(fields: [businessId, saleId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([businessId, saleId, tenderNumber])
+  @@map("sale_tenders")
+}
+
+// Business-scoped online receipt counter (ADR-011 section 8). The row is
+// created lazily by the first sale and locked FOR UPDATE inside the sale
+// transaction, after the stock locks. next_number is the number the next sale
+// receives; a rolled-back sale rolls its counter update back with it.
+model SaleReceiptSequence {
+  businessId String   @id @map("business_id") @db.Uuid
+  nextNumber BigInt   @map("next_number")
+  updatedAt  DateTime @map("updated_at") @db.Timestamptz(3)
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@map("sale_receipt_sequences")
+}

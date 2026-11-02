@@ -1,4 +1,5 @@
 import { DomainError } from "../../errors.js";
+import type { Id } from "../../kernel/index.js";
 import { KernelError, MAX_QUANTITY_MINOR, Quantity } from "../../kernel/index.js";
 import type { BusinessId, MembershipId } from "../business/index.js";
 import type { PackName, ProductPackId, ProductVariantId } from "../catalog/index.js";
@@ -11,8 +12,9 @@ import { parseInventoryReasonNote, restoreInventoryRecording, validPositiveVersi
 import type { GoodsReceiptId, InventoryAdjustmentId, InventoryMovementId, OpeningBatchId, StocktakeId } from "./ids.js";
 
 /**
- * The movement types Build 2 implements (ADR-008 section 7.1). SALE,
- * CUSTOMER_RETURN and SUPPLIER_RETURN arrive with their own use cases.
+ * The movement types implemented so far (ADR-008 section 7.1; SALE from
+ * ADR-011 section 14). CUSTOMER_RETURN and SUPPLIER_RETURN arrive with their
+ * own use cases.
  */
 export const INVENTORY_MOVEMENT_TYPES = [
   "OPENING",
@@ -20,6 +22,7 @@ export const INVENTORY_MOVEMENT_TYPES = [
   "ADJUSTMENT",
   "WRITE_OFF",
   "COUNT_CORRECTION",
+  "SALE",
 ] as const;
 export type InventoryMovementType = (typeof INVENTORY_MOVEMENT_TYPES)[number];
 
@@ -28,7 +31,9 @@ export type InventoryMovementSource =
   | { readonly kind: "OPENING_BATCH"; readonly id: OpeningBatchId }
   | { readonly kind: "GOODS_RECEIPT"; readonly id: GoodsReceiptId }
   | { readonly kind: "ADJUSTMENT"; readonly id: InventoryAdjustmentId }
-  | { readonly kind: "STOCKTAKE"; readonly id: StocktakeId };
+  | { readonly kind: "STOCKTAKE"; readonly id: StocktakeId }
+  /** The sales module's SaleId; named through the kernel because sales depends on inventory. */
+  | { readonly kind: "SALE"; readonly id: Id<"Sale"> };
 
 export type InventoryMovementSourceKind = InventoryMovementSource["kind"];
 
@@ -38,6 +43,7 @@ const SOURCE_KIND_BY_TYPE: Readonly<Record<InventoryMovementType, InventoryMovem
   ADJUSTMENT: "ADJUSTMENT",
   WRITE_OFF: "ADJUSTMENT",
   COUNT_CORRECTION: "STOCKTAKE",
+  SALE: "SALE",
 });
 
 export function parseInventoryMovementType(value: string): InventoryMovementType {
@@ -143,6 +149,15 @@ function requireDirection(type: InventoryMovementType, delta: Quantity, reversal
         );
       }
       return;
+    case "SALE":
+      if (delta.isNegative() === reversal) {
+        throw new DomainError(
+          "INVALID_VALUE",
+          reversal ? "a SALE reversal must be positive" : "a SALE movement must be negative",
+          "quantity",
+        );
+      }
+      return;
     case "ADJUSTMENT":
       return;
     case "COUNT_CORRECTION":
@@ -182,7 +197,12 @@ function validMovementReason(props: {
     }
     return { reasonNote: parseInventoryReasonNote(props.reasonNote) };
   }
-  if (props.type === "OPENING" || props.type === "PURCHASE_RECEIPT" || props.type === "COUNT_CORRECTION") {
+  if (
+    props.type === "OPENING" ||
+    props.type === "PURCHASE_RECEIPT" ||
+    props.type === "COUNT_CORRECTION" ||
+    props.type === "SALE"
+  ) {
     if (props.reasonCode !== undefined || props.reasonNote !== undefined) {
       throw new DomainError("INVALID_VALUE", `a ${props.type} movement carries no reason`, "reasonCode");
     }
@@ -246,8 +266,8 @@ export function restoreMovement(props: {
     if (reversal) {
       throw new DomainError("INVALID_VALUE", "a reversal movement carries no pack snapshot", "pack");
     }
-    if (type === "COUNT_CORRECTION") {
-      throw new DomainError("INVALID_VALUE", "a COUNT_CORRECTION movement carries no pack snapshot", "pack");
+    if (type === "COUNT_CORRECTION" || type === "SALE") {
+      throw new DomainError("INVALID_VALUE", `a ${type} movement carries no pack snapshot`, "pack");
     }
     pack = parsePackSnapshot(props.pack);
     if (props.delta.abs().amountMinor !== pack.count * pack.factorMinor) {

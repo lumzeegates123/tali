@@ -805,6 +805,66 @@ describe("ReverseSale", () => {
     expect(h.catalog.tenancy.ledger.entriesFor(roles.OWNER.businessId)).toHaveLength(2);
   });
 
+  it("passes an explicit write context: original journal and envelope, then new reversal ids and the reversal journal", async () => {
+    const h = harness();
+    const roles = await h.businessWithRoles("Shop");
+    const valued = await pricedProduct(h, roles.OWNER);
+    const unvalued = await pricedProduct(h, roles.OWNER, { status: "UNVALUED", valueMinor: 0n });
+    const input = saleInput(h, valued.variantId, valued.priceVersion, {
+      lines: [
+        { variantId: valued.variantId, quantityMinor: "1", unit: "PIECE", expectedPriceVersion: valued.priceVersion },
+        {
+          variantId: unvalued.variantId,
+          quantityMinor: "1",
+          unit: "PIECE",
+          expectedPriceVersion: unvalued.priceVersion,
+        },
+      ],
+    });
+    const recorded = await h.recordSale.execute(roles.CASHIER, input);
+    const [journal] = h.catalog.tenancy.ledger.entriesFor(roles.OWNER.businessId);
+    expect(recorded.sale.journalEntryId).toBe(journal?.id);
+    const original = h.salesStore.stockWrites()[0];
+    if (original === undefined || !("effects" in original)) throw new Error("expected the original stock write");
+    expect(original).toMatchObject({
+      businessId: roles.OWNER.businessId,
+      locationId: roles.OWNER.locationId,
+      currency: "NGN",
+      saleId: input.saleId,
+      journalEntryId: journal?.id,
+      recording: {
+        actorMembershipId: recorded.sale.recordedByMembershipId,
+        sourceChannel: roles.CASHIER.sourceChannel,
+        correlationId: roles.CASHIER.correlationId,
+      },
+    });
+    expect(original.recording.occurredAt.toISOString()).toBe(recorded.sale.occurredAt);
+    expect(original.recording.recordedAt.toISOString()).toBe(recorded.sale.recordedAt);
+    expect(original.recording.businessDate.toString()).toBe(recorded.sale.businessDate);
+    expect(original.effects.map((effect) => effect.costStatus)).toEqual(["VALUED", "UNVALUED"]);
+
+    h.catalog.tenancy.clock.advanceBySeconds(60);
+    await h.reverseSale.execute(roles.MANAGER, {
+      saleId: input.saleId,
+      reason: "Rang up twice",
+      tenderUnwoundConfirmed: true,
+      idempotencyKey: h.catalog.tenancy.ids.newId("IdempotencyKey"),
+    });
+    const mirror = h.catalog.tenancy.ledger.entriesFor(roles.OWNER.businessId)[1];
+    const reversal = h.salesStore.stockWrites()[1];
+    if (reversal === undefined || !("reversals" in reversal)) throw new Error("expected the reversal stock write");
+    expect(reversal).toMatchObject({ saleId: input.saleId, journalEntryId: mirror?.id, reason: "Rang up twice" });
+    expect(reversal.recording.actorMembershipId).not.toBe(recorded.sale.recordedByMembershipId);
+    expect(reversal.recording.occurredAt.getTime()).toBe(original.recording.occurredAt.getTime() + 60_000);
+    expect(reversal.reversals.map((step) => step.originalCostStatus)).toEqual(["VALUED", "UNVALUED"]);
+    expect(reversal.reversals.map((step) => step.plan.originalMovementId)).toEqual(
+      original.effects.map((effect) => effect.movementId),
+    );
+    const newIds = reversal.reversals.map((step) => step.movementId as string);
+    expect(new Set(newIds).size).toBe(2);
+    for (const effect of original.effects) expect(newIds).not.toContain(effect.movementId);
+  });
+
   it.each(["sales.inventory.applyReversalPlan", "ledger.journals.insert", "audit.sale.reversed"])(
     "leaves the sale posted when %s fails",
     async (operation) => {

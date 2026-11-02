@@ -284,9 +284,10 @@ async function recordInTransaction(
   if (!tenderTotal.equals(total)) throw new TenderTotalMismatchError(total.toMinorUnitsString());
   const occurredAt = dependencies.clock.now();
   const recordedAt = dependencies.clock.now();
+  const journalEntryId = dependencies.ids.newId("JournalEntry");
   let sale;
   try {
-    sale = createSale({
+    const created = createSale({
       businessId: context.businessId,
       id: saleId,
       locationId: context.locationId,
@@ -312,6 +313,7 @@ async function recordInTransaction(
       recordedAt,
       ...(deviceReportedAt === undefined ? {} : { deviceReportedAt }),
     });
+    sale = withOriginalJournal(created, journalEntryId);
   } catch (error) {
     if (
       error instanceof DomainError &&
@@ -323,14 +325,8 @@ async function recordInTransaction(
     throw error instanceof DomainError || error instanceof KernelError ? toApplicationError(error) : error;
   }
   await dependencies.sales.insert(scope, sale);
-  await dependencies.inventory.applySalePlan(
-    scope,
-    context.businessId,
-    context.locationId,
-    context.currency,
-    sale.stockEffects,
-  );
   const posted = await posting.post(scope, context, {
+    entryId: journalEntryId,
     plan: salePostedPlan(sale),
     source: { kind: "sale", id: sale.id },
     postingRule: SALE_POSTED_RULE,
@@ -338,8 +334,23 @@ async function recordInTransaction(
     description: `Sale ${sale.receiptNumber}`,
     occurredAt: sale.occurredAt,
   });
-  const withJournal = withOriginalJournal(sale, posted.entry.id);
-  await dependencies.sales.attachOriginalJournal(scope, withJournal);
+  await dependencies.inventory.applySalePlan(scope, {
+    businessId: context.businessId,
+    locationId: context.locationId,
+    currency: context.currency,
+    saleId: sale.id,
+    journalEntryId: posted.entry.id,
+    recording: {
+      actorMembershipId: sale.recordedByMembershipId,
+      ...(sale.deviceId === undefined ? {} : { deviceId: sale.deviceId }),
+      sourceChannel: sale.sourceChannel,
+      correlationId: sale.correlationId,
+      occurredAt: sale.occurredAt,
+      businessDate: sale.businessDate,
+      recordedAt: sale.recordedAt,
+    },
+    effects: sale.stockEffects,
+  });
   await dependencies.audit.recordBusinessEvent(scope, saleRecorded, {
     ...businessAuditEnvelope(context, key),
     locationId: context.locationId,
