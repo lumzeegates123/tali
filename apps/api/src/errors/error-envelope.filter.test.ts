@@ -11,7 +11,12 @@ import {
   IdempotencyKeyReusedError,
   InsufficientStockError,
   LedgerChartIncompleteError,
+  DiscountExceedsLineError,
   LedgerNotProvisionedError,
+  PriceChangedError,
+  PriceNotSetError,
+  ProductArchivedError,
+  TenderTotalMismatchError,
   ValuationStaleError,
   LocationRequiredError,
   NotFoundError,
@@ -77,6 +82,15 @@ describe("ErrorEnvelopeFilter", () => {
     [new LedgerNotProvisionedError(), 409, "LEDGER_NOT_PROVISIONED"],
     [new LedgerChartIncompleteError(), 409, "LEDGER_CHART_INCOMPLETE"],
     [new ValuationStaleError(), 409, "VALUATION_STALE"],
+    [new PriceNotSetError(["variant"]), 409, "PRICE_NOT_SET"],
+    [
+      new PriceChangedError([{ variantId: "variant", currentPriceMinor: "100", currentPriceVersion: 2 }]),
+      409,
+      "PRICE_CHANGED",
+    ],
+    [new ProductArchivedError(["variant"]), 409, "PRODUCT_ARCHIVED"],
+    [new DiscountExceedsLineError(1), 409, "DISCOUNT_EXCEEDS_LINE"],
+    [new TenderTotalMismatchError("100"), 409, "TENDER_TOTAL_MISMATCH"],
   ] as const)("maps %s to %i %s", (error: ApplicationError, status, code) => {
     const result = run(error);
     expect(result.status).toBe(status);

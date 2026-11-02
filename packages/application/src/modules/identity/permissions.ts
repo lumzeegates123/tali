@@ -47,10 +47,20 @@ export const inventoryPermissions = definePermissionCatalogue([
  */
 export const ledgerPermissions = definePermissionCatalogue(["ledger:read"]);
 
+/** Build 3 sales permissions (ADR-011 section 20). */
+export const salesPermissions = definePermissionCatalogue([
+  "sales:read",
+  "sales:read-own",
+  "sales:create",
+  "sales:discount",
+  "sales:reverse",
+]);
+
 const p = identityPermissions.permissions;
 const c = catalogPermissions.permissions;
 const i = inventoryPermissions.permissions;
 const l = ledgerPermissions.permissions;
+const s = salesPermissions.permissions;
 const everyRole = [
   p["business:read"],
   p["location:read"],
@@ -83,6 +93,11 @@ export const rolePermissions: Readonly<Record<MembershipRole, readonly Permissio
     i["inventory:value"],
     i["inventory:cost-read"],
     l["ledger:read"],
+    s["sales:read"],
+    s["sales:read-own"],
+    s["sales:create"],
+    s["sales:discount"],
+    s["sales:reverse"],
   ]),
   MANAGER: Object.freeze([
     ...everyRole,
@@ -93,8 +108,13 @@ export const rolePermissions: Readonly<Record<MembershipRole, readonly Permissio
     ...allInventoryChanges,
     i["inventory:value"],
     i["inventory:cost-read"],
+    s["sales:read"],
+    s["sales:read-own"],
+    s["sales:create"],
+    s["sales:discount"],
+    s["sales:reverse"],
   ]),
-  CASHIER: Object.freeze([...everyRole]),
+  CASHIER: Object.freeze([...everyRole, s["sales:read-own"], s["sales:create"]]),
   STOCK_KEEPER: Object.freeze([
     ...everyRole,
     c["product:manage"],
@@ -102,7 +122,13 @@ export const rolePermissions: Readonly<Record<MembershipRole, readonly Permissio
     i["inventory:receive"],
     i["inventory:count"],
   ]),
-  ACCOUNTANT: Object.freeze([...everyRole, i["inventory:cost-read"], l["ledger:read"]]),
+  ACCOUNTANT: Object.freeze([
+    ...everyRole,
+    i["inventory:cost-read"],
+    l["ledger:read"],
+    s["sales:read"],
+    s["sales:read-own"],
+  ]),
 });
 
 /** Expands a membership's role into its PermissionSet during context resolution. */

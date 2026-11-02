@@ -7,6 +7,7 @@ export {
   inventoryPermissions,
   ledgerPermissions,
   permissionsForRole,
+  salesPermissions,
   rolePermissions,
 } from "./permissions.js";
 export type { UserRegistration, UserRepository } from "./ports.js";

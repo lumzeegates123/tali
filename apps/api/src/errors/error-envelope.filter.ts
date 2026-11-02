@@ -26,6 +26,11 @@ const APPLICATION_STATUS: Record<ApplicationErrorCode, number> = {
   LEDGER_NOT_PROVISIONED: HttpStatus.CONFLICT,
   LEDGER_CHART_INCOMPLETE: HttpStatus.CONFLICT,
   VALUATION_STALE: HttpStatus.CONFLICT,
+  PRICE_NOT_SET: HttpStatus.CONFLICT,
+  PRICE_CHANGED: HttpStatus.CONFLICT,
+  PRODUCT_ARCHIVED: HttpStatus.CONFLICT,
+  DISCOUNT_EXCEEDS_LINE: HttpStatus.CONFLICT,
+  TENDER_TOTAL_MISMATCH: HttpStatus.CONFLICT,
 };
 
 const HTTP_CODE: Readonly<Record<number, string>> = {

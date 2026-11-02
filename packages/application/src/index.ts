@@ -32,7 +32,12 @@ export {
   requireLocationBound,
 } from "./context/business-context.js";
 export type { AuthenticatedUserContext } from "./context/authenticated-user-context.js";
-export type { ApplicationErrorCode, ValidationIssue } from "./errors/application-error.js";
+export type {
+  ApplicationErrorCode,
+  PriceChangeDetail,
+  StockShortageDetail,
+  ValidationIssue,
+} from "./errors/application-error.js";
 export {
   ApplicationError,
   AuthenticationError,
@@ -43,6 +48,7 @@ export {
   IdempotencyInProgressError,
   IdempotencyKeyRequiredError,
   IdempotencyKeyReusedError,
+  DiscountExceedsLineError,
   InsufficientStockError,
   LedgerChartIncompleteError,
   LedgerNotProvisionedError,
@@ -50,8 +56,12 @@ export {
   LocationRequiredError,
   NotFoundError,
   PermissionDeniedError,
+  PriceChangedError,
+  PriceNotSetError,
+  ProductArchivedError,
   STOCKTAKE_STALE_MAX_IDS,
   StocktakeStaleError,
+  TenderTotalMismatchError,
   UserDisabledError,
   UserNotRegisteredError,
   ValidationError,
@@ -120,6 +130,7 @@ export * from "./modules/identity/index.js";
 export * from "./modules/inventory/index.js";
 export * from "./modules/ledger/index.js";
 export * from "./modules/location/index.js";
+export * from "./modules/sales/index.js";
 export * from "./ports/index.js";
 export type { Page, PageRequest } from "./queries/pagination.js";
 export { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, parsePageRequest } from "./queries/pagination.js";

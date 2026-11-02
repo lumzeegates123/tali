@@ -5,6 +5,7 @@ import { identityAuditActions } from "../modules/identity/index.js";
 import { inventoryAuditActions } from "../modules/inventory/index.js";
 import { ledgerAuditActions } from "../modules/ledger/index.js";
 import { locationAuditActions } from "../modules/location/index.js";
+import { salesAuditActions } from "../modules/sales/audit-actions.js";
 import { defineAuditRegistry } from "./audit-action.js";
 
 /** Every audit action Tali can record. Registration fails at startup on a duplicate name. */
@@ -16,4 +17,5 @@ export const taliAuditRegistry = defineAuditRegistry([
   ...catalogAuditActions,
   ...inventoryAuditActions,
   ...ledgerAuditActions,
+  ...salesAuditActions,
 ]);

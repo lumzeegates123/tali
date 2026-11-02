@@ -217,6 +217,8 @@ describe("audit actions and registry", () => {
       ["product_category.updated", "business"],
       ["product_pack.added", "business"],
       ["product_pack.retired", "business"],
+      ["sale.recorded", "business"],
+      ["sale.reversed", "business"],
       ["user.registered", "platform"],
     ]);
   });

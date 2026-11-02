@@ -1,12 +1,14 @@
 # Plan 005. Build 3: sales and ledger posting foundation
 
-Status: **APPROVED / S0 COMPLETE / S1 COMPLETE / S2 COMPLETE / S3 COMPLETE.** ADR-009, ADR-010 and ADR-011 were **ACCEPTED on 2026-10-15** by the
+Status: **APPROVED / S0 COMPLETE / S1 COMPLETE / S2 COMPLETE / S3 COMPLETE / S4 COMPLETE.** ADR-009, ADR-010 and ADR-011 were **ACCEPTED on 2026-10-15** by the
 human maintainer. Accountant review is **COMPLETE** (Osasu, 2026-10-15; `docs/reviews/build-3-accountant-review.md`
 sections 14 and 14.1): ADR-009 A1 to A22 and ADR-010 T1 to T7 approved. Reversal-residual clarification
 **2026-10-29** (section 14.2; ADR-009 amendment section 38). Maintainer questions M1 to M17 are resolved
 (section 4). S1 (ledger domain and application) is **COMPLETE (2026-10-16)**. S2 (ledger account persistence and
 chart provisioning; journal tables moved to S3 by the maintainer's split decision) is **COMPLETE (2026-10-16)**. S3
-(valuation, journals, residual ORIGINAL corrections) is **COMPLETE (2026-10-30)**. S4 to S9 are not started.
+(valuation, journals, residual ORIGINAL corrections) is **COMPLETE (2026-10-30)**. S4 (sales domain and
+application, in-memory adapters only) is **COMPLETE (2026-11-01)**. S5 to S9 are not
+started.
 
 Scope: the ledger posting foundation, the default chart of accounts, perpetual weighted average cost valuation with
 explicit valuation status, and online, fully tendered sales with full reversal (ADR-009, ADR-011). Configurable tax
@@ -24,7 +26,7 @@ selling; price override; sale-level discounts; account management UI; period clo
 | S1    | Ledger domain and application          | ADR-009              | **Complete** (2026-10-16)  |
 | S2    | Ledger persistence and consistency     | ADR-009              | **Complete** (2026-10-16); accounts and chart only; journal tables moved to S3 |
 | S3    | Valuation and cost foundation          | ADR-009              | **Complete** (2026-10-30); residual ORIGINAL journals per ADR-009 §38 |
-| S4    | Sales domain and application           | ADR-011, ADR-009     | Not started (after S1)     |
+| S4    | Sales domain and application           | ADR-011, ADR-009     | **Complete** (2026-11-01); in-memory adapters only |
 | S5    | Sales persistence and SALE integration | ADR-011, ADR-009     | Not started (after S3, S4) |
 | S6    | API                                    | ADR-011, ADR-009     | Not started (after S5)     |
 | S7    | Clients (web and mobile)               | ADR-011              | Not started (after S6)     |
@@ -155,6 +157,15 @@ Each slice: outcome, dependencies, modules and files, tests, gate, stop conditio
   test.
 - Gate: application tests green with in-memory adapters.
 - Stop: a need for credit, partial payment or price override.
+- Status: **COMPLETE (2026-11-01)**. Implementation is on `feature/build-3-slice-4-sales-domain`, baseline
+  `25f1be364e6f712adae193015431c918dadfe2f3`. No PostgreSQL, no HTTP, no tax
+  configuration. `pnpm test:integration` and `pnpm verify` both exit 0. An earlier red integration run was
+  caused by overlapping test runs against a long-lived test container, not by S4; it passed after
+  recreating `postgres-test`. See `docs/audits/build-3-slice-4.md`.
+  Duplicate variant lines are one planned movement each, applied in request order against the running
+  weighted-average position. A sale reversal restores quantity and the snapshotted cost; from a
+  non-negative position that cannot reach ADR-009 Case B or C, so no sales-specific residual policy
+  was added. Margin display is left to S7. See `docs/audits/build-3-slice-4.md`.
 
 ### S5. Sales persistence and SALE integration
 
