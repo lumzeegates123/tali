@@ -1,10 +1,4 @@
-import {
-  ValidationError,
-  type JournalEntry,
-  type JournalLine,
-  type JournalRepository,
-  type JournalSourceRef,
-} from "@tali/application";
+import { type JournalEntry, type JournalLine, type JournalRepository, type JournalSourceRef } from "@tali/application";
 import {
   Money,
   parseBusinessId,
@@ -32,30 +26,31 @@ export const JOURNAL_CONFLICTS: Readonly<Record<string, string>> = Object.freeze
   journal_entries_original_adjustment_key: "an original journal entry already exists for this source",
   journal_entries_original_stocktake_key: "an original journal entry already exists for this source",
   journal_entries_original_valuation_key: "an original journal entry already exists for this source",
+  journal_entries_original_sale_key: "an original journal entry already exists for this source",
 });
 
 function sourceColumns(source: JournalSourceRef) {
-  if (source.kind === "sale") {
-    throw new ValidationError("sale journal sources are not available until the sales slice", [
-      { path: ["source", "kind"], message: "unavailable" },
-    ]);
-  }
   return {
     openingBatchId: source.kind === "opening_batch" ? source.id : null,
     goodsReceiptId: source.kind === "goods_receipt" ? source.id : null,
     adjustmentId: source.kind === "adjustment" ? source.id : null,
     stocktakeId: source.kind === "stocktake" ? source.id : null,
     valuationId: source.kind === "valuation" ? source.id : null,
+    saleId: source.kind === "sale" ? source.id : null,
   };
 }
 
 function sourceOf(row: JournalEntryRow): JournalSourceRef {
+  const set = [row.openingBatchId, row.goodsReceiptId, row.adjustmentId, row.stocktakeId, row.valuationId, row.saleId];
+  if (set.filter((id) => id !== null).length !== 1) {
+    throw new Error("a stored journal entry must have exactly one typed source");
+  }
   if (row.openingBatchId !== null) return { kind: "opening_batch", id: row.openingBatchId };
   if (row.goodsReceiptId !== null) return { kind: "goods_receipt", id: row.goodsReceiptId };
   if (row.adjustmentId !== null) return { kind: "adjustment", id: row.adjustmentId };
   if (row.stocktakeId !== null) return { kind: "stocktake", id: row.stocktakeId };
   if (row.valuationId !== null) return { kind: "valuation", id: row.valuationId };
-  throw new Error("a stored journal entry must have exactly one typed source");
+  return { kind: "sale", id: row.saleId as string };
 }
 
 function toLine(
@@ -161,6 +156,7 @@ export function createJournalRepository(): JournalRepository {
         ...(columns.adjustmentId === null ? {} : { adjustmentId: columns.adjustmentId }),
         ...(columns.stocktakeId === null ? {} : { stocktakeId: columns.stocktakeId }),
         ...(columns.valuationId === null ? {} : { valuationId: columns.valuationId }),
+        ...(columns.saleId === null ? {} : { saleId: columns.saleId }),
       };
       const row = await transactionClient(scope).journalEntry.findFirst({
         where,

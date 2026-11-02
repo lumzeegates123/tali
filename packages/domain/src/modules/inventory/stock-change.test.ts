@@ -7,6 +7,7 @@ import { parseBusinessId, parseMembershipId } from "../business/index.js";
 import type { ProductVariantId } from "../catalog/index.js";
 import { parseProductPackId, parseProductVariantId } from "../catalog/index.js";
 import { parseLocationId } from "../location/index.js";
+import { parseSaleId } from "../sales/index.js";
 import type {
   AdjustmentReason,
   InventoryMovement,
@@ -66,6 +67,7 @@ const SOURCES: Readonly<Record<InventoryMovementType, InventoryMovementSource>> 
   ADJUSTMENT: { kind: "ADJUSTMENT", id: parseInventoryAdjustmentId(uuid(0x22)) },
   WRITE_OFF: { kind: "ADJUSTMENT", id: parseInventoryAdjustmentId(uuid(0x23)) },
   COUNT_CORRECTION: { kind: "STOCKTAKE", id: parseStocktakeId(uuid(0x24)) },
+  SALE: { kind: "SALE", id: parseSaleId(uuid(0x25)) },
 };
 
 const REASONS: Readonly<Record<InventoryMovementType, AdjustmentReason | undefined>> = {
@@ -74,6 +76,7 @@ const REASONS: Readonly<Record<InventoryMovementType, AdjustmentReason | undefin
   ADJUSTMENT: parseAdjustmentReason({ kind: "ADJUSTMENT", reasonCode: "DATA_ENTRY_CORRECTION" }),
   WRITE_OFF: parseAdjustmentReason({ kind: "WRITE_OFF", reasonCode: "SPOILED" }),
   COUNT_CORRECTION: undefined,
+  SALE: undefined,
 };
 
 const reversalReason = parseInventoryReasonNote("Posted against the wrong delivery", "reason");
@@ -530,6 +533,23 @@ describe("planStockChange: lines and balances", () => {
       "type",
     );
   });
+
+  it("rejects SALE: sale stock effects are planned by the sales module", () => {
+    expectDomainError(
+      () =>
+        planStockChange({
+          businessId,
+          locationId,
+          type: "SALE",
+          source: SOURCES.SALE,
+          lines: [line(1, variantA, -1n)],
+          balances: [balance(variantA, 5n, 1)],
+          recording,
+        }),
+      "INVALID_VALUE",
+      "type",
+    );
+  });
 });
 
 describe("reverseDocumentMovements", () => {
@@ -617,6 +637,22 @@ describe("reverseDocumentMovements", () => {
       "INVALID_TRANSITION",
       "originals",
     );
+  });
+
+  it("never reverses a SALE movement as a document; the sale reversal does that", () => {
+    const sold = restoreMovement({
+      id: movementId(3),
+      businessId,
+      locationId,
+      variantId: variantA,
+      type: "SALE",
+      delta: quantity(-2n),
+      balanceAfter: quantity(3n),
+      balanceVersion: 2,
+      source: SOURCES.SALE,
+      ...recording,
+    });
+    expectDomainError(() => reverse([sold], [balance(variantA, 3n, 2)]), "INVALID_TRANSITION", "originals");
   });
 
   it("never reverses a reversal", () => {

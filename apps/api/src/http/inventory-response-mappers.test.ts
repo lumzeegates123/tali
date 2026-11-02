@@ -193,6 +193,28 @@ describe("movement serialization", () => {
       businessDate: "2026-10-09",
     });
   });
+
+  it("refuses a SALE movement until the HTTP contract exposes sales", () => {
+    const sale = {
+      id: "019a0000-0000-7000-8000-0000000000e2",
+      locationId: LOCATION,
+      variantId: VARIANT,
+      type: "SALE",
+      delta: pieces(-1n),
+      balanceAfter: pieces(9n),
+      balanceVersion: 2,
+      source: { kind: "SALE", id: "019a0000-0000-7000-8000-0000000000f1" },
+      sourceChannel: "api",
+      occurredAt: AT,
+      businessDate: BusinessDate.of(2026, 10, 9),
+    };
+    const result = {
+      stocktake: view("FULL", "POSTED"),
+      movements: [sale],
+      changed: true,
+    } as unknown as PostStocktakeResult;
+    expect(() => toPostStocktakeResponse(result)).toThrow(/SALE movements/);
+  });
 });
 
 describe("threshold serialization", () => {

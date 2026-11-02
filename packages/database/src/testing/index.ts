@@ -12,6 +12,7 @@ export {
 export { assertFixtureSession, FixtureSafetyError, fixtureTargetUrl } from "./fixture-safety.js";
 export type { InventoryConsistencyIssue, InventoryConsistencyKind } from "../inventory/consistency-query.js";
 export type { LedgerConsistencyIssue, LedgerConsistencyKind } from "../ledger/consistency-query.js";
+export type { SalesConsistencyIssue, SalesConsistencyKind } from "../sales/consistency-query.js";
 export type { CatalogSnapshot, InventorySnapshot, LedgerSnapshot, TenancySnapshot } from "./tenancy-fixtures.js";
 export {
   addTestCurrencies,
@@ -20,6 +21,7 @@ export {
   readInventorySnapshot,
   readLedgerConsistency,
   readLedgerSnapshot,
+  readSalesConsistency,
   readTenancySnapshot,
   removeTestCurrencies,
   resetTenancyTables,

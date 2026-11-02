@@ -1,5 +1,6 @@
 import { hasPermission } from "../../authorization/permissions.js";
 import {
+  BusinessDate,
   DomainError,
   KernelError,
   SALE_POSTED_RULE,
@@ -26,9 +27,11 @@ import type { KeyedIdempotency } from "../../idempotency/keyed-idempotency.js";
 import { objectAt, textAt } from "../../idempotency/result-json.js";
 import type { JsonValue } from "../../ports/queue-provider.js";
 import type { Clock } from "../../ports/clock.js";
+import type { IdGenerator } from "../../ports/id-generator.js";
 import type { UnitOfWork } from "../../ports/unit-of-work.js";
 import type { MembershipRepository } from "../business/index.js";
 import { requireActingMembership, requireUserActor } from "../business/index.js";
+import type { ProductRepository } from "../catalog/index.js";
 import { inventoryPermissions, salesPermissions } from "../identity/index.js";
 import { createLedgerPostingService, type LedgerPostingDependencies } from "../ledger/posting.js";
 import { saleReversed } from "./audit-actions.js";
@@ -62,18 +65,20 @@ const pointerCodec = {
   },
 };
 
-export function createReverseSale(
-  dependencies: LedgerPostingDependencies & {
-    readonly unitOfWork: UnitOfWork;
-    readonly memberships: MembershipRepository;
-    readonly sales: SaleRepository;
-    readonly inventory: SalesInventoryPort;
-    readonly idempotency: KeyedIdempotency;
-    readonly hasher: FingerprintHasher;
-    readonly audit: AuditRecorder;
-    readonly clock: Clock;
-  },
-): ReverseSale {
+export interface ReverseSaleDependencies extends LedgerPostingDependencies {
+  readonly unitOfWork: UnitOfWork;
+  readonly memberships: MembershipRepository;
+  readonly products: ProductRepository;
+  readonly sales: SaleRepository;
+  readonly inventory: SalesInventoryPort;
+  readonly idempotency: KeyedIdempotency;
+  readonly hasher: FingerprintHasher;
+  readonly audit: AuditRecorder;
+  readonly clock: Clock;
+  readonly ids: IdGenerator;
+}
+
+export function createReverseSale(dependencies: ReverseSaleDependencies): ReverseSale {
   const permission = salesPermissions.permissions["sales:reverse"];
   const posting = createLedgerPostingService(dependencies);
   return {
@@ -127,7 +132,10 @@ export function createReverseSale(
                 if (current.status === "REVERSED" || current.journalEntryId === undefined) {
                   throw new ConflictError("This sale is already reversed");
                 }
-                const variantIds = [...new Set(current.stockEffects.map((effect) => effect.variantId))];
+                const variantIds = [...new Set(current.stockEffects.map((effect) => effect.variantId))].sort(
+                  (left, right) => (left < right ? -1 : left > right ? 1 : 0),
+                );
+                await dependencies.products.lockVariantsForShare(scope, context.businessId, new Set(variantIds));
                 const positions = await dependencies.inventory.lockForSale(
                   scope,
                   context.businessId,
@@ -138,15 +146,20 @@ export function createReverseSale(
                   current.stockEffects,
                   new Map(positions.map((position) => [position.variantId, position])),
                 );
-                await dependencies.inventory.applyReversalPlan(
-                  scope,
-                  context.businessId,
-                  context.locationId,
-                  context.currency,
-                  reversalPlan,
-                );
+                const originals = new Map(current.stockEffects.map((effect) => [effect.movementId, effect]));
+                const steps = reversalPlan.map((plan) => {
+                  const original = originals.get(plan.originalMovementId);
+                  if (original === undefined) throw new Error("sale reversal plan lost its original movement");
+                  return {
+                    movementId: dependencies.ids.newId("InventoryMovement"),
+                    originalCostStatus: original.costStatus,
+                    plan,
+                  };
+                });
+                const reversalJournalEntryId = dependencies.ids.newId("JournalEntry");
                 const reversedAt = dependencies.clock.now();
                 const posted = await posting.post(scope, context, {
+                  entryId: reversalJournalEntryId,
                   plan: reversePostingPlan(salePostedPlan(current)),
                   source: { kind: "sale", id: current.id },
                   entryKind: "REVERSAL",
@@ -155,6 +168,24 @@ export function createReverseSale(
                   postingRuleVersion: SALE_POSTED_VERSION,
                   description: `Reversal ${current.receiptNumber}`,
                   occurredAt: reversedAt,
+                });
+                await dependencies.inventory.applyReversalPlan(scope, {
+                  businessId: context.businessId,
+                  locationId: context.locationId,
+                  currency: context.currency,
+                  saleId: current.id,
+                  journalEntryId: posted.entry.id,
+                  recording: {
+                    actorMembershipId: membership.id,
+                    ...(context.deviceId === undefined ? {} : { deviceId: context.deviceId }),
+                    sourceChannel: context.sourceChannel,
+                    correlationId: context.correlationId,
+                    occurredAt: reversedAt,
+                    businessDate: BusinessDate.fromInstant(reversedAt, context.timeZone),
+                    recordedAt: reversedAt,
+                  },
+                  reason,
+                  reversals: steps,
                 });
                 const reversed = reverseSale(current, {
                   reversedAt,

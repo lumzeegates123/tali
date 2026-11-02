@@ -21,6 +21,9 @@ import {
   type ProductPackRepository,
   type ProductPriceHistoryRepository,
   type ProductRepository,
+  type SaleReceiptNumberIssuer,
+  type SaleRepository,
+  type SalesInventoryPort,
   type StockBalanceRepository,
   type StockThresholdRepository,
   type StocktakeLineRepository,
@@ -56,6 +59,9 @@ import { createProductCategoryRepository } from "./repositories/product-category
 import { createProductPackRepository } from "./repositories/product-pack-repository.js";
 import { createProductPriceHistoryRepository } from "./repositories/product-price-history-repository.js";
 import { createProductRepository } from "./repositories/product-repository.js";
+import { createSaleReceiptNumberIssuer } from "./repositories/sale-receipt-number-issuer.js";
+import { createSaleRepository } from "./repositories/sale-repository.js";
+import { createSalesInventoryPort } from "./repositories/sales-inventory-port.js";
 import { createStocktakeLineRepository } from "./repositories/stocktake-line-repository.js";
 import { createStocktakeRepository } from "./repositories/stocktake-repository.js";
 import { createUnitReferenceRepository } from "./repositories/unit-reference-repository.js";
@@ -113,6 +119,9 @@ export interface DatabaseRepositories {
   readonly inventoryValuations: InventoryValuationRepository;
   readonly inventoryMovementValuations: InventoryMovementValuationRepository;
   readonly stockValuations: StockValuationRepository;
+  readonly sales: SaleRepository;
+  readonly saleReceiptNumbers: SaleReceiptNumberIssuer;
+  readonly salesInventory: SalesInventoryPort;
 }
 
 /**
@@ -128,6 +137,10 @@ export interface Database {
 }
 
 export function createRepositories(): DatabaseRepositories {
+  const inventoryBalances = createInventoryBalanceRepository();
+  const inventoryValuations = createInventoryValuationRepository();
+  const inventoryMovements = createInventoryMovementRepository();
+  const inventoryMovementValuations = createInventoryMovementValuationRepository();
   return Object.freeze({
     users: createUserRepository(),
     businesses: createBusinessRepository(),
@@ -144,8 +157,8 @@ export function createRepositories(): DatabaseRepositories {
     productPacks: createProductPackRepository(),
     productPriceHistory: createProductPriceHistoryRepository(),
     units: createUnitReferenceRepository(),
-    inventoryMovements: createInventoryMovementRepository(),
-    inventoryBalances: createInventoryBalanceRepository(),
+    inventoryMovements,
+    inventoryBalances,
     inventoryOpeningBatches: createOpeningBatchRepository(),
     goodsReceipts: createGoodsReceiptRepository(),
     inventoryAdjustments: createInventoryAdjustmentRepository(),
@@ -156,9 +169,17 @@ export function createRepositories(): DatabaseRepositories {
     inventoryItems: createInventoryItemReader(),
     ledgerAccounts: createLedgerAccountRepository(),
     journals: createJournalRepository(),
-    inventoryValuations: createInventoryValuationRepository(),
-    inventoryMovementValuations: createInventoryMovementValuationRepository(),
+    inventoryValuations,
+    inventoryMovementValuations,
     stockValuations: createStockValuationRepository(),
+    sales: createSaleRepository(),
+    saleReceiptNumbers: createSaleReceiptNumberIssuer(),
+    salesInventory: createSalesInventoryPort({
+      balances: inventoryBalances,
+      valuations: inventoryValuations,
+      movements: inventoryMovements,
+      movementValuations: inventoryMovementValuations,
+    }),
   });
 }
 

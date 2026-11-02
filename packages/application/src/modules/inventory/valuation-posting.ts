@@ -405,6 +405,8 @@ export function journalSourceOf(kind: InventoryMovement["source"]["kind"], id: s
       return { kind: "adjustment", id };
     case "STOCKTAKE":
       return { kind: "stocktake", id };
+    case "SALE":
+      return { kind: "sale", id };
     default: {
       const exhaustive: never = kind;
       return exhaustive;
@@ -422,6 +424,8 @@ export function postingRuleFor(kind: InventoryMovement["source"]["kind"]): strin
       return "INVENTORY_ADJUSTMENT_VALUED";
     case "STOCKTAKE":
       return "STOCKTAKE_VALUED";
+    case "SALE":
+      throw new Error("SALE movement value is posted by the sale's SALE_POSTED journal");
     default: {
       const exhaustive: never = kind;
       return exhaustive;

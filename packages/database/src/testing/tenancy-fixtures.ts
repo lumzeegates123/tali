@@ -2,6 +2,8 @@ import type { InventoryConsistencyIssue } from "../inventory/consistency-query.j
 import { findInventoryInconsistencies } from "../inventory/consistency-query.js";
 import type { LedgerConsistencyIssue } from "../ledger/consistency-query.js";
 import { findLedgerInconsistencies } from "../ledger/consistency-query.js";
+import type { SalesConsistencyIssue } from "../sales/consistency-query.js";
+import { findSalesInconsistencies } from "../sales/consistency-query.js";
 import type { FixtureEnv } from "./fixture-safety.js";
 import { withFixtureSession } from "./fixture-session.js";
 
@@ -31,6 +33,10 @@ type Env = FixtureEnv;
  * `units_of_measure` are reference data and are never truncated.
  */
 export const TENANCY_TABLES = [
+  "sale_tenders",
+  "sale_lines",
+  "sale_receipt_sequences",
+  "sales",
   "journal_lines",
   "inventory_movement_valuations",
   "stock_valuations",
@@ -445,6 +451,7 @@ export interface InventorySnapshot {
     goodsReceiptId: string | null;
     adjustmentId: string | null;
     stocktakeId: string | null;
+    saleId: string | null;
     packId: string | null;
     packCountText: string | null;
     reversesMovementId: string | null;
@@ -519,7 +526,7 @@ export async function readInventorySnapshot(env: Env = process.env): Promise<Inv
                 quantity_delta_minor::text AS "deltaText", balance_after_minor::text AS "balanceAfterText",
                 balance_version AS "balanceVersion", opening_batch_id AS "openingBatchId",
                 goods_receipt_id AS "goodsReceiptId", adjustment_id AS "adjustmentId",
-                stocktake_id AS "stocktakeId", pack_id AS "packId",
+                stocktake_id AS "stocktakeId", sale_id AS "saleId", pack_id AS "packId",
                 pack_count::text AS "packCountText", reverses_movement_id AS "reversesMovementId",
                 reason_code AS "reasonCode", reason_note AS "reasonNote",
                 actor_membership_id AS "actorMembershipId", correlation_id AS "correlationId",
@@ -588,4 +595,9 @@ export async function readLedgerSnapshot(env: Env = process.env): Promise<Ledger
 /** Every ledger chart inconsistency across every tenant (ADR-009 section 29); empty when every chart matches its template. */
 export async function readLedgerConsistency(env: Env = process.env): Promise<readonly LedgerConsistencyIssue[]> {
   return withFixtureSession(env, (client) => findLedgerInconsistencies(client));
+}
+
+/** Every sale inconsistency across every tenant (ADR-011; Plan 005 S5); empty when every sale matches its effects. */
+export async function readSalesConsistency(env: Env = process.env): Promise<readonly SalesConsistencyIssue[]> {
+  return withFixtureSession(env, (client) => findSalesInconsistencies(client));
 }

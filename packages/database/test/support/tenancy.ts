@@ -48,6 +48,7 @@ import {
   createGetGoodsReceipt,
   createGetInventoryItem,
   createGetOpeningBatch,
+  createGetSale,
   createGetStocktake,
   createListDevices,
   createListInventoryItems,
@@ -55,7 +56,9 @@ import {
   createListLocations,
   createListMembers,
   createListMyBusinesses,
+  createListSales,
   createListStocktakeLines,
+  createNoTaxSnapshotResolver,
   createListStocktakes,
   createPostGoodsReceipt,
   createPostStocktake,
@@ -63,6 +66,7 @@ import {
   createReactivateProduct,
   createRecordAdjustment,
   createRecordOpeningStock,
+  createRecordSale,
   createRecordStockValuation,
   createRecordStocktakeCount,
   createRecordWriteOff,
@@ -72,6 +76,7 @@ import {
   createRetirePack,
   createReverseAdjustment,
   createReverseGoodsReceipt,
+  createReverseSale,
   createRevokeDevice,
   createRevokeInvitation,
   createSetLowStockThreshold,
@@ -87,6 +92,7 @@ import {
   type GetGoodsReceipt,
   type GetInventoryItem,
   type GetOpeningBatch,
+  type GetSale,
   type GetStocktake,
   KeyedIdempotency,
   type ListDevices,
@@ -95,6 +101,7 @@ import {
   type ListLocations,
   type ListMembers,
   type ListMyBusinesses,
+  type ListSales,
   type ListStocktakeLines,
   type ListStocktakes,
   type LocationBoundContext,
@@ -106,6 +113,7 @@ import {
   type ReactivateProduct,
   type RecordAdjustment,
   type RecordOpeningStock,
+  type RecordSale,
   type RecordStockValuation,
   type RecordStocktakeCount,
   type RecordWriteOff,
@@ -115,6 +123,7 @@ import {
   type RetirePack,
   type ReverseAdjustment,
   type ReverseGoodsReceipt,
+  type ReverseSale,
   type RevokeDevice,
   type RevokeInvitation,
   type SetLowStockThreshold,
@@ -202,6 +211,10 @@ export interface Tenancy {
   readonly getOpeningBatch: GetOpeningBatch;
   readonly getGoodsReceipt: GetGoodsReceipt;
   readonly getAdjustment: GetAdjustment;
+  readonly recordSale: RecordSale;
+  readonly reverseSale: ReverseSale;
+  readonly getSale: GetSale;
+  readonly listSales: ListSales;
   /** The operator chart command's use case, composed as apps/api composes it. */
   readonly provisionExistingBusinessChart: ProvisionExistingBusinessChart;
   registeredUser(subject: string, displayName?: string): Promise<RegisteredUser>;
@@ -299,6 +312,23 @@ export function useTenancyHarness() {
       openings: repos.inventoryOpeningBatches,
       receipts: repos.goodsReceipts,
       adjustments: repos.inventoryAdjustments,
+    };
+    const selling = {
+      unitOfWork: uow,
+      memberships,
+      products: repos.products,
+      units: repos.units,
+      sales: repos.sales,
+      receiptNumbers: repos.saleReceiptNumbers,
+      inventory: repos.salesInventory,
+      tax: createNoTaxSnapshotResolver(),
+      accounts: repos.ledgerAccounts,
+      journals: repos.journals,
+      idempotency: businessIdempotency,
+      hasher,
+      audit,
+      ids,
+      clock,
     };
     const chartOfAccounts = createChartOfAccountsProvisioning({ accounts: repos.ledgerAccounts, audit, clock, ids });
     const createBusiness = createCreateBusiness({
@@ -400,6 +430,10 @@ export function useTenancyHarness() {
       getOpeningBatch: createGetOpeningBatch(reads),
       getGoodsReceipt: createGetGoodsReceipt(reads),
       getAdjustment: createGetAdjustment(reads),
+      recordSale: createRecordSale(selling),
+      reverseSale: createReverseSale(selling),
+      getSale: createGetSale({ unitOfWork: uow, memberships, sales: repos.sales }),
+      listSales: createListSales({ unitOfWork: uow, memberships, sales: repos.sales }),
       provisionExistingBusinessChart: createProvisionExistingBusinessChart({
         unitOfWork: uow,
         businesses,

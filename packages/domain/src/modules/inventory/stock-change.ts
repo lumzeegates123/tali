@@ -62,6 +62,9 @@ export function planStockChange(props: {
   if (type === "COUNT_CORRECTION") {
     throw new DomainError("INVALID_VALUE", "COUNT_CORRECTION is planned by planCountCorrections", "type");
   }
+  if (type === "SALE") {
+    throw new DomainError("INVALID_VALUE", "SALE stock effects are planned by planSaleStock", "type");
+  }
   requireSourceForType(type, props.source);
   requireLineCount(props.lines.length, "lines");
   requireDistinct(
@@ -141,6 +144,9 @@ export function reverseDocumentMovements(props: {
         "a count correction is not reversed; count again or record an adjustment",
         "originals",
       );
+    }
+    if (original.type === "SALE") {
+      throw new DomainError("INVALID_TRANSITION", "a SALE movement is reversed by reversing its sale", "originals");
     }
     if (
       original.businessId !== first.businessId ||

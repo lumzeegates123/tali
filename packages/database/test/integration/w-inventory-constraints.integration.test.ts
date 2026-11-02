@@ -207,6 +207,7 @@ describe("inventory constraints and privileges (PostgreSQL)", () => {
 
     it("rejects an unknown type and every type/source mismatch (23514)", async () => {
       for (const row of [
+        receiptOriginal(a1, { type: "RETURN" }),
         receiptOriginal(a1, { type: "SALE" }),
         receiptOriginal(a1, { type: "COUNT_CORRECTION" }),
         receiptOriginal(a1, { goods_receipt_id: null, opening_batch_id: docs.opening }),
@@ -217,7 +218,7 @@ describe("inventory constraints and privileges (PostgreSQL)", () => {
       ]) {
         expect((await violation(insert("inventory_movements", row))).code).toBe(CHECK);
       }
-      await rejects("inventory_movements", receiptOriginal(a1, { type: "SALE" }), CHECK);
+      await rejects("inventory_movements", receiptOriginal(a1, { type: "RETURN" }), CHECK);
       expect(
         (await violation(insert("inventory_movements", receiptOriginal(a1, { opening_batch_id: docs.opening }))))
           .constraint,

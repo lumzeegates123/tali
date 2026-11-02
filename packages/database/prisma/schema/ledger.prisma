@@ -8,7 +8,7 @@
 // deleted, and carry no currency (the business currency applies).
 //
 // Journal entries and lines arrive in Slice 3 with the valuation-slice typed
-// source columns (ADR-009 section 13). sale_id is added with sales persistence.
+// source columns (ADR-009 section 13); sale_id arrives in Slice 5.
 
 model LedgerAccount {
   businessId      String   @map("business_id") @db.Uuid
@@ -32,10 +32,10 @@ model LedgerAccount {
   @@map("ledger_accounts")
 }
 
-// Journal entries and lines (ADR-009 sections 7 to 13; Build 3 Slice 3).
-// Typed source columns for the valuation slice only; sale_id arrives with
-// sales persistence. CHECKs, partial uniques, deferred cyclic FKs and
-// SELECT+INSERT grants live in the migration SQL.
+// Journal entries and lines (ADR-009 sections 7 to 13; Build 3 Slices 3 and 5).
+// Exactly one typed source column per entry. A sale-source entry carries the
+// sale's location (composite FK to sales). CHECKs, partial uniques, deferred
+// cyclic FKs and SELECT+INSERT grants live in the migration SQL.
 model JournalEntry {
   businessId           String    @map("business_id") @db.Uuid
   id                   String    @id @db.Uuid
@@ -58,6 +58,7 @@ model JournalEntry {
   locationId           String?   @map("location_id") @db.Uuid
   sourceChannel        String    @map("source_channel")
   correlationId        String    @map("correlation_id")
+  saleId               String?   @map("sale_id") @db.Uuid
 
   business     Business             @relation("JournalEntryBusiness", fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   currencyRow  Business             @relation("JournalEntryCurrency", fields: [businessId, currency], references: [id, currencyCode], onDelete: Restrict, onUpdate: Restrict)
@@ -71,14 +72,18 @@ model JournalEntry {
   actor        BusinessMembership?  @relation("JournalEntryActor", fields: [businessId, actorMembershipId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
   device       Device?              @relation(fields: [businessId, deviceId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
   location     BusinessLocation?    @relation(fields: [businessId, locationId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
+  sale         Sale?                @relation("JournalEntrySale", fields: [businessId, saleId, locationId], references: [businessId, id, locationId], onDelete: Restrict, onUpdate: Restrict)
 
   lines                 JournalLine[] @relation("JournalLineEntry")
   lineCurrency          JournalLine[] @relation("JournalLineCurrency")
   postedStockValuation  StockValuation?               @relation("StockValuationPostedJournal")
   movementValuations    InventoryMovementValuation[]
+  originalOfSales       Sale[]                        @relation("SaleOriginalJournal")
+  reversalOfSales       Sale[]                        @relation("SaleReversalJournal")
 
   @@unique([businessId, id])
   @@unique([businessId, id, currency])
+  @@unique([businessId, id, saleId])
   @@unique([businessId, reversesEntryId])
   @@map("journal_entries")
 }

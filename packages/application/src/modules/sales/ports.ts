@@ -1,6 +1,9 @@
 import type {
   BusinessId,
   CurrencyCode,
+  InventoryMovementId,
+  InventoryRecording,
+  JournalEntryId,
   LocationId,
   MembershipId,
   PlannedSaleStockEffect,
@@ -14,18 +17,19 @@ import type { TransactionScope } from "../../ports/unit-of-work.js";
 import type { Page, PageRequest } from "../../queries/pagination.js";
 
 /**
- * Tenant-owned sale store. S4 is in memory. S5 supplies PostgreSQL.
- * `findByIdForUpdate` is the reversal row lock. S5 takes it FOR UPDATE
- * after variant share locks and before stock locks are released, inside the
- * same transaction as the rest of the reversal.
+ * Tenant-owned sale store. `insert` writes the header, lines and tenders of a
+ * sale that already carries its pre-generated original journal id; the journal
+ * row follows in the same transaction. `findByIdForUpdate` is the reversal
+ * row lock, taken before the variant share locks of the reversal.
  */
 export interface SaleRepository {
   insert(scope: TransactionScope, sale: Sale): Promise<void>;
   findById(scope: TransactionScope, businessId: BusinessId, saleId: SaleId): Promise<Sale | undefined>;
   findByIdForUpdate(scope: TransactionScope, businessId: BusinessId, saleId: SaleId): Promise<Sale | undefined>;
-  /** Sets the original journal once. The sale must still be POSTED. */
-  attachOriginalJournal(scope: TransactionScope, sale: Sale): Promise<void>;
-  /** Replaces a POSTED sale with its REVERSED form. */
+  /**
+   * Replaces a POSTED sale with its REVERSED form. Only the status and
+   * reversal fields change; a sale that is no longer POSTED is a conflict.
+   */
   markReversed(scope: TransactionScope, sale: Sale): Promise<void>;
   list(
     scope: TransactionScope,
@@ -40,13 +44,47 @@ export interface SaleRepository {
 
 /**
  * Business-scoped online receipt numbers (`S-000001`). Issued inside the sale
- * transaction after validation. A rolled-back transaction restores the counter
- * in the in-memory adapter; PostgreSQL gaps from a rolled-back sequence update
- * are acceptable (ADR-011 section 8). S5 maps this to `sale_receipt_sequences`
- * locked FOR UPDATE after stock locks.
+ * transaction after validation. A rolled-back transaction rolls its counter
+ * update back with it (ADR-011 section 8). The PostgreSQL adapter locks the
+ * business's `sale_receipt_sequences` row FOR UPDATE, after the stock locks.
  */
 export interface SaleReceiptNumberIssuer {
   issue(scope: TransactionScope, businessId: BusinessId): Promise<string>;
+}
+
+/** Everything the original SALE movements of one sale are written with. */
+export interface SaleStockWrite {
+  readonly businessId: BusinessId;
+  readonly locationId: LocationId;
+  readonly currency: CurrencyCode;
+  readonly saleId: SaleId;
+  /** The sale's original SALE_POSTED journal, already posted in this transaction. */
+  readonly journalEntryId: JournalEntryId;
+  /** The sale's recording envelope: recording membership, device, channel, correlation and server times. */
+  readonly recording: InventoryRecording;
+  readonly effects: readonly PlannedSaleStockEffect[];
+}
+
+/** One planned reversal movement with the id the application generated for it. */
+export interface SaleStockReversalStep {
+  readonly movementId: InventoryMovementId;
+  /** Cost status of the original line: VALUED restores its snapshotted cost, UNVALUED restores none. */
+  readonly originalCostStatus: PlannedSaleStockEffect["costStatus"];
+  readonly plan: PlannedSaleStockReversal;
+}
+
+/** Everything the reversal SALE movements of one sale reversal are written with. */
+export interface SaleStockReversalWrite {
+  readonly businessId: BusinessId;
+  readonly locationId: LocationId;
+  readonly currency: CurrencyCode;
+  readonly saleId: SaleId;
+  /** The sale's REVERSAL journal, already posted in this transaction. */
+  readonly journalEntryId: JournalEntryId;
+  /** The reversing actor's envelope and the reversal server times. */
+  readonly recording: InventoryRecording;
+  readonly reason: string;
+  readonly reversals: readonly SaleStockReversalStep[];
 }
 
 /**
@@ -54,11 +92,13 @@ export interface SaleReceiptNumberIssuer {
  * already-decided plan. It does not compute WAC, cost status, or the
  * negative-stock policy.
  *
- * S5 lock order this shape preserves (ADR-009 section 28):
- * variants FOR SHARE, then balances FOR UPDATE in ascending variant id,
- * then inventory_valuations FOR UPDATE in ascending variant id, then the
- * receipt counter FOR UPDATE. `lockForSale` is only the balance and valuation
- * pair; the use case locks variants first and issues the receipt number last.
+ * Lock order (ADR-009 section 28): variants FOR SHARE, then balances FOR
+ * UPDATE in ascending variant id, then inventory_valuations FOR UPDATE in
+ * ascending variant id, then (sales only) the receipt counter FOR UPDATE.
+ * `lockForSale` is only the balance and valuation pair; the use case locks
+ * variants first and issues the receipt number last. No lock state is kept
+ * between calls: the apply methods check the planned versions against the
+ * rows they update, inside the same transaction.
  */
 export interface SalesInventoryPort {
   lockForSale(
@@ -67,18 +107,6 @@ export interface SalesInventoryPort {
     locationId: LocationId,
     variantIds: readonly ProductVariantId[],
   ): Promise<readonly SaleStockPosition[]>;
-  applySalePlan(
-    scope: TransactionScope,
-    businessId: BusinessId,
-    locationId: LocationId,
-    currency: CurrencyCode,
-    effects: readonly PlannedSaleStockEffect[],
-  ): Promise<void>;
-  applyReversalPlan(
-    scope: TransactionScope,
-    businessId: BusinessId,
-    locationId: LocationId,
-    currency: CurrencyCode,
-    reversals: readonly PlannedSaleStockReversal[],
-  ): Promise<void>;
+  applySalePlan(scope: TransactionScope, write: SaleStockWrite): Promise<void>;
+  applyReversalPlan(scope: TransactionScope, write: SaleStockReversalWrite): Promise<void>;
 }

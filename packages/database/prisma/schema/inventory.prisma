@@ -140,6 +140,7 @@ model InventoryMovement {
   businessDate       DateTime @map("business_date") @db.Date
   recordedAt         DateTime @map("recorded_at") @db.Timestamptz(3)
   stocktakeId        String?  @map("stocktake_id") @db.Uuid
+  saleId             String?  @map("sale_id") @db.Uuid
 
   business      Business               @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   location      BusinessLocation       @relation(fields: [businessId, locationId], references: [businessId, id], onDelete: Restrict, onUpdate: Restrict)
@@ -151,6 +152,7 @@ model InventoryMovement {
   adjustment    InventoryAdjustment?   @relation(fields: [businessId, adjustmentId, type], references: [businessId, id, kind], onDelete: Restrict, onUpdate: Restrict)
   stocktakeLine StocktakeLine?         @relation(fields: [businessId, stocktakeId, variantId], references: [businessId, stocktakeId, variantId], onDelete: Restrict, onUpdate: Restrict)
   stocktake     Stocktake?             @relation(fields: [businessId, stocktakeId, locationId], references: [businessId, id, locationId], onDelete: Restrict, onUpdate: Restrict)
+  sale          Sale?                  @relation(fields: [businessId, saleId, locationId], references: [businessId, id, locationId], onDelete: Restrict, onUpdate: Restrict)
   pack          ProductPack?           @relation(fields: [businessId, packId, variantId], references: [businessId, id, variantId], onDelete: Restrict, onUpdate: Restrict)
   reverses      InventoryMovement?     @relation("MovementReversal", fields: [businessId, reversesMovementId, locationId, variantId, type], references: [businessId, id, locationId, variantId, type], onDelete: Restrict, onUpdate: Restrict, map: "inventory_movements_reversal_fkey")
 
@@ -158,8 +160,10 @@ model InventoryMovement {
   lastOfBalances      InventoryBalance[]
   valuation           InventoryMovementValuation?
   residualValuations  StockValuation[]    @relation("StockValuationTrigger")
+  saleLines           SaleLine[]
 
   @@unique([businessId, id])
+  @@unique([businessId, id, saleId, variantId], map: "inventory_movements_sale_line_target_key")
   @@unique([businessId, id, locationId, variantId, type], map: "inventory_movements_reversal_target_key")
   @@unique([businessId, locationId, variantId, id])
   @@unique([businessId, locationId, variantId, balanceVersion], map: "inventory_movements_stock_item_version_key")

@@ -83,8 +83,8 @@ const NULL_REASON_BUG = "reverses_movement_id IS NULL AND type IN ('ADJUSTMENT',
 const PROBE_UUID = "'00000000-0000-4000-8000-000000000001'::uuid";
 const CHECK_GRID = `
   SELECT type, reverses_movement_id, quantity_delta_minor, reason_code, reason_note,
-         opening_batch_id, goods_receipt_id, adjustment_id, NULL::uuid AS stocktake_id
-  FROM unnest(ARRAY['OPENING', 'PURCHASE_RECEIPT', 'ADJUSTMENT', 'WRITE_OFF', 'SALE']) AS t(type)
+         opening_batch_id, goods_receipt_id, adjustment_id, NULL::uuid AS stocktake_id, NULL::uuid AS sale_id
+  FROM unnest(ARRAY['OPENING', 'PURCHASE_RECEIPT', 'ADJUSTMENT', 'WRITE_OFF', 'RETURN']) AS t(type)
   CROSS JOIN (VALUES (NULL::uuid), (${PROBE_UUID})) AS r(reverses_movement_id)
   CROSS JOIN (VALUES (-1::bigint), (1::bigint)) AS d(quantity_delta_minor)
   CROSS JOIN unnest(ARRAY[NULL, 'FOUND_STOCK', 'DATA_ENTRY_CORRECTION', 'OTHER', 'DAMAGED', 'EXPIRED', 'SPOILED',
