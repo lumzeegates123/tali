@@ -63,7 +63,7 @@ describe("ZW. db:sales-consistency and the sale rules of the other checks", () =
     (
       await tenancy.recordSale.execute(
         a.context,
-        saleInput(harness, [saleLine(soap, quantity)], (50_000n * BigInt(quantity)).toString()),
+        saleInput(harness, a, [saleLine(soap, quantity)], (50_000n * BigInt(quantity)).toString()),
       )
     ).sale;
   const sellAndReverse = async () => {
@@ -119,7 +119,7 @@ describe("ZW. db:sales-consistency and the sale rules of the other checks", () =
       const bag = await pricedProduct(harness, a, { name: "Bag", tracked: false, price: "2000" });
       await tenancy.recordSale.execute(
         a.context,
-        saleInput(harness, [saleLine(soap, "1"), saleLine(salt, "1"), saleLine(bag, "1")], "102000"),
+        saleInput(harness, a, [saleLine(soap, "1"), saleLine(salt, "1"), saleLine(bag, "1")], "102000"),
       );
       await sellAndReverse();
       const clean = await checkSalesConsistency(appUrl);
@@ -280,8 +280,9 @@ describe("ZW. db:sales-consistency and the sale rules of the other checks", () =
       const other = await sell();
       const b = await inventoryTenant(harness, "sales-consistency-b");
       const bSoap = await pricedProduct(harness, b, { name: "Soap", quantity: "5", totalCost: "175000" });
-      const foreign = (await tenancy.recordSale.execute(b.context, saleInput(harness, [saleLine(bSoap, "1")], "50000")))
-        .sale;
+      const foreign = (
+        await tenancy.recordSale.execute(b.context, saleInput(harness, b, [saleLine(bSoap, "1")], "50000"))
+      ).sale;
       return { sale, other, foreign };
     }
 

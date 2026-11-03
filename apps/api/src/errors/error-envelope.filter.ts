@@ -1,6 +1,26 @@
 import { type ArgumentsHost, Catch, type ExceptionFilter, HttpException, HttpStatus, Inject } from "@nestjs/common";
-import { ApplicationError, type ApplicationErrorCode, StocktakeStaleError, ValidationError } from "@tali/application";
-import { type ErrorEnvelope, StocktakeStaleDetailsSchema } from "@tali/shared";
+import {
+  ApplicationError,
+  type ApplicationErrorCode,
+  DiscountExceedsLineError,
+  InsufficientStockError,
+  PriceChangedError,
+  PriceNotSetError,
+  ProductArchivedError,
+  StocktakeStaleError,
+  TenderTotalMismatchError,
+  ValidationError,
+} from "@tali/application";
+import {
+  DiscountExceedsLineDetailsSchema,
+  type ErrorEnvelope,
+  InsufficientStockDetailsSchema,
+  PriceChangedDetailsSchema,
+  PriceNotSetDetailsSchema,
+  ProductArchivedDetailsSchema,
+  StocktakeStaleDetailsSchema,
+  TenderTotalMismatchDetailsSchema,
+} from "@tali/shared";
 import type { NextFunction, Request, Response } from "express";
 import { LOGGER } from "../composition/tokens.js";
 import type { Logger } from "../observability/logger.js";
@@ -78,22 +98,63 @@ const INTERNAL_ERROR: MappedError = {
   envelope: { error: { code: "INTERNAL_ERROR", message: "An unexpected error occurred" } },
 };
 
+type Details = { readonly valid: boolean; readonly details?: unknown };
+
+function strict(schema: { safeParse(value: unknown): { success: true; data: unknown } | { success: false } }) {
+  return (candidate: unknown): Details => {
+    const parsed = schema.safeParse(candidate);
+    return parsed.success ? { valid: true, details: parsed.data } : { valid: false };
+  };
+}
+
 /**
- * The details an application error may carry: validation issues, or the
- * strict STOCKTAKE_STALE details (variant IDs and a count, nothing else).
- * Any other property of an error never reaches the client. Stale details that
- * fail the shared schema are a server fault, answered as INTERNAL_ERROR.
+ * The details an application error may carry: validation issues, the strict
+ * STOCKTAKE_STALE details, or the strict sales conflict details (variant IDs,
+ * current prices, available quantities, a line number or the server total).
+ * Each is rebuilt from the fields it names, so any other property of an error
+ * never reaches the client. Details that fail their shared schema are a
+ * server fault, answered as INTERNAL_ERROR. INSUFFICIENT_STOCK outside a sale
+ * has no shortages and carries no details.
  */
-function detailsOf(exception: ApplicationError): { readonly valid: boolean; readonly details?: unknown } {
+function detailsOf(exception: ApplicationError): Details {
   if (exception instanceof ValidationError) {
     return exception.issues.length > 0 ? { valid: true, details: exception.issues } : { valid: true };
   }
   if (exception instanceof StocktakeStaleError) {
-    const parsed = StocktakeStaleDetailsSchema.safeParse({
+    return strict(StocktakeStaleDetailsSchema)({
       staleVariantIds: [...exception.staleVariantIds],
       staleLineCount: exception.staleLineCount,
     });
-    return parsed.success ? { valid: true, details: parsed.data } : { valid: false };
+  }
+  if (exception instanceof PriceNotSetError) {
+    return strict(PriceNotSetDetailsSchema)({ variantIds: [...exception.variantIds] });
+  }
+  if (exception instanceof PriceChangedError) {
+    return strict(PriceChangedDetailsSchema)({
+      changes: exception.changes.map((change) => ({
+        variantId: change.variantId,
+        currentPriceMinor: change.currentPriceMinor,
+        currentPriceVersion: change.currentPriceVersion,
+      })),
+    });
+  }
+  if (exception instanceof ProductArchivedError) {
+    return strict(ProductArchivedDetailsSchema)({ variantIds: [...exception.variantIds] });
+  }
+  if (exception instanceof InsufficientStockError) {
+    if (exception.shortages.length === 0) return { valid: true };
+    return strict(InsufficientStockDetailsSchema)({
+      shortages: exception.shortages.map((shortage) => ({
+        variantId: shortage.variantId,
+        availableQuantityMinor: shortage.availableQuantityMinor,
+      })),
+    });
+  }
+  if (exception instanceof DiscountExceedsLineError) {
+    return strict(DiscountExceedsLineDetailsSchema)({ lineNumber: exception.lineNumber });
+  }
+  if (exception instanceof TenderTotalMismatchError) {
+    return strict(TenderTotalMismatchDetailsSchema)({ serverTotalMinor: exception.serverTotalMinor });
   }
   return { valid: true };
 }

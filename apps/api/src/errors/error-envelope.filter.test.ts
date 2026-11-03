@@ -28,10 +28,22 @@ import {
   VersionConflictError,
 } from "@tali/application";
 import { parseProductVariantId } from "@tali/domain";
-import { ErrorEnvelopeSchema, StocktakeStaleErrorEnvelopeSchema } from "@tali/shared";
+import {
+  DiscountExceedsLineErrorEnvelopeSchema,
+  ErrorEnvelopeSchema,
+  InsufficientStockErrorEnvelopeSchema,
+  PriceChangedErrorEnvelopeSchema,
+  PriceNotSetErrorEnvelopeSchema,
+  ProductArchivedErrorEnvelopeSchema,
+  StocktakeStaleErrorEnvelopeSchema,
+  TenderTotalMismatchErrorEnvelopeSchema,
+} from "@tali/shared";
 import { describe, expect, it } from "vitest";
 import { JsonLogger } from "../observability/logger.js";
 import { ErrorEnvelopeFilter, mapError, preRoutingErrorHandler } from "./error-envelope.filter.js";
+
+const VARIANT_A = "019a0000-0000-7000-8000-000000000001";
+const VARIANT_B = "019a0000-0000-7000-8000-000000000002";
 
 function run(exception: unknown) {
   const logs: string[] = [];
@@ -82,13 +94,13 @@ describe("ErrorEnvelopeFilter", () => {
     [new LedgerNotProvisionedError(), 409, "LEDGER_NOT_PROVISIONED"],
     [new LedgerChartIncompleteError(), 409, "LEDGER_CHART_INCOMPLETE"],
     [new ValuationStaleError(), 409, "VALUATION_STALE"],
-    [new PriceNotSetError(["variant"]), 409, "PRICE_NOT_SET"],
+    [new PriceNotSetError([VARIANT_A]), 409, "PRICE_NOT_SET"],
     [
-      new PriceChangedError([{ variantId: "variant", currentPriceMinor: "100", currentPriceVersion: 2 }]),
+      new PriceChangedError([{ variantId: VARIANT_A, currentPriceMinor: "100", currentPriceVersion: 2 }]),
       409,
       "PRICE_CHANGED",
     ],
-    [new ProductArchivedError(["variant"]), 409, "PRODUCT_ARCHIVED"],
+    [new ProductArchivedError([VARIANT_A]), 409, "PRODUCT_ARCHIVED"],
     [new DiscountExceedsLineError(1), 409, "DISCOUNT_EXCEEDS_LINE"],
     [new TenderTotalMismatchError("100"), 409, "TENDER_TOTAL_MISMATCH"],
   ] as const)("maps %s to %i %s", (error: ApplicationError, status, code) => {
@@ -135,6 +147,109 @@ describe("ErrorEnvelopeFilter", () => {
       const result = run(corrupt);
       expect(result.status).toBe(500);
       expect(result.body).toEqual({ error: { code: "INTERNAL_ERROR", message: "An unexpected error occurred" } });
+    });
+  });
+
+  describe("sales conflict details", () => {
+    const INTERNAL = { error: { code: "INTERNAL_ERROR", message: "An unexpected error occurred" } };
+
+    it("carries exactly the strict shared details of each sales conflict", () => {
+      const cases: [ApplicationError, { safeParse(value: unknown): { success: boolean } }, unknown][] = [
+        [
+          new PriceNotSetError([VARIANT_B, VARIANT_A]),
+          PriceNotSetErrorEnvelopeSchema,
+          { variantIds: [VARIANT_A, VARIANT_B] },
+        ],
+        [
+          new PriceChangedError([
+            { variantId: VARIANT_B, currentPriceMinor: "60000", currentPriceVersion: 3 },
+            { variantId: VARIANT_A, currentPriceMinor: "100", currentPriceVersion: 2 },
+            { variantId: VARIANT_B, currentPriceMinor: "60000", currentPriceVersion: 3 },
+          ]),
+          PriceChangedErrorEnvelopeSchema,
+          {
+            changes: [
+              { variantId: VARIANT_A, currentPriceMinor: "100", currentPriceVersion: 2 },
+              { variantId: VARIANT_B, currentPriceMinor: "60000", currentPriceVersion: 3 },
+            ],
+          },
+        ],
+        [new ProductArchivedError([VARIANT_A]), ProductArchivedErrorEnvelopeSchema, { variantIds: [VARIANT_A] }],
+        [
+          new InsufficientStockError(undefined, [{ variantId: VARIANT_A, availableQuantityMinor: "1" }]),
+          InsufficientStockErrorEnvelopeSchema,
+          { shortages: [{ variantId: VARIANT_A, availableQuantityMinor: "1" }] },
+        ],
+        [new DiscountExceedsLineError(3), DiscountExceedsLineErrorEnvelopeSchema, { lineNumber: 3 }],
+        [new TenderTotalMismatchError("95000"), TenderTotalMismatchErrorEnvelopeSchema, { serverTotalMinor: "95000" }],
+      ];
+      for (const [error, envelope, details] of cases) {
+        const result = run(error);
+        expect(result.status).toBe(409);
+        expect(envelope.safeParse(result.body).success).toBe(true);
+        expect(result.body.error.details).toEqual(details);
+      }
+    });
+
+    it("omits details for an INSUFFICIENT_STOCK without shortages", () => {
+      expect(run(new InsufficientStockError()).body.error).toEqual({
+        code: "INSUFFICIENT_STOCK",
+        message: "There is not enough stock on hand for this change",
+      });
+    });
+
+    it("never passes other properties of a sales error to the client", () => {
+      const archived = Object.assign(new ProductArchivedError([VARIANT_A]), { priceMinor: "1", businessId: VARIANT_B });
+      const changed = new PriceChangedError([{ variantId: VARIANT_A, currentPriceMinor: "1", currentPriceVersion: 2 }]);
+      Object.defineProperty(changed, "changes", {
+        value: [{ variantId: VARIANT_A, currentPriceMinor: "1", currentPriceVersion: 2, costMinor: "7" }],
+      });
+      const short = new InsufficientStockError(undefined, [{ variantId: VARIANT_A, availableQuantityMinor: "1" }]);
+      Object.defineProperty(short, "shortages", {
+        value: [{ variantId: VARIANT_A, availableQuantityMinor: "1", valueMinor: "700" }],
+      });
+      const mismatch = Object.assign(new TenderTotalMismatchError("1"), { tenderTotalMinor: "2", reference: "TRF" });
+      expect(run(archived).body.error.details).toEqual({ variantIds: [VARIANT_A] });
+      expect(run(changed).body.error.details).toEqual({
+        changes: [{ variantId: VARIANT_A, currentPriceMinor: "1", currentPriceVersion: 2 }],
+      });
+      expect(run(short).body.error.details).toEqual({
+        shortages: [{ variantId: VARIANT_A, availableQuantityMinor: "1" }],
+      });
+      expect(run(mismatch).body.error.details).toEqual({ serverTotalMinor: "1" });
+      expect(JSON.stringify(run(archived).body)).not.toContain(VARIANT_B);
+    });
+
+    it("answers sales details that break the shared schema as a generic 500", () => {
+      const corrupt = (error: ApplicationError, property: string, value: unknown) => {
+        Object.defineProperty(error, property, { value });
+        return error;
+      };
+      const many = Array.from(
+        { length: 201 },
+        (_, index) => `019a0000-0000-7000-8000-${(index + 1).toString().padStart(12, "0")}`,
+      );
+      for (const error of [
+        corrupt(new PriceNotSetError([VARIANT_A]), "variantIds", ["variant"]),
+        corrupt(new PriceNotSetError([VARIANT_A]), "variantIds", many),
+        corrupt(new ProductArchivedError([VARIANT_A]), "variantIds", [VARIANT_B, VARIANT_A]),
+        corrupt(
+          new PriceChangedError([{ variantId: VARIANT_A, currentPriceMinor: "1", currentPriceVersion: 2 }]),
+          "changes",
+          [{ variantId: VARIANT_A, currentPriceMinor: 1, currentPriceVersion: 2 }],
+        ),
+        corrupt(
+          new InsufficientStockError(undefined, [{ variantId: VARIANT_A, availableQuantityMinor: "1" }]),
+          "shortages",
+          [{ variantId: "variant", availableQuantityMinor: "1" }],
+        ),
+        corrupt(new DiscountExceedsLineError(1), "lineNumber", 201),
+        corrupt(new TenderTotalMismatchError("1"), "serverTotalMinor", "1.5"),
+      ]) {
+        const result = run(error);
+        expect(result.status).toBe(500);
+        expect(result.body).toEqual(INTERNAL);
+      }
     });
   });
 

@@ -38,28 +38,35 @@ import {
   createGetCurrentUser,
   createGetGoodsReceipt,
   createGetInventoryItem,
+  createGetJournalEntry,
   createGetOpeningBatch,
   createGetProduct,
+  createGetSale,
   createGetStocktake,
+  createListAccountBalances,
   createListCategories,
   createListDevices,
   createListInventoryItems,
   createListItemMovements,
+  createListLedgerAccounts,
   createListLocations,
   createListMembers,
   createListMyBusinesses,
   createListProductPacks,
   createListProductPriceHistory,
   createListProducts,
+  createListSales,
   createListStocktakeLines,
   createListStocktakes,
   createListUnitsOfMeasure,
+  createNoTaxSnapshotResolver,
   createPostGoodsReceipt,
   createPostStocktake,
   createReactivateMember,
   createReactivateProduct,
   createRecordAdjustment,
   createRecordOpeningStock,
+  createRecordSale,
   createRecordStockValuation,
   createRecordStocktakeCount,
   createRecordWriteOff,
@@ -69,6 +76,7 @@ import {
   createRetirePack,
   createReverseAdjustment,
   createReverseGoodsReceipt,
+  createReverseSale,
   createRevokeDevice,
   createRevokeInvitation,
   createSetLowStockThreshold,
@@ -88,21 +96,26 @@ import {
   type GetCurrentUser,
   type GetGoodsReceipt,
   type GetInventoryItem,
+  type GetJournalEntry,
   type GetOpeningBatch,
   type GetProduct,
+  type GetSale,
   type GetStocktake,
   type IdGenerator,
   KeyedIdempotency,
+  type ListAccountBalances,
   type ListCategories,
   type ListDevices,
   type ListInventoryItems,
   type ListItemMovements,
+  type ListLedgerAccounts,
   type ListLocations,
   type ListMembers,
   type ListMyBusinesses,
   type ListProductPacks,
   type ListProductPriceHistory,
   type ListProducts,
+  type ListSales,
   type ListStocktakeLines,
   type ListStocktakes,
   type ListUnitsOfMeasure,
@@ -113,6 +126,7 @@ import {
   type ReactivateProduct,
   type RecordAdjustment,
   type RecordOpeningStock,
+  type RecordSale,
   type RecordStockValuation,
   type RecordStocktakeCount,
   type RecordWriteOff,
@@ -122,6 +136,7 @@ import {
   type RetirePack,
   type ReverseAdjustment,
   type ReverseGoodsReceipt,
+  type ReverseSale,
   type RevokeDevice,
   type RevokeInvitation,
   type SecretHasher,
@@ -203,6 +218,13 @@ export interface ApiServices {
   readonly listStocktakes: ListStocktakes;
   readonly getStocktake: GetStocktake;
   readonly listStocktakeLines: ListStocktakeLines;
+  readonly recordSale: RecordSale;
+  readonly getSale: GetSale;
+  readonly listSales: ListSales;
+  readonly reverseSale: ReverseSale;
+  readonly listLedgerAccounts: ListLedgerAccounts;
+  readonly listAccountBalances: ListAccountBalances;
+  readonly getJournalEntry: GetJournalEntry;
 }
 
 /** The ApiServices keys of the inventory, valuation and stocktake use cases, in route order. */
@@ -232,6 +254,21 @@ export const INVENTORY_SERVICE_KEYS = [
   "listStocktakeLines",
 ] as const satisfies readonly (keyof ApiServices)[];
 
+/** The ApiServices keys of the sales use cases, in route order. */
+export const SALES_SERVICE_KEYS = [
+  "recordSale",
+  "listSales",
+  "getSale",
+  "reverseSale",
+] as const satisfies readonly (keyof ApiServices)[];
+
+/** The ApiServices keys of the ledger read use cases, in route order. The ledger has no write route. */
+export const LEDGER_SERVICE_KEYS = [
+  "listLedgerAccounts",
+  "listAccountBalances",
+  "getJournalEntry",
+] as const satisfies readonly (keyof ApiServices)[];
+
 /**
  * Composes the Build 1 and Build 2 catalog use cases over the PostgreSQL adapters: one unit of
  * work, the PostgreSQL audit writer and idempotency stores, the SHA-256
@@ -248,6 +285,12 @@ export const INVENTORY_SERVICE_KEYS = [
  * keyed idempotency, the fingerprint hasher, the audit recorder, the clock
  * and the ID generator. Controllers bind each request to the business's
  * default location before calling them.
+ *
+ * The Build 3 sales use cases use the database's sale repository, receipt
+ * number issuer and sales inventory port, the no-tax snapshot resolver and
+ * the ledger repositories under the same unit of work; sales routes are bound
+ * to the default location too. The ledger reads take the business context
+ * directly.
  */
 export function composeApiServices(dependencies: {
   readonly database: Database;
@@ -309,6 +352,25 @@ export function composeApiServices(dependencies: {
     receipts: repos.goodsReceipts,
     adjustments: repos.inventoryAdjustments,
   };
+  const selling = {
+    unitOfWork,
+    memberships,
+    products,
+    units,
+    sales: repos.sales,
+    receiptNumbers: repos.saleReceiptNumbers,
+    inventory: repos.salesInventory,
+    tax: createNoTaxSnapshotResolver(),
+    accounts: repos.ledgerAccounts,
+    journals: repos.journals,
+    idempotency: businessScoped,
+    hasher,
+    audit,
+    ids,
+    clock,
+  };
+  const saleQueries = { unitOfWork, memberships, sales: repos.sales };
+  const ledgerReads = { unitOfWork, accounts: repos.ledgerAccounts, journals: repos.journals };
 
   return Object.freeze({
     userContexts,
@@ -459,5 +521,12 @@ export function composeApiServices(dependencies: {
     listStocktakes: createListStocktakes(stocktakeQueries),
     getStocktake: createGetStocktake(stocktakeQueries),
     listStocktakeLines: createListStocktakeLines(stocktakeQueries),
+    recordSale: createRecordSale(selling),
+    getSale: createGetSale(saleQueries),
+    listSales: createListSales(saleQueries),
+    reverseSale: createReverseSale(selling),
+    listLedgerAccounts: createListLedgerAccounts(ledgerReads),
+    listAccountBalances: createListAccountBalances(ledgerReads),
+    getJournalEntry: createGetJournalEntry(ledgerReads),
   });
 }

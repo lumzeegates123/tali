@@ -54,6 +54,7 @@ export const MOVEMENT_TYPE_LABEL: Readonly<Record<InventoryMovementResponse["typ
   ADJUSTMENT: "Adjustment",
   WRITE_OFF: "Write-off",
   COUNT_CORRECTION: "Stocktake correction",
+  SALE: "Sale",
 };
 
 export const SOURCE_KIND_LABEL: Readonly<Record<InventoryMovementResponse["source"]["kind"], string>> = {
@@ -61,6 +62,7 @@ export const SOURCE_KIND_LABEL: Readonly<Record<InventoryMovementResponse["sourc
   GOODS_RECEIPT: "Goods receipt",
   ADJUSTMENT: "Adjustment or write-off",
   STOCKTAKE: "Stocktake",
+  SALE: "Sale",
 };
 
 export const ADJUSTMENT_REASON_LABEL: Readonly<Record<RecordAdjustmentRequest["reasonCode"], string>> = {

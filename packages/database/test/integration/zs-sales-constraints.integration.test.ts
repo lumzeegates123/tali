@@ -84,8 +84,8 @@ describe("ZS. sales constraints and privileges (PostgreSQL)", () => {
     b = await inventoryTenant(harness, "sales-constraints-b");
     soap = await pricedProduct(harness, a, { name: "Soap", quantity: "10", totalCost: "35000" });
     bSoap = await pricedProduct(harness, b, { name: "Soap", quantity: "10", totalCost: "35000" });
-    const soldA = await tenancy.recordSale.execute(a.context, saleInput(harness, [saleLine(soap, "2")], "100000"));
-    const soldB = await tenancy.recordSale.execute(b.context, saleInput(harness, [saleLine(bSoap, "1")], "50000"));
+    const soldA = await tenancy.recordSale.execute(a.context, saleInput(harness, a, [saleLine(soap, "2")], "100000"));
+    const soldB = await tenancy.recordSale.execute(b.context, saleInput(harness, b, [saleLine(bSoap, "1")], "50000"));
     const idA = soldA.sale.saleId;
     saleA = await jsonRow(`SELECT to_jsonb(t) AS row FROM sales t WHERE id = $1`, [idA]);
     saleB = await jsonRow(`SELECT to_jsonb(t) AS row FROM sales t WHERE id = $1`, [soldB.sale.saleId]);

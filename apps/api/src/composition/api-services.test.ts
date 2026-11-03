@@ -9,7 +9,18 @@ import {
 } from "@tali/integrations/platform";
 import { afterAll, describe, expect, it } from "vitest";
 import { systemClock } from "./api-runtime.js";
-import { composeApiServices, INVENTORY_SERVICE_KEYS } from "./api-services.js";
+import { composeApiServices, INVENTORY_SERVICE_KEYS, LEDGER_SERVICE_KEYS, SALES_SERVICE_KEYS } from "./api-services.js";
+
+const SALES_REPOSITORIES: readonly (keyof DatabaseRepositories)[] = [
+  "sales",
+  "saleReceiptNumbers",
+  "salesInventory",
+  "products",
+  "units",
+  "memberships",
+  "journals",
+  "ledgerAccounts",
+];
 
 const INVENTORY_REPOSITORIES: readonly (keyof DatabaseRepositories)[] = [
   "inventoryMovements",
@@ -72,6 +83,23 @@ describe("composeApiServices inventory composition (Build 2 Slices 5 and 6)", ()
 
   it("wires them to the database's own inventory repositories, idempotency store and audit writer", () => {
     for (const repository of INVENTORY_REPOSITORIES) {
+      expect({ repository, read: read.has(repository) }).toEqual({ repository, read: true });
+      expect(database.repositories[repository]).toBeDefined();
+    }
+  });
+
+  it("composes the sales and ledger read use cases under their own keys", () => {
+    expect(SALES_SERVICE_KEYS).toEqual(["recordSale", "listSales", "getSale", "reverseSale"]);
+    expect(LEDGER_SERVICE_KEYS).toEqual(["listLedgerAccounts", "listAccountBalances", "getJournalEntry"]);
+    const all = [...INVENTORY_SERVICE_KEYS, ...SALES_SERVICE_KEYS, ...LEDGER_SERVICE_KEYS];
+    expect(new Set(all).size).toBe(all.length);
+    for (const key of [...SALES_SERVICE_KEYS, ...LEDGER_SERVICE_KEYS]) {
+      expect({ key, execute: typeof services[key].execute }).toEqual({ key, execute: "function" });
+    }
+  });
+
+  it("wires sales to the database's sale repository, receipt numbers, sales inventory and ledger", () => {
+    for (const repository of SALES_REPOSITORIES) {
       expect({ repository, read: read.has(repository) }).toEqual({ repository, read: true });
       expect(database.repositories[repository]).toBeDefined();
     }

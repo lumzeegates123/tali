@@ -33,7 +33,9 @@ import { MeController } from "./identity/me.controller.js";
 import { InventoryDocumentsController } from "./inventory/inventory-documents.controller.js";
 import { InventoryItemsController } from "./inventory/inventory-items.controller.js";
 import { StocktakesController } from "./inventory/stocktakes.controller.js";
+import { LedgerController } from "./ledger/ledger.controller.js";
 import { RuntimeShutdown } from "./lifecycle/runtime-shutdown.js";
+import { SalesController } from "./sales/sales.controller.js";
 
 /**
  * Root module. Built from an ApiRuntime (the composition root's output) so
@@ -62,6 +64,8 @@ export class AppModule {
       InventoryItemsController,
       InventoryDocumentsController,
       StocktakesController,
+      SalesController,
+      LedgerController,
     ];
     const providers: Provider[] = [
       { provide: SERVER_CONFIG, useValue: runtime.config },
