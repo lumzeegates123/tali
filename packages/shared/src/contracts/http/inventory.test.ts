@@ -12,6 +12,7 @@ import {
   InventoryItemResponseSchema,
   InventoryMovementResponseSchema,
   InventoryMovementsResponseSchema,
+  InventoryMovementSourceKindWireSchema,
   InventoryMovementTypeWireSchema,
   LowStockThresholdResponseSchema,
   OpeningBatchResponseSchema,
@@ -320,7 +321,21 @@ describe("inventory responses", () => {
     for (const extra of ["actorMembershipId", "deviceId", "correlationId", "businessId", "locationId", "recordedAt"]) {
       bad(InventoryMovementResponseSchema, { ...movement, [extra]: ID });
     }
-    bad(InventoryMovementResponseSchema, { ...movement, source: { kind: "SALE", id: ID } });
+    expect(InventoryMovementTypeWireSchema.options).toContain("SALE");
+    expect(InventoryMovementSourceKindWireSchema.options).toContain("SALE");
+    const sold = { ...movement, type: "SALE", source: { kind: "SALE", id: ID }, delta: pieces("-2") };
+    ok(InventoryMovementResponseSchema, sold);
+    ok(InventoryMovementResponseSchema, {
+      ...sold,
+      delta: pieces("2"),
+      reversesMovementId: ID2,
+      reasonNote: "Returned",
+    });
+    for (const extra of ["saleId", "journalEntryId", "unitPrice", "cost", "costStatus", "cogs"]) {
+      bad(InventoryMovementResponseSchema, { ...sold, [extra]: ID });
+    }
+    bad(InventoryMovementResponseSchema, { ...movement, source: { kind: "INVOICE", id: ID } });
+    bad(InventoryMovementResponseSchema, { ...movement, type: "TRANSFER" });
     bad(InventoryMovementResponseSchema, { ...movement, balanceVersion: 0 });
     bad(InventoryMovementResponseSchema, {
       ...movement,

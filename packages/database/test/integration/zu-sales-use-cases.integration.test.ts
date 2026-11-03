@@ -29,7 +29,7 @@ describe("ZU. sales use cases (PostgreSQL)", () => {
   const sell = (context: LocationBoundContext, item: SaleProduct, quantity = "1", price = 50_000n) =>
     tenancy.recordSale.execute(
       context,
-      saleInput(harness, [saleLine(item, quantity)], (price * BigInt(quantity)).toString()),
+      saleInput(harness, context, [saleLine(item, quantity)], (price * BigInt(quantity)).toString()),
     );
   const reverse = (context: LocationBoundContext, saleId: string, idempotencyKey?: string) =>
     tenancy.reverseSale.execute(
@@ -208,7 +208,7 @@ describe("ZU. sales use cases (PostgreSQL)", () => {
       const before = await stock(a, gum);
       const { sale } = await tenancy.recordSale.execute(
         a.context,
-        saleInput(harness, [saleLine(gum, "2"), saleLine(gum, "1")], "1500"),
+        saleInput(harness, a, [saleLine(gum, "2"), saleLine(gum, "1")], "1500"),
       );
       expect(sale.lines.map((line) => line.costMinor)).toEqual(["67", "33"]);
       expect(sale.cogsTotalMinor).toBe("100");
@@ -232,7 +232,12 @@ describe("ZU. sales use cases (PostgreSQL)", () => {
       const soap = await pricedProduct(harness, a, { name: "Soap", quantity: "10", totalCost: "350000" });
       const { sale } = await tenancy.recordSale.execute(
         a.context,
-        saleInput(harness, [saleLine(soap, "2", { discount: { kind: "FIXED", amountMinor: "5000" } })], "95000"),
+        saleInput(
+          harness,
+          a,
+          [saleLine(soap, "2", { discount: { kind: "FIXED", amount: { amountMinor: "5000", currency: a.currency } } })],
+          "95000",
+        ),
       );
       expect(sale).toMatchObject({ grossTotalMinor: "100000", discountTotalMinor: "5000", totalMinor: "95000" });
       expect(await postings(sale.journalEntryId)).toEqual(
@@ -260,7 +265,7 @@ describe("ZU. sales use cases (PostgreSQL)", () => {
     it("numbers per business, does not advance on replay, and a failed sale leaves the counter alone", async () => {
       const soap = await pricedProduct(harness, a, { name: "Soap", quantity: "5", totalCost: "175000" });
       const bSoap = await pricedProduct(harness, b, { name: "Soap", quantity: "5", totalCost: "175000" });
-      const input = saleInput(harness, [saleLine(soap, "1")], "50000");
+      const input = saleInput(harness, a, [saleLine(soap, "1")], "50000");
       const first = await tenancy.recordSale.execute(a.context, input);
       expect(first.sale.receiptNumber).toBe("S-000001");
       const replay = await tenancy.recordSale.execute(a.context, input);
@@ -279,7 +284,7 @@ describe("ZU. sales use cases (PostgreSQL)", () => {
   describe("idempotency", () => {
     it("replays the same key and body without new effects", async () => {
       const soap = await pricedProduct(harness, a, { name: "Soap", quantity: "5", totalCost: "175000" });
-      const input = saleInput(harness, [saleLine(soap, "2")], "100000");
+      const input = saleInput(harness, a, [saleLine(soap, "2")], "100000");
       const first = await tenancy.recordSale.execute(a.context, input);
       const afterFirst = await stock(a, soap);
       const replay = await tenancy.recordSale.execute(a.context, input);
@@ -292,7 +297,7 @@ describe("ZU. sales use cases (PostgreSQL)", () => {
 
     it("the same key with a changed body is IDEMPOTENCY_KEY_REUSED and writes nothing", async () => {
       const soap = await pricedProduct(harness, a, { name: "Soap", quantity: "5", totalCost: "175000" });
-      const input = saleInput(harness, [saleLine(soap, "2")], "100000");
+      const input = saleInput(harness, a, [saleLine(soap, "2")], "100000");
       await tenancy.recordSale.execute(a.context, input);
       const before = await stock(a, soap);
       expect(
@@ -300,7 +305,7 @@ describe("ZU. sales use cases (PostgreSQL)", () => {
           tenancy.recordSale.execute(a.context, {
             ...input,
             lines: [saleLine(soap, "1")],
-            tenders: [{ method: "CASH", amountMinor: "50000" }],
+            tenders: [{ method: "CASH", amount: { amountMinor: "50000", currency: a.currency } }],
           }),
         ),
       ).toBeInstanceOf(IdempotencyKeyReusedError);
@@ -310,7 +315,7 @@ describe("ZU. sales use cases (PostgreSQL)", () => {
 
     it("concurrent requests with the same key record one sale and replay the other", async () => {
       const soap = await pricedProduct(harness, a, { name: "Soap", quantity: "5", totalCost: "175000" });
-      const input = saleInput(harness, [saleLine(soap, "2")], "100000");
+      const input = saleInput(harness, a, [saleLine(soap, "2")], "100000");
       const results = await Promise.all([0, 1].map(() => tenancy.recordSale.execute(a.context, input)));
       expect(results.map((result) => result.replayed).sort()).toEqual([false, true]);
       expect(results[0]?.sale).toEqual(results[1]?.sale);

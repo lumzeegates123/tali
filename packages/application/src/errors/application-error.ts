@@ -324,13 +324,12 @@ export class PriceChangedError extends ApplicationError {
 
   constructor(changes: readonly PriceChangeDetail[]) {
     super("PRICE_CHANGED", "A price changed since it was displayed");
-    if (changes.length === 0 || changes.length > MAX_SALE_ERROR_IDS) {
+    const unique = [...new Map(changes.map((change) => [change.variantId, change] as const)).values()];
+    if (unique.length === 0 || unique.length > MAX_SALE_ERROR_IDS) {
       throw new Error(`PRICE_CHANGED needs 1 to ${MAX_SALE_ERROR_IDS} changes`);
     }
     this.changes = Object.freeze(
-      [...changes].sort((left, right) =>
-        left.variantId < right.variantId ? -1 : left.variantId > right.variantId ? 1 : 0,
-      ),
+      unique.sort((left, right) => (left.variantId < right.variantId ? -1 : left.variantId > right.variantId ? 1 : 0)),
     );
   }
 }

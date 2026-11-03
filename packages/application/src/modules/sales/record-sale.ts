@@ -13,6 +13,7 @@ import {
   createSale,
   lineDiscountAmount,
   lineGross,
+  parseCurrencyCode,
   parseProductVariantId,
   parseSaleId,
   parseUnitCode,
@@ -63,6 +64,12 @@ import { presentSale, type SaleView } from "./view.js";
 
 export const RECORD_SALE_OPERATION = "sales.sale.record.v1";
 
+/** A money amount as submitted: minor units and the currency the caller named, which must be the business currency. */
+export interface SaleMoneyInput {
+  readonly amountMinor: string;
+  readonly currency: string;
+}
+
 export interface RecordSaleLineInput {
   readonly variantId: string;
   readonly quantityMinor: string;
@@ -70,15 +77,15 @@ export interface RecordSaleLineInput {
   readonly expectedPriceVersion: number;
   readonly discount?:
     | { readonly kind: "NONE" }
-    | { readonly kind: "FIXED"; readonly amountMinor: string }
+    | { readonly kind: "FIXED"; readonly amount: SaleMoneyInput }
     | { readonly kind: "BASIS_POINTS"; readonly basisPoints: number };
 }
 
 export interface RecordSaleTenderInput {
   readonly method: string;
-  readonly amountMinor: string;
+  readonly amount: SaleMoneyInput;
   readonly reference?: string;
-  readonly cashReceivedMinor?: string;
+  readonly cashReceived?: SaleMoneyInput;
 }
 
 export interface RecordSaleInput {
@@ -169,10 +176,11 @@ export function createRecordSale(dependencies: RecordSaleDependencies): RecordSa
       return dependencies.unitOfWork.run(async (scope) => {
         const command = canonicalCommandEncoding({
           operation: RECORD_SALE_OPERATION,
-          commandSchemaVersion: 1,
+          commandSchemaVersion: 2,
           command: {
             locationId: context.locationId,
             saleId,
+            currency: context.currency,
             ...(deviceReportedAt === undefined ? {} : { deviceReportedAt }),
             lines: lines.map(lineCommand),
             tenders: tenders.map(tenderCommand),
@@ -542,19 +550,19 @@ function parseTenders(
     if (!(TENDER_METHODS as readonly string[]).includes(tender.method)) {
       throw new ValidationError("unknown tender method", [{ path: [...path, "method"], message: "unknown" }]);
     }
-    const amountMinor = parseMinor(tender.amountMinor, currency, [...path, "amountMinor"]);
+    const amountMinor = parseMoney(tender.amount, currency, [...path, "amount"]);
     if (amountMinor <= 0n) {
       throw new ValidationError("tender amount must be positive", [
-        { path: [...path, "amountMinor"], message: "must be > 0" },
+        { path: [...path, "amount", "amountMinor"], message: "must be > 0" },
       ]);
     }
     return {
       method: tender.method as TenderMethod,
       amountMinor,
       ...(tender.reference === undefined ? {} : { reference: tender.reference }),
-      ...(tender.cashReceivedMinor === undefined
+      ...(tender.cashReceived === undefined
         ? {}
-        : { cashReceivedMinor: parseMinor(tender.cashReceivedMinor, currency, [...path, "cashReceivedMinor"]) }),
+        : { cashReceivedMinor: parseMoney(tender.cashReceived, currency, [...path, "cashReceived"]) }),
     };
   });
 }
@@ -568,10 +576,30 @@ function parseDiscount(
   if (discount.kind === "FIXED") {
     return {
       kind: "FIXED",
-      amount: Money.ofMinor(parseMinor(discount.amountMinor, currency, [...path, "amountMinor"]), currency),
+      amount: Money.ofMinor(parseMoney(discount.amount, currency, [...path, "amount"]), currency),
     };
   }
   return { kind: "BASIS_POINTS", basisPoints: discount.basisPoints };
+}
+
+/** Minor units of a submitted amount; a currency other than the business currency is VALIDATION_FAILED, never converted. */
+function parseMoney(
+  value: SaleMoneyInput,
+  currency: LocationBoundContext["currency"],
+  path: readonly (string | number)[],
+): bigint {
+  let money: Money;
+  try {
+    money = Money.fromMinorUnitsString(value.amountMinor, parseCurrencyCode(value.currency));
+  } catch (error) {
+    throw invalidAt(error, path);
+  }
+  if (money.currency !== currency) {
+    throw new ValidationError("money currency must match the business currency", [
+      { path: [...path, "currency"], message: "CURRENCY_MISMATCH" },
+    ]);
+  }
+  return money.amountMinor;
 }
 
 function parseMinor(

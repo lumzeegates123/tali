@@ -61,7 +61,7 @@ describe("ZM. journal repository (PostgreSQL)", () => {
     const a = await inventoryTenant(harness, "journal-sale-a");
     const b = await inventoryTenant(harness, "journal-sale-b");
     const soap = await pricedProduct(harness, a, { name: "Soap", quantity: "5", totalCost: "1000" });
-    const sold = await tenancy.recordSale.execute(a.context, saleInput(harness, [saleLine(soap, "1")], "50000"));
+    const sold = await tenancy.recordSale.execute(a.context, saleInput(harness, a, [saleLine(soap, "1")], "50000"));
     const source = { kind: "sale" as const, id: sold.sale.saleId };
     const original = await run((scope) => journals.findOriginalBySource(scope, a.businessId, source));
     expect(original).toMatchObject({ source, entryKind: "ORIGINAL", postingRule: "SALE_POSTED" });

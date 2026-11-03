@@ -4,7 +4,9 @@ import type { LocationBoundContext } from "../../context/business-context.js";
 import { createSalesHarness, type SalesHarness } from "../../testing/sales-harness.js";
 import type { RecordSaleInput } from "./record-sale.js";
 
-const CURRENCIES = [defineCurrency("NGN", 2)];
+const CURRENCIES = [defineCurrency("NGN", 2), defineCurrency("KES", 2)];
+
+const ngn = (amountMinor: string) => ({ amountMinor, currency: "NGN" });
 
 function harness(): SalesHarness {
   return createSalesHarness({ currencies: CURRENCIES, start: "2026-10-30T12:00:00.000Z" });
@@ -52,7 +54,7 @@ function saleInput(
     saleId,
     idempotencyKey: saleId,
     lines: overrides.lines ?? [{ variantId, quantityMinor, unit, expectedPriceVersion: priceVersion }],
-    tenders: overrides.tenders ?? [{ method: "CASH", amountMinor: "100000" }],
+    tenders: overrides.tenders ?? [{ method: "CASH", amount: ngn("100000") }],
     ...(overrides.deviceReportedAt === undefined ? {} : { deviceReportedAt: overrides.deviceReportedAt }),
   };
 }
@@ -195,7 +197,7 @@ describe("RecordSale", () => {
     const missing = await rejection(
       h.recordSale.execute(
         roles.OWNER,
-        saleInput(h, unpriced.variantId, 1, { tenders: [{ method: "CASH", amountMinor: "1" }] }),
+        saleInput(h, unpriced.variantId, 1, { tenders: [{ method: "CASH", amount: ngn("1") }] }),
       ),
     );
     expect(missing).toMatchObject({ code: "PRICE_NOT_SET" });
@@ -214,7 +216,7 @@ describe("RecordSale", () => {
           { variantId: other.variantId, quantityMinor: "1", unit: "PIECE", expectedPriceVersion: other.priceVersion },
           { variantId: changed.variantId, quantityMinor: "2", unit: "PIECE", expectedPriceVersion: 1 },
         ],
-        tenders: [{ method: "CASH", amountMinor: "121000" }],
+        tenders: [{ method: "CASH", amount: ngn("121000") }],
       }),
     );
     expect(stale).toMatchObject({
@@ -315,7 +317,7 @@ describe("RecordSale", () => {
           expectedPriceVersion: untracked.priceVersion,
         },
       ],
-      tenders: [{ method: "CASH", amountMinor: "153000" }],
+      tenders: [{ method: "CASH", amount: ngn("153000") }],
     });
     expect(mixed.sale.costStatus).toBe("PARTIAL");
     expect(mixed.sale.cogsTotalMinor).toBe("70000");
@@ -328,7 +330,7 @@ describe("RecordSale", () => {
         { variantId: same.variantId, quantityMinor: "2", unit: "PIECE", expectedPriceVersion: same.priceVersion },
         { variantId: same.variantId, quantityMinor: "1", unit: "PIECE", expectedPriceVersion: same.priceVersion },
       ],
-      tenders: [{ method: "CASH", amountMinor: "30" }],
+      tenders: [{ method: "CASH", amount: ngn("30") }],
     });
     expect(sequential.sale.lines.map((line) => line.costMinor)).toEqual(["67", "33"]);
     expect(h.salesStore.stockOf(roles.OWNER.businessId, roles.OWNER.locationId, same.variantId)).toMatchObject({
@@ -368,7 +370,7 @@ describe("RecordSale", () => {
     await expect(
       h.recordSale.execute(roles.OWNER, {
         ...saleInput(h, product.variantId, product.priceVersion),
-        tenders: Array.from({ length: 11 }, () => ({ method: "CASH", amountMinor: "1" })),
+        tenders: Array.from({ length: 11 }, () => ({ method: "CASH", amount: ngn("1") })),
       }),
     ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
 
@@ -380,7 +382,7 @@ describe("RecordSale", () => {
         unit: "PIECE",
         expectedPriceVersion: product.priceVersion,
       })),
-      tenders: [{ method: "CASH", amountMinor: "20000" }],
+      tenders: [{ method: "CASH", amount: ngn("20000") }],
     });
     expect(manyLines.sale.lines).toHaveLength(200);
     expect(manyLines.sale.lines[199]?.lineNumber).toBe(200);
@@ -390,7 +392,7 @@ describe("RecordSale", () => {
       ...saleInput(h, wide.variantId, wide.priceVersion, { quantityMinor: "1" }),
       tenders: Array.from({ length: 10 }, (_, index) => ({
         method: index % 2 === 0 ? "CASH" : "BANK_TRANSFER",
-        amountMinor: "10000",
+        amount: ngn("10000"),
       })),
     });
     expect(manyTenders.sale.tenders.map((tender) => tender.tenderNumber)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
@@ -407,12 +409,12 @@ describe("RecordSale", () => {
     const product = await pricedProduct(h, roles.OWNER);
     const exact = await h.recordSale.execute(roles.OWNER, {
       ...saleInput(h, product.variantId, product.priceVersion),
-      tenders: [{ method: "CASH", amountMinor: "100000", cashReceivedMinor: "100000" }],
+      tenders: [{ method: "CASH", amount: ngn("100000"), cashReceived: ngn("100000") }],
     });
     expect(exact.sale.tenders[0]).toMatchObject({ cashReceivedMinor: "100000", changeGivenMinor: "0" });
     const change = await h.recordSale.execute(roles.OWNER, {
       ...saleInput(h, product.variantId, product.priceVersion),
-      tenders: [{ method: "CASH", amountMinor: "100000", cashReceivedMinor: "120000" }],
+      tenders: [{ method: "CASH", amount: ngn("100000"), cashReceived: ngn("120000") }],
     });
     expect(change.sale.tenders[0]?.changeGivenMinor).toBe("20000");
     const debit = h.catalog.tenancy.ledger.entriesFor(roles.OWNER.businessId).at(-1)?.lines[0];
@@ -422,13 +424,13 @@ describe("RecordSale", () => {
     await expect(
       h.recordSale.execute(roles.OWNER, {
         ...saleInput(h, product.variantId, product.priceVersion),
-        tenders: [{ method: "CASH", amountMinor: "100000", cashReceivedMinor: "100" }],
+        tenders: [{ method: "CASH", amount: ngn("100000"), cashReceived: ngn("100") }],
       }),
     ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
     await expect(
       h.recordSale.execute(roles.OWNER, {
         ...saleInput(h, product.variantId, product.priceVersion),
-        tenders: [{ method: "BANK_TRANSFER", amountMinor: "100000", cashReceivedMinor: "100000" }],
+        tenders: [{ method: "BANK_TRANSFER", amount: ngn("100000"), cashReceived: ngn("100000") }],
       }),
     ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
     expect(h.salesStore.receiptSequence(roles.OWNER.businessId)).toBe(4n);
@@ -446,10 +448,10 @@ describe("RecordSale", () => {
           quantityMinor: "2",
           unit: "PIECE",
           expectedPriceVersion: product.priceVersion,
-          discount: { kind: "FIXED" as const, amountMinor: "1000" },
+          discount: { kind: "FIXED" as const, amount: ngn("1000") },
         },
       ],
-      tenders: [{ method: "CASH", amountMinor: "99000" }],
+      tenders: [{ method: "CASH", amount: ngn("99000") }],
     };
     await expect(h.recordSale.execute(roles.CASHIER, discounted)).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
     const owner = await h.recordSale.execute(roles.OWNER, discounted);
@@ -465,7 +467,7 @@ describe("RecordSale", () => {
           discount: { kind: "BASIS_POINTS" as const, basisPoints: 1000 },
         },
       ],
-      tenders: [{ method: "CASH", amountMinor: "90000" }],
+      tenders: [{ method: "CASH", amount: ngn("90000") }],
     });
     expect(manager.sale.lines[0]?.discountMinor).toBe("10000");
     const entry = h.catalog.tenancy.ledger.entriesFor(roles.OWNER.businessId).at(-1);
@@ -473,9 +475,9 @@ describe("RecordSale", () => {
     expect(entry?.lines.find((line) => line.systemRole === "SALES_REVENUE")?.amount.amountMinor).toBe(100_000n);
 
     for (const discount of [
-      { kind: "FIXED" as const, amountMinor: "0" },
-      { kind: "FIXED" as const, amountMinor: "100000" },
-      { kind: "FIXED" as const, amountMinor: "100001" },
+      { kind: "FIXED" as const, amount: ngn("0") },
+      { kind: "FIXED" as const, amount: ngn("100000") },
+      { kind: "FIXED" as const, amount: ngn("100001") },
       { kind: "BASIS_POINTS" as const, basisPoints: 0 },
       { kind: "BASIS_POINTS" as const, basisPoints: 10_000 },
     ]) {
@@ -513,7 +515,7 @@ describe("RecordSale", () => {
             discount: { kind: "BASIS_POINTS", basisPoints: 9999 },
           },
         ],
-        tenders: [{ method: "CASH", amountMinor: "1" }],
+        tenders: [{ method: "CASH", amount: ngn("1") }],
       }),
     );
     expect(rounded).toMatchObject({ code: "DISCOUNT_EXCEEDS_LINE", lineNumber: 1 });
@@ -526,7 +528,7 @@ describe("RecordSale", () => {
     for (const method of ["CASH", "BANK_TRANSFER", "POS_CARD", "OTHER"] as const) {
       const result = await h.recordSale.execute(roles.OWNER, {
         ...saleInput(h, product.variantId, product.priceVersion),
-        tenders: [{ method, amountMinor: "100000", ...(method === "BANK_TRANSFER" ? { reference: "TRF-1" } : {}) }],
+        tenders: [{ method, amount: ngn("100000"), ...(method === "BANK_TRANSFER" ? { reference: "TRF-1" } : {}) }],
       });
       expect(result.sale.tenders[0]?.method).toBe(method);
       if (method === "CASH") expect(result.sale.tenders[0]?.verificationStatus).toBe("NOT_APPLICABLE");
@@ -535,9 +537,9 @@ describe("RecordSale", () => {
     const split = await h.recordSale.execute(roles.OWNER, {
       ...saleInput(h, product.variantId, product.priceVersion),
       tenders: [
-        { method: "CASH", amountMinor: "60000" },
-        { method: "CASH", amountMinor: "20000" },
-        { method: "BANK_TRANSFER", amountMinor: "20000" },
+        { method: "CASH", amount: ngn("60000") },
+        { method: "CASH", amount: ngn("20000") },
+        { method: "BANK_TRANSFER", amount: ngn("20000") },
       ],
     });
     expect(split.sale.tenders).toHaveLength(3);
@@ -550,19 +552,19 @@ describe("RecordSale", () => {
     await expect(
       h.recordSale.execute(roles.OWNER, {
         ...saleInput(h, product.variantId, product.priceVersion),
-        tenders: [{ method: "CASH", amountMinor: "1" }],
+        tenders: [{ method: "CASH", amount: ngn("1") }],
       }),
     ).rejects.toMatchObject({ code: "TENDER_TOTAL_MISMATCH" });
     await expect(
       h.recordSale.execute(roles.OWNER, {
         ...saleInput(h, product.variantId, product.priceVersion),
-        tenders: [{ method: "CASH", amountMinor: "100001" }],
+        tenders: [{ method: "CASH", amount: ngn("100001") }],
       }),
     ).rejects.toMatchObject({ code: "TENDER_TOTAL_MISMATCH" });
     await expect(
       h.recordSale.execute(roles.OWNER, {
         ...saleInput(h, product.variantId, product.priceVersion),
-        tenders: [{ method: "CASH", amountMinor: "0" }],
+        tenders: [{ method: "CASH", amount: ngn("0") }],
       }),
     ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
   });
@@ -583,9 +585,66 @@ describe("RecordSale", () => {
     ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
     await h.recordSale.execute(roles.OWNER, input);
     await expect(
-      h.recordSale.execute(roles.OWNER, { ...input, tenders: [{ method: "BANK_TRANSFER", amountMinor: "100000" }] }),
+      h.recordSale.execute(roles.OWNER, { ...input, tenders: [{ method: "BANK_TRANSFER", amount: ngn("100000") }] }),
     ).rejects.toMatchObject({ code: "IDEMPOTENCY_KEY_REUSED" });
     expect(h.catalog.tenancy.ledger.entriesFor(roles.OWNER.businessId)).toHaveLength(1);
+  });
+
+  it("rejects money in any currency but the business currency before writing anything", async () => {
+    const h = harness();
+    const roles = await h.businessWithRoles("Shop");
+    const product = await pricedProduct(h, roles.OWNER);
+    const kes = { amountMinor: "100000", currency: "KES" };
+    const fixedLine = (amount: { amountMinor: string; currency: string }) => ({
+      variantId: product.variantId,
+      quantityMinor: "2",
+      unit: "PIECE",
+      expectedPriceVersion: product.priceVersion,
+      discount: { kind: "FIXED" as const, amount },
+    });
+    const cases: [Partial<RecordSaleInput>, readonly (string | number)[]][] = [
+      [{ tenders: [{ method: "CASH", amount: kes }] }, ["tenders", 0, "amount", "currency"]],
+      [
+        { tenders: [{ method: "CASH", amount: ngn("100000"), cashReceived: kes }] },
+        ["tenders", 0, "cashReceived", "currency"],
+      ],
+      [
+        {
+          lines: [fixedLine({ amountMinor: "1000", currency: "KES" })],
+          tenders: [{ method: "CASH", amount: ngn("99000") }],
+        },
+        ["lines", 0, "discount", "amount", "currency"],
+      ],
+    ];
+    for (const [overrides, path] of cases) {
+      const error = await rejection(
+        h.recordSale.execute(roles.OWNER, { ...saleInput(h, product.variantId, product.priceVersion), ...overrides }),
+      );
+      expect(error).toMatchObject({ code: "VALIDATION_FAILED", issues: [{ path, message: "CURRENCY_MISMATCH" }] });
+    }
+    const malformed = await rejection(
+      h.recordSale.execute(roles.OWNER, {
+        ...saleInput(h, product.variantId, product.priceVersion),
+        tenders: [{ method: "CASH", amount: { amountMinor: "100000", currency: "ngn" } }],
+      }),
+    );
+    expect(malformed).toMatchObject({ code: "VALIDATION_FAILED" });
+    expect(h.catalog.tenancy.ledger.entriesFor(roles.OWNER.businessId)).toHaveLength(0);
+    expect(h.salesStore.receiptSequence(roles.OWNER.businessId)).toBe(1n);
+  });
+
+  it("records a sale in a non-NGN business currency", async () => {
+    const h = harness();
+    const roles = await h.businessWithRoles("Duka", "KES");
+    const product = await pricedProduct(h, roles.OWNER);
+    const result = await h.recordSale.execute(roles.OWNER, {
+      ...saleInput(h, product.variantId, product.priceVersion),
+      tenders: [{ method: "CASH", amount: { amountMinor: "100000", currency: "KES" } }],
+    });
+    expect(result.sale).toMatchObject({ currency: "KES", totalMinor: "100000" });
+    await expect(
+      h.recordSale.execute(roles.OWNER, saleInput(h, product.variantId, product.priceVersion)),
+    ).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
   });
 });
 

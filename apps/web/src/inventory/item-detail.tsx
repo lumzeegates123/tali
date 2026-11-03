@@ -210,16 +210,19 @@ export function ItemDetail({
                       .join(" · ")}
                   </td>
                   <td>
-                    <button
-                      type="button"
-                      className="secondary"
-                      onClick={() => {
-                        if (movement.source.kind === "STOCKTAKE") onStocktake(movement.source.id);
-                        else onDocument({ kind: movement.source.kind, id: movement.source.id });
-                      }}
-                    >
-                      View {SOURCE_KIND_LABEL[movement.source.kind].toLowerCase()}
-                    </button>
+                    {movement.source.kind === "SALE" ? null : (
+                      <button
+                        type="button"
+                        className="secondary"
+                        onClick={() => {
+                          const { kind, id } = movement.source;
+                          if (kind === "STOCKTAKE") onStocktake(id);
+                          else if (kind !== "SALE") onDocument({ kind, id });
+                        }}
+                      >
+                        View {SOURCE_KIND_LABEL[movement.source.kind].toLowerCase()}
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}

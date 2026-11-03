@@ -33,7 +33,7 @@ describe("ZV. sales concurrency (PostgreSQL)", () => {
   const sell = (item: SaleProduct, quantity: string, using: Tenancy = tenancy) =>
     using.recordSale.execute(
       a.context,
-      saleInput(harness, [saleLine(item, quantity)], (50_000n * BigInt(quantity)).toString()),
+      saleInput(harness, a, [saleLine(item, quantity)], (50_000n * BigInt(quantity)).toString()),
     );
   const reverse = (saleId: string, using: Tenancy = tenancy) =>
     using.reverseSale.execute(a.context, reversalInput(harness, saleId));
@@ -280,8 +280,8 @@ describe("ZV. sales concurrency (PostgreSQL)", () => {
       const forward = [saleLine(soap, "1"), saleLine(salt, "2")];
       const backward = [saleLine(salt, "1"), saleLine(soap, "2")];
       const work: Promise<unknown>[] = [
-        single.recordSale.execute(a.context, saleInput(harness, forward, "150000")),
-        single.recordSale.execute(a.context, saleInput(harness, backward, "150000")),
+        single.recordSale.execute(a.context, saleInput(harness, a, forward, "150000")),
+        single.recordSale.execute(a.context, saleInput(harness, a, backward, "150000")),
       ];
       const victim = recorded.shift();
       if (victim !== undefined) work.push(reverse(victim, single));

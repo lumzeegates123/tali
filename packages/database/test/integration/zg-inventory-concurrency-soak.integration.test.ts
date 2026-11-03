@@ -55,6 +55,7 @@ describe(`inventory concurrency soak, ${ITERATIONS} iterations per scenario (Pos
       a.context,
       saleInput(
         harness,
+        a,
         lines.map(([product, quantity]) => saleLine(sellable.get(product) as SaleProduct, quantity)),
         total.toString(),
       ),

@@ -49,7 +49,11 @@ describe("the production VariantInventoryStateReader (Build 2 Slice 5 gate)", ()
   it("UpdateProduct is composed with the database's variantInventoryState reader, once", () => {
     const text = readFileSync(join(ROOT, "apps/api/src/composition/api-services.ts"), "utf8");
     expect(text).toMatch(/createUpdateProduct\(\{[^}]*inventory: database\.repositories\.variantInventoryState,/s);
-    expect(text.match(/\binventory:/g)).toHaveLength(1);
+    expect(text.match(/repositories\.variantInventoryState/g)).toHaveLength(1);
+    expect(text.match(/\binventory: [^,\n]+/g)).toEqual([
+      "inventory: repos.salesInventory",
+      "inventory: database.repositories.variantInventoryState",
+    ]);
   });
 
   it("no app provides its own inventory state reader", () => {

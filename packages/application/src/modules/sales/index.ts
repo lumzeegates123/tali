@@ -15,6 +15,7 @@ export type {
   RecordSaleLineInput,
   RecordSaleResult,
   RecordSaleTenderInput,
+  SaleMoneyInput,
 } from "./record-sale.js";
 export { RECORD_SALE_OPERATION, createRecordSale } from "./record-sale.js";
 export type { ReverseSale, ReverseSaleInput, ReverseSaleResult } from "./reverse-sale.js";

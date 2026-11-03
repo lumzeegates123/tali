@@ -180,14 +180,17 @@ export function ItemDetailScreen({
             {formatQuantity(movement.balanceAfter, units.items)}
           </Text>
           {movementDetails(movement) === "" ? null : <Text>{movementDetails(movement)}</Text>}
-          <Button
-            label={`View ${SOURCE_KIND_LABEL[movement.source.kind].toLowerCase()}`}
-            secondary
-            onPress={() => {
-              if (movement.source.kind === "STOCKTAKE") onStocktake(movement.source.id);
-              else onDocument({ kind: movement.source.kind, id: movement.source.id });
-            }}
-          />
+          {movement.source.kind === "SALE" ? null : (
+            <Button
+              label={`View ${SOURCE_KIND_LABEL[movement.source.kind].toLowerCase()}`}
+              secondary
+              onPress={() => {
+                const { kind, id } = movement.source;
+                if (kind === "STOCKTAKE") onStocktake(id);
+                else if (kind !== "SALE") onDocument({ kind, id });
+              }}
+            />
+          )}
         </View>
       ))}
       {history.loading ? <Loading label="Loading stock history…" /> : null}

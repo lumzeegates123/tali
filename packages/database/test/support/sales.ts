@@ -64,9 +64,13 @@ export function saleLine(
   return { variantId: item.variantId, quantityMinor, unit: "PIECE", expectedPriceVersion: item.priceVersion, ...extra };
 }
 
-/** A sale paid with one cash tender of `totalMinor`; the saleId is the idempotency key. */
+/**
+ * A sale paid with one cash tender of `totalMinor` in the business currency of
+ * `seller` (a tenant or its context); the saleId is the idempotency key.
+ */
 export function saleInput(
   harness: TenancyHarness,
+  seller: { readonly currency: string },
   lines: readonly RecordSaleLineInput[],
   totalMinor: string,
   overrides: Partial<RecordSaleInput> = {},
@@ -76,7 +80,7 @@ export function saleInput(
     saleId,
     idempotencyKey: saleId,
     lines,
-    tenders: [{ method: "CASH", amountMinor: totalMinor }],
+    tenders: [{ method: "CASH", amount: { amountMinor: totalMinor, currency: seller.currency } }],
     ...overrides,
   };
 }

@@ -54,12 +54,14 @@ export const InventoryMovementTypeWireSchema = z.enum([
   "ADJUSTMENT",
   "WRITE_OFF",
   "COUNT_CORRECTION",
+  "SALE",
 ]);
 export const InventoryMovementSourceKindWireSchema = z.enum([
   "OPENING_BATCH",
   "GOODS_RECEIPT",
   "ADJUSTMENT",
   "STOCKTAKE",
+  "SALE",
 ]);
 export const InventoryDocumentStatusWireSchema = z.enum(["POSTED", "REVERSED"]);
 export const StockLineDirectionWireSchema = z.enum(["INCREASE", "DECREASE"]);

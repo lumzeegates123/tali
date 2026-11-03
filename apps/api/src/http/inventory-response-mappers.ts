@@ -122,9 +122,6 @@ function item(view: InventoryItemView): InventoryItemResponse {
 }
 
 function movement(view: InventoryMovementView): InventoryMovementResponse {
-  if (view.type === "SALE" || view.source.kind === "SALE") {
-    throw new Error("SALE movements are not part of the inventory HTTP contract");
-  }
   return {
     movementId: view.movementId,
     type: view.type,

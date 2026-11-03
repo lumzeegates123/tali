@@ -1,4 +1,5 @@
 import type {
+  InventoryMovementView,
   PostStocktakeResult,
   StocktakeChangeResult,
   StocktakeLineView,
@@ -14,6 +15,7 @@ import {
   Quantity,
 } from "@tali/domain";
 import {
+  InventoryMovementsResponseSchema,
   LowStockThresholdResponseSchema,
   PostStocktakeResponseSchema,
   StocktakeLineBlindSchema,
@@ -22,6 +24,7 @@ import {
 import { describe, expect, it } from "vitest";
 import {
   toCancelStocktakeResponse,
+  toInventoryMovementsResponse,
   toLowStockThresholdResponse,
   toPostStocktakeResponse,
   toStocktakeLineChangeResponse,
@@ -194,26 +197,60 @@ describe("movement serialization", () => {
     });
   });
 
-  it("refuses a SALE movement until the HTTP contract exposes sales", () => {
-    const sale = {
-      id: "019a0000-0000-7000-8000-0000000000e2",
-      locationId: LOCATION,
-      variantId: VARIANT,
+  it("maps a SALE movement and its reversal with the sale as source and no sale accounting fields", () => {
+    const saleId = "019a0000-0000-7000-8000-0000000000f1";
+    const sold = {
+      movementId: "019a0000-0000-7000-8000-0000000000e2",
       type: "SALE",
       delta: pieces(-1n),
       balanceAfter: pieces(9n),
       balanceVersion: 2,
-      source: { kind: "SALE", id: "019a0000-0000-7000-8000-0000000000f1" },
+      source: { kind: "SALE", id: saleId },
       sourceChannel: "api",
       occurredAt: AT,
       businessDate: BusinessDate.of(2026, 10, 9),
-    };
+      saleId,
+      journalEntryId: "019a0000-0000-7000-8000-0000000000f2",
+      costMinor: 700n,
+    } as unknown as InventoryMovementView;
+    const reversed = {
+      ...sold,
+      movementId: "019a0000-0000-7000-8000-0000000000e3",
+      delta: pieces(1n),
+      balanceAfter: pieces(10n),
+      balanceVersion: 3,
+      reversesMovementId: "019a0000-0000-7000-8000-0000000000e2",
+      reasonNote: "Customer returned the goods",
+    } as unknown as InventoryMovementView;
+    const page = toInventoryMovementsResponse({ items: [reversed, sold], nextCursor: null });
+    expect(InventoryMovementsResponseSchema.parse(page)).toEqual(page);
+    expect(page.items[1]).toEqual({
+      movementId: "019a0000-0000-7000-8000-0000000000e2",
+      type: "SALE",
+      delta: { quantityMinor: "-1", unit: "PIECE" },
+      balanceAfter: { quantityMinor: "9", unit: "PIECE" },
+      balanceVersion: 2,
+      source: { kind: "SALE", id: saleId },
+      pack: null,
+      reversesMovementId: null,
+      reasonCode: null,
+      reasonNote: null,
+      sourceChannel: "api",
+      occurredAt: AT.toISOString(),
+      businessDate: "2026-10-09",
+    });
+    expect(page.items[0]).toMatchObject({
+      type: "SALE",
+      delta: { quantityMinor: "1", unit: "PIECE" },
+      reversesMovementId: "019a0000-0000-7000-8000-0000000000e2",
+      reasonNote: "Customer returned the goods",
+    });
     const result = {
       stocktake: view("FULL", "POSTED"),
-      movements: [sale],
+      movements: [{ ...sold, id: sold.movementId, locationId: LOCATION, variantId: VARIANT }],
       changed: true,
     } as unknown as PostStocktakeResult;
-    expect(() => toPostStocktakeResponse(result)).toThrow(/SALE movements/);
+    expect(toPostStocktakeResponse(result).movements[0]).toMatchObject({ type: "SALE", source: { kind: "SALE" } });
   });
 });
 

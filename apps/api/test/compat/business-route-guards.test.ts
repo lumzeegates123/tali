@@ -13,9 +13,11 @@ import {
   RecordAdjustmentRequestSchema,
   RecordOpeningStockRequestSchema,
   RecordStocktakeCountRequestSchema,
+  RecordSaleRequestSchema,
   RecordWriteOffRequestSchema,
   RemoveStocktakeLineRequestSchema,
   ReverseDocumentRequestSchema,
+  ReverseSaleRequestSchema,
   SetLowStockThresholdRequestSchema,
 } from "@tali/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -29,6 +31,8 @@ import { createApiApplication } from "../../src/bootstrap.js";
 import { type ApiRuntime, createApiRuntime } from "../../src/composition/api-runtime.js";
 import { JsonLogger } from "../../src/observability/logger.js";
 import { INVENTORY_ROUTES } from "../support/inventory-routes.js";
+import { LEDGER_ROUTES } from "../support/ledger-routes.js";
+import { SALES_ROUTES } from "../support/sales-routes.js";
 import { type GuardRef, metadataRoutes, registeredRoutes, type RouteInfo } from "../support/route-inventory.js";
 
 /*
@@ -183,17 +187,53 @@ describe.each(["test", "local"] as const)("business route guards (TALI_ENV=%s)",
     expect(fromMetadata).toEqual(registeredRoutes(app).sort());
   });
 
-  it("finds the Build 1 and Build 2 catalog and inventory business-scoped routes", () => {
+  it("finds the Build 1 to Build 3 catalog, inventory, sales and ledger business-scoped routes", () => {
     const business = routes.filter((route) => route.path.startsWith(BUSINESS_PREFIX));
     expect(business.map((route) => `${route.method} ${route.path}`).sort()).toEqual(
-      [...TENANCY_AND_CATALOG_ROUTES, ...INVENTORY_ROUTES].sort(),
+      [...TENANCY_AND_CATALOG_ROUTES, ...INVENTORY_ROUTES, ...SALES_ROUTES, ...LEDGER_ROUTES].sort(),
     );
   });
 
   it("mounts exactly the 23 inventory and stocktake routes", () => {
-    const inventory = routes.filter((route) => /inventor|stock|movement|balance|count/i.test(route.path));
+    const inventory = routes.filter(
+      (route) =>
+        !route.path.startsWith(`${BUSINESS_PREFIX}/ledger`) &&
+        /inventor|stock|movement|balance|count/i.test(route.path),
+    );
     expect(inventory.map((route) => `${route.method} ${route.path}`).sort()).toEqual([...INVENTORY_ROUTES].sort());
     expect(INVENTORY_ROUTES).toHaveLength(23);
+  });
+
+  it("mounts exactly the 4 sales routes and the 3 ledger read routes, each with the business guards", () => {
+    const at = (prefix: string) =>
+      routes.filter(
+        (route) =>
+          route.path === `${BUSINESS_PREFIX}/${prefix}` || route.path.startsWith(`${BUSINESS_PREFIX}/${prefix}/`),
+      );
+    const sales = at("sales");
+    const ledger = at("ledger");
+    expect(sales.map((route) => `${route.method} ${route.path}`).sort()).toEqual([...SALES_ROUTES].sort());
+    expect(ledger.map((route) => `${route.method} ${route.path}`).sort()).toEqual([...LEDGER_ROUTES].sort());
+    expect(SALES_ROUTES).toHaveLength(4);
+    expect(LEDGER_ROUTES).toHaveLength(3);
+    for (const route of [...sales, ...ledger]) {
+      expect({ route: `${route.method} ${route.path}`, guards: route.guards }).toEqual({
+        route: `${route.method} ${route.path}`,
+        guards: REQUIRED_BUSINESS_GUARDS,
+      });
+    }
+  });
+
+  it("has no ledger write route and no sales update or delete route", () => {
+    const writes = routes.filter(
+      (route) => route.path.includes("/ledger") && ["POST", "PUT", "PATCH", "DELETE"].includes(route.method),
+    );
+    expect(writes).toEqual([]);
+    const salesChanges = routes.filter(
+      (route) => route.path.includes("/sales") && ["PUT", "PATCH", "DELETE"].includes(route.method),
+    );
+    expect(salesChanges).toEqual([]);
+    expect(routes.filter((route) => /journal|posting|cogs|refund|tax/i.test(route.path))).toEqual([]);
   });
 
   it("guards every inventory route with exactly AuthenticationGuard, BusinessContextGuard, DeviceContextGuard", () => {
@@ -235,6 +275,63 @@ describe("inventory mutation bodies", () => {
   it.each(INVENTORY_MUTATION_BODIES)("%s rejects a client locationId", (_name, schema, valid) => {
     expect(schema.safeParse(valid).success).toBe(true);
     expect(schema.safeParse({ ...valid, locationId: VARIANT }).success).toBe(false);
+  });
+});
+
+const SALE_LINE = { variantId: VARIANT, quantity: { quantityMinor: "1", unit: "PIECE" }, expectedPriceVersion: 1 };
+const SALE_BODY = {
+  saleId: VARIANT,
+  lines: [SALE_LINE],
+  tenders: [{ method: "CASH", amount: { amountMinor: "100", currency: "NGN" } }],
+};
+const SALE_MUTATION_BODIES: readonly (readonly [string, BodySchema, Record<string, unknown>])[] = [
+  ["record sale", RecordSaleRequestSchema, SALE_BODY],
+  ["reverse sale", ReverseSaleRequestSchema, { reason: "Returned", tenderUnwoundConfirmed: true }],
+];
+const SERVER_OWNED_SALE_FIELDS = [
+  "locationId",
+  "sourceChannel",
+  "correlationId",
+  "actorMembershipId",
+  "deviceId",
+  "receiptNumber",
+  "status",
+  "total",
+  "cost",
+  "changeGiven",
+  "verificationStatus",
+  "journalEntryId",
+];
+
+describe("sales mutation bodies", () => {
+  it.each(SALE_MUTATION_BODIES)(
+    "%s rejects a client locationId and every server-owned field",
+    (_name, schema, valid) => {
+      expect(schema.safeParse(valid).success).toBe(true);
+      for (const field of SERVER_OWNED_SALE_FIELDS) {
+        expect({ field, accepted: schema.safeParse({ ...valid, [field]: VARIANT }).success }).toEqual({
+          field,
+          accepted: false,
+        });
+      }
+    },
+  );
+
+  it("rejects a client price, tax, cost, margin or pack on a sale line", () => {
+    for (const field of ["unitPrice", "price", "priceMinor", "tax", "taxRate", "taxKind", "taxTreatmentId"]) {
+      expect(RecordSaleRequestSchema.safeParse({ ...SALE_BODY, lines: [{ ...SALE_LINE, [field]: "1" }] }).success).toBe(
+        false,
+      );
+    }
+    for (const field of ["costStatus", "cogs", "averageCost", "margin", "packId", "packCount", "locationId"]) {
+      expect(RecordSaleRequestSchema.safeParse({ ...SALE_BODY, lines: [{ ...SALE_LINE, [field]: "1" }] }).success).toBe(
+        false,
+      );
+    }
+    expect(
+      RecordSaleRequestSchema.safeParse({ ...SALE_BODY, lines: [{ ...SALE_LINE, discount: { kind: "NONE" } }] })
+        .success,
+    ).toBe(false);
   });
 });
 

@@ -1,6 +1,6 @@
 # Plan 005. Build 3: sales and ledger posting foundation
 
-Status: **APPROVED / S0 COMPLETE / S1 COMPLETE / S2 COMPLETE / S3 COMPLETE / S4 COMPLETE / S5 COMPLETE.** ADR-009, ADR-010 and ADR-011 were **ACCEPTED on 2026-10-15** by the
+Status: **APPROVED / S0 COMPLETE / S1 COMPLETE / S2 COMPLETE / S3 COMPLETE / S4 COMPLETE / S5 COMPLETE / S6 COMPLETE.** ADR-009, ADR-010 and ADR-011 were **ACCEPTED on 2026-10-15** by the
 human maintainer. Accountant review is **COMPLETE** (Osasu, 2026-10-15; `docs/reviews/build-3-accountant-review.md`
 sections 14 and 14.1): ADR-009 A1 to A22 and ADR-010 T1 to T7 approved. Reversal-residual clarification
 **2026-10-29** (section 14.2; ADR-009 amendment section 38). Maintainer questions M1 to M17 are resolved
@@ -8,7 +8,8 @@ sections 14 and 14.1): ADR-009 A1 to A22 and ADR-010 T1 to T7 approved. Reversal
 chart provisioning; journal tables moved to S3 by the maintainer's split decision) is **COMPLETE (2026-10-16)**. S3
 (valuation, journals, residual ORIGINAL corrections) is **COMPLETE (2026-10-30)**. S4 (sales domain and
 application, in-memory adapters only) is **COMPLETE (2026-11-01)**. S5 (sales persistence and SALE
-inventory/ledger integration) is **COMPLETE (2026-11-01)**. S6 to S9 are not started.
+inventory/ledger integration) is **COMPLETE (2026-11-01)**. S6 (Sales API and Ledger Read API) is **COMPLETE
+(2026-11-02)**. S7 to S9 are not started.
 
 Scope: the ledger posting foundation, the default chart of accounts, perpetual weighted average cost valuation with
 explicit valuation status, and online, fully tendered sales with full reversal (ADR-009, ADR-011). Configurable tax
@@ -28,7 +29,7 @@ selling; price override; sale-level discounts; account management UI; period clo
 | S3    | Valuation and cost foundation          | ADR-009              | **Complete** (2026-10-30); residual ORIGINAL journals per ADR-009 §38 |
 | S4    | Sales domain and application           | ADR-011, ADR-009     | **Complete** (2026-11-01); in-memory adapters only |
 | S5    | Sales persistence and SALE integration | ADR-011, ADR-009     | **Complete** (2026-11-01); no API |
-| S6    | API                                    | ADR-011, ADR-009     | Not started (after S5)     |
+| S6    | API                                    | ADR-011, ADR-009     | **Complete** (2026-11-02); sales and ledger read routes |
 | S7    | Clients (web and mobile)               | ADR-011              | Not started (after S6)     |
 | S8    | Configurable tax (optional)            | ADR-010              | Not started; optional; needs a separately reviewed pilot tax configuration; may be deferred |
 | S9    | Hardening and acceptance               | All accepted         | Not started (after S7, and S8 if run) |
@@ -197,6 +198,16 @@ Each slice: outcome, dependencies, modules and files, tests, gate, stop conditio
 - Tests: integration tests per route and error code, device trust, permission denial, cross-tenant `404`.
 - Gate: API suites and route-guard compatibility green.
 - Stop: any business rule appearing in a controller.
+- Status: **COMPLETE (2026-11-02)**. Implementation is on `feature/build-3-slice-6-sales-api`, baseline
+  `7edf573ddf8f33085aa823f8bea0ed00c32b43a3`, and is uncommitted for review.
+  - Four sales routes and three read-only ledger routes under the standard business-scoped guards; `ledger:read`
+    stays OWNER and ACCOUNTANT only.
+  - Shared sales and ledger contracts with strict, bounded details for the six sales conflicts.
+  - Sales money input carries its currency; any currency but the business currency is a 400.
+  - SALE joins the inventory movement contract; clients only label it (no sales UI).
+  - No migration, permission or dependency; `pnpm verify` and `pnpm test:integration` both exit 0.
+
+  See `docs/audits/build-3-slice-6.md`.
 
 ### S7. Clients
 

@@ -27,7 +27,7 @@ describe("ZT. sale repositories (PostgreSQL)", () => {
   const sell = (t: InventoryTenant, item: SaleProduct, quantity = "1") =>
     tenancy.recordSale.execute(
       t.context,
-      saleInput(harness, [saleLine(item, quantity)], (50_000n * BigInt(quantity)).toString()),
+      saleInput(harness, t, [saleLine(item, quantity)], (50_000n * BigInt(quantity)).toString()),
     );
   const find = (t: InventoryTenant, saleId: string) =>
     run((scope) => sales.findById(scope, t.businessId, parseSaleId(saleId)));
@@ -45,7 +45,7 @@ describe("ZT. sale repositories (PostgreSQL)", () => {
     const bag = await pricedProduct(harness, a, { name: "Bag", tracked: false, price: "2000" });
     const recorded = await tenancy.recordSale.execute(
       a.context,
-      saleInput(harness, [saleLine(soap, "2"), saleLine(sugar, "1"), saleLine(bag, "1")], "152000"),
+      saleInput(harness, a, [saleLine(soap, "2"), saleLine(sugar, "1"), saleLine(bag, "1")], "152000"),
     );
     const restored = await find(a, recorded.sale.saleId);
     expect(restored).toBeDefined();
