@@ -1,3 +1,4 @@
+import type { InventoryItemResponse } from "@tali/shared";
 import { useCallback, useEffect, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { useSessionStore } from "../auth/session-context";
@@ -6,15 +7,22 @@ import { newUuidV7 } from "../ids/uuidv7";
 import { Button, Loading, styles } from "../onboarding/ui";
 import { inventoryAffordances } from "./affordances";
 import { type DocumentRef, DocumentScreen } from "./document-screen";
-import { InventoryProvider, useInventory, useInventoryStore } from "./inventory-context";
+import { InventoryProvider, useAllowed, useInventory, useInventoryStore } from "./inventory-context";
 import { type ItemLabel, InventoryStore } from "./inventory-store";
 import { ItemDetailScreen } from "./item-detail-screen";
+import { NeedsValuationScreen, ValuationScreen } from "./needs-valuation-screen";
 import { type StockDocumentKind, StockDocumentScreen } from "./stock-document-screen";
 import { StockListScreen } from "./stock-list-screen";
 import { StocktakeDetailScreen } from "./stocktake-detail-screen";
 import { StocktakesScreen } from "./stocktakes-screen";
 
-type InventoryTab = "stock" | "stocktakes";
+type InventoryTab = "stock" | "stocktakes" | "needsValuation";
+
+const TAB_LABEL: Readonly<Record<InventoryTab, string>> = {
+  stock: "Stock",
+  stocktakes: "Stocktakes",
+  needsValuation: "Needs valuation",
+};
 
 type InventoryView =
   | { readonly kind: "list" }
@@ -27,7 +35,9 @@ type InventoryView =
     }
   | { readonly kind: "document"; readonly document: DocumentRef; readonly back: InventoryView }
   | { readonly kind: "stocktakes" }
-  | { readonly kind: "stocktake"; readonly stocktakeId: string };
+  | { readonly kind: "stocktake"; readonly stocktakeId: string }
+  | { readonly kind: "needsValuation" }
+  | { readonly kind: "valuationForm"; readonly item: InventoryItemResponse };
 
 const UNAVAILABLE = "This item is not available. It may have been removed, or you may no longer have access to it.";
 
@@ -67,10 +77,19 @@ export function InventoryScreen({
 function InventoryBody() {
   const session = useSessionStore();
   const store = useInventoryStore();
+  const allowed = useAllowed();
   const { businessUnavailable } = useInventory();
   const [view, setView] = useState<InventoryView>({ kind: "list" });
   const [notice, setNotice] = useState<string | undefined>(undefined);
-  const tab: InventoryTab = view.kind === "stocktakes" || view.kind === "stocktake" ? "stocktakes" : "stock";
+  const tab: InventoryTab =
+    view.kind === "stocktakes" || view.kind === "stocktake"
+      ? "stocktakes"
+      : view.kind === "needsValuation" || view.kind === "valuationForm"
+        ? "needsValuation"
+        : "stock";
+  const tabs: readonly InventoryTab[] = allowed.can("inventory:cost-read")
+    ? ["stock", "stocktakes", "needsValuation"]
+    : ["stock", "stocktakes"];
 
   /** A resource NOT_FOUND returns to the list and refreshes it; it never changes the selected business. */
   const unavailable = useCallback(() => {
@@ -105,24 +124,28 @@ function InventoryBody() {
   return (
     <View style={styles.screen}>
       <View style={styles.row} accessibilityRole="tablist" accessibilityLabel="Inventory sections">
-        {(["stock", "stocktakes"] as const).map((value) => (
+        {tabs.map((value) => (
           <Pressable
             key={value}
             accessibilityRole="tab"
-            accessibilityLabel={value === "stock" ? "Stock" : "Stocktakes"}
+            accessibilityLabel={TAB_LABEL[value]}
             accessibilityState={{ selected: tab === value }}
             onPress={() => {
-              open(value === "stock" ? { kind: "list" } : { kind: "stocktakes" });
+              open(
+                value === "stock"
+                  ? { kind: "list" }
+                  : value === "stocktakes"
+                    ? { kind: "stocktakes" }
+                    : { kind: "needsValuation" },
+              );
             }}
             style={[styles.button, tab === value ? styles.primary : styles.secondary]}
           >
-            <Text style={tab === value ? styles.primaryText : styles.secondaryText}>
-              {value === "stock" ? "Stock" : "Stocktakes"}
-            </Text>
+            <Text style={tab === value ? styles.primaryText : styles.secondaryText}>{TAB_LABEL[value]}</Text>
           </Pressable>
         ))}
       </View>
-      {view.kind === "list" || view.kind === "stocktakes" ? null : (
+      {view.kind === "list" || view.kind === "stocktakes" || view.kind === "needsValuation" ? null : (
         <BackOnHardware
           onBack={() => {
             open(backOf(view));
@@ -217,6 +240,29 @@ function InventoryBody() {
             onUnavailable={stocktakeUnavailable}
           />
         );
+      case "needsValuation":
+        return (
+          <NeedsValuationScreen
+            notice={notice}
+            onValue={(item) => {
+              open({ kind: "valuationForm", item });
+            }}
+          />
+        );
+      case "valuationForm":
+        return (
+          <ValuationScreen
+            key={view.item.variantId}
+            item={view.item}
+            onCancel={() => {
+              open({ kind: "needsValuation" });
+            }}
+            onSaved={(message) => {
+              setView({ kind: "needsValuation" });
+              setNotice(message);
+            }}
+          />
+        );
     }
   }
 }
@@ -232,6 +278,9 @@ function backOf(view: InventoryView): InventoryView {
     case "list":
     case "item":
       return { kind: "list" };
+    case "needsValuation":
+    case "valuationForm":
+      return { kind: "needsValuation" };
   }
 }
 

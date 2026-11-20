@@ -1,5 +1,5 @@
 import type { InventoryItemQuery, InventoryItemReader, InventoryItemRow } from "@tali/application";
-import type { BusinessId, CatalogStatus, LocationId } from "@tali/domain";
+import type { BusinessId, CatalogStatus, LocationId, ValuationStatus } from "@tali/domain";
 import {
   parseProductId,
   parseProductName,
@@ -28,10 +28,17 @@ interface ItemRow {
   readonly balance_version: number | null;
   readonly threshold_minor: bigint | null;
   readonly threshold_version: number | null;
+  readonly valuation_status: string;
 }
 
 function catalogStatus(value: string): CatalogStatus {
   if (value !== "ACTIVE" && value !== "ARCHIVED") throw new Error("a stored product status must be ACTIVE or ARCHIVED");
+  return value;
+}
+
+function valuationStatus(value: string): ValuationStatus {
+  if (value !== "VALUED" && value !== "UNVALUED")
+    throw new Error("a stored valuation status must be VALUED or UNVALUED");
   return value;
 }
 
@@ -59,6 +66,7 @@ function toItem(row: ItemRow): InventoryItemRow {
     balanceVersion: row.balance_version ?? 0,
     ...(row.threshold_minor === null ? {} : { threshold: Quantity.ofMinor(row.threshold_minor, unit) }),
     thresholdVersion: row.threshold_version ?? 0,
+    valuationStatus: valuationStatus(row.valuation_status),
   });
 }
 
@@ -68,6 +76,9 @@ const VISIBLE = Prisma.sql`v.track_inventory AND (p.status = 'ACTIVE' OR COALESC
 /** deriveLowStock in SQL: ACTIVE, tracked, a configured threshold, and on-hand at or below it. */
 const LOW_STOCK = Prisma.sql`p.status = 'ACTIVE' AND v.status = 'ACTIVE' AND v.track_inventory
   AND t.low_stock_threshold_minor IS NOT NULL AND COALESCE(b.quantity_minor, 0) <= t.low_stock_threshold_minor`;
+
+/** A stock item with no valuation row is UNVALUED (ADR-009 section 19). */
+const VALUATION_STATUS = Prisma.sql`COALESCE(iv.status, 'UNVALUED')`;
 
 function searchFilter(search: InventoryItemQuery["search"]): Prisma.Sql {
   if (search === undefined) return Prisma.empty;
@@ -83,21 +94,24 @@ function itemsSql(businessId: BusinessId, locationId: LocationId, where: Prisma.
     SELECT p.id::text AS product_id, v.id::text AS variant_id, p.name, v.sku, v.sku_normalized, v.barcode,
            v.barcode_normalized, p.status, v.stock_unit_code, v.track_inventory,
            b.quantity_minor AS on_hand_minor, b.version AS balance_version,
-           t.low_stock_threshold_minor AS threshold_minor, t.version AS threshold_version
+           t.low_stock_threshold_minor AS threshold_minor, t.version AS threshold_version,
+           ${VALUATION_STATUS} AS valuation_status
     FROM products p
     JOIN product_variants v ON v.business_id = p.business_id AND v.product_id = p.id AND v.is_default
     LEFT JOIN inventory_balances b
       ON b.business_id = v.business_id AND b.location_id = ${locationId}::uuid AND b.variant_id = v.id
     LEFT JOIN inventory_stock_thresholds t
       ON t.business_id = v.business_id AND t.location_id = ${locationId}::uuid AND t.variant_id = v.id
+    LEFT JOIN inventory_valuations iv
+      ON iv.business_id = v.business_id AND iv.location_id = ${locationId}::uuid AND iv.variant_id = v.id
     WHERE p.business_id = ${businessId}::uuid AND ${VISIBLE}${where}
     ${tail}`;
 }
 
 /**
  * Inventory list and detail reads (tenant-owned; Slice 6 plan section 31):
- * the business's own default variants joined to this location's balance and
- * threshold, one query each. Both reads apply the same visibility, so a
+ * the business's own default variants joined to this location's balance,
+ * threshold and valuation status (never the value), one query each. Both reads apply the same visibility, so a
  * variant the list never shows is not found in detail either.
  */
 export function createInventoryItemReader(): InventoryItemReader {
@@ -105,11 +119,13 @@ export function createInventoryItemReader(): InventoryItemReader {
     async listItems(scope, businessId, locationId, query, request) {
       const after = request.after === undefined ? Prisma.empty : Prisma.sql` AND v.id > ${request.after}::uuid`;
       const lowStock = query.lowStockOnly === true ? Prisma.sql` AND ${LOW_STOCK}` : Prisma.empty;
+      const needsValuation =
+        query.needsValuationOnly === true ? Prisma.sql` AND ${VALUATION_STATUS} = 'UNVALUED'` : Prisma.empty;
       const rows = await transactionClient(scope).$queryRaw<ItemRow[]>(
         itemsSql(
           businessId,
           locationId,
-          Prisma.sql`${searchFilter(query.search)}${lowStock}${after}`,
+          Prisma.sql`${searchFilter(query.search)}${lowStock}${needsValuation}${after}`,
           Prisma.sql`ORDER BY v.id LIMIT ${request.limit + 1}::int`,
         ),
       );

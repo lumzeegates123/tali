@@ -12,7 +12,9 @@ export type InventoryPermission =
   | "inventory:receive"
   | "inventory:adjust"
   | "inventory:count"
-  | "inventory:count-post";
+  | "inventory:count-post"
+  | "inventory:value"
+  | "inventory:cost-read";
 
 const EVERY_INVENTORY_PERMISSION: readonly InventoryPermission[] = [
   "inventory:read",
@@ -22,14 +24,17 @@ const EVERY_INVENTORY_PERMISSION: readonly InventoryPermission[] = [
   "inventory:adjust",
   "inventory:count",
   "inventory:count-post",
+  "inventory:value",
+  "inventory:cost-read",
 ];
 
+/** ADR-008 section 15, plus ADR-009 section 17 (`inventory:cost-read`) and section 20 (`inventory:value`). */
 const PERMISSIONS_BY_ROLE: Readonly<Record<string, readonly InventoryPermission[]>> = {
   OWNER: EVERY_INVENTORY_PERMISSION,
   MANAGER: EVERY_INVENTORY_PERMISSION,
   STOCK_KEEPER: ["inventory:read", "inventory:threshold", "inventory:receive", "inventory:count"],
   CASHIER: ["inventory:read"],
-  ACCOUNTANT: ["inventory:read"],
+  ACCOUNTANT: ["inventory:read", "inventory:cost-read"],
 };
 
 export interface InventoryAffordances {

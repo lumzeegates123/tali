@@ -53,7 +53,10 @@ export class InventoryItemsController {
     this.#services = services;
   }
 
-  /** Tracked ACTIVE items with or without stock, and ARCHIVED items still holding stock; `lowStock=true` filters. */
+  /**
+   * Tracked ACTIVE items with or without stock, and ARCHIVED items still holding stock; `lowStock=true` filters.
+   * `needsValuation=true` lists UNVALUED items; the use case requires `inventory:cost-read` for it.
+   */
   @Get("inventory/balances")
   async list(
     @ResolvedBusinessContext() business: BusinessContext,
@@ -65,6 +68,7 @@ export class InventoryItemsController {
       ...toPageInput(input),
       ...(input.q === undefined ? {} : { q: input.q }),
       lowStockOnly: input.lowStock ?? false,
+      needsValuationOnly: input.needsValuation ?? false,
     });
     return toInventoryItemsResponse(page);
   }

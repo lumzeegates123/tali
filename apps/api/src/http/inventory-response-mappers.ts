@@ -118,6 +118,7 @@ function item(view: InventoryItemView): InventoryItemResponse {
     threshold: view.threshold === undefined ? null : quantity(view.threshold),
     thresholdVersion: view.thresholdVersion,
     lowStock: view.lowStock,
+    ...(view.valuationStatus === undefined ? {} : { valuationStatus: view.valuationStatus }),
   };
 }
 

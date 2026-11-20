@@ -122,8 +122,11 @@ describe("mobile stock list", () => {
       "Overview",
       "Catalog",
       "Inventory",
+      "Sales",
+      "Ledger",
       "Stock",
       "Stocktakes",
+      "Needs valuation",
     ]);
     const card = (name: string) => screen.getByRole("button", { name: `Open ${name}` });
     expect(within(card("Low item")).queryByText("LOW STOCK")).not.toBeNull();

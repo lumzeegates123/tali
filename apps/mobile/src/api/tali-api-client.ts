@@ -78,6 +78,37 @@ import {
   StocktakeResponseSchema,
   StocktakesResponseSchema,
   StocktakeStaleErrorEnvelopeSchema,
+  RecordStockValuationResponseSchema,
+} from "@tali/shared";
+import type {
+  AccountBalancesResponse,
+  DiscountExceedsLineDetails,
+  InsufficientStockDetails,
+  JournalEntryResponse,
+  LedgerAccountsResponse,
+  PriceChangedDetails,
+  PriceNotSetDetails,
+  ProductArchivedDetails,
+  RecordSaleRequest,
+  RecordStockValuationRequest,
+  RecordStockValuationResponse,
+  ReverseSaleRequest,
+  SaleResponse,
+  SalesResponse,
+  TenderTotalMismatchDetails,
+} from "@tali/shared";
+import {
+  AccountBalancesResponseSchema,
+  DiscountExceedsLineErrorEnvelopeSchema,
+  InsufficientStockErrorEnvelopeSchema,
+  JournalEntryResponseSchema,
+  LedgerAccountsResponseSchema,
+  PriceChangedErrorEnvelopeSchema,
+  PriceNotSetErrorEnvelopeSchema,
+  ProductArchivedErrorEnvelopeSchema,
+  SaleResponseSchema,
+  SalesResponseSchema,
+  TenderTotalMismatchErrorEnvelopeSchema,
 } from "@tali/shared";
 import {
   AcceptInvitationResponseSchema,
@@ -121,8 +152,19 @@ export type ApiFailure =
       readonly fields: readonly string[];
       /** The strict details of a STOCKTAKE_STALE response; absent for every other code. */
       readonly stale?: StocktakeStaleDetails;
+      /** The strict details of a sales conflict; absent for every other code and for INSUFFICIENT_STOCK without details. */
+      readonly sales?: SalesConflictDetail;
     }
   | { readonly kind: "invalid-response"; readonly status: number; readonly correlationId: string | undefined };
+
+/** A sales conflict and its details, parsed with the shared envelope schemas; nothing else is kept. */
+export type SalesConflictDetail =
+  | { readonly code: "PRICE_NOT_SET"; readonly details: PriceNotSetDetails }
+  | { readonly code: "PRICE_CHANGED"; readonly details: PriceChangedDetails }
+  | { readonly code: "PRODUCT_ARCHIVED"; readonly details: ProductArchivedDetails }
+  | { readonly code: "INSUFFICIENT_STOCK"; readonly details: InsufficientStockDetails }
+  | { readonly code: "DISCOUNT_EXCEEDS_LINE"; readonly details: DiscountExceedsLineDetails }
+  | { readonly code: "TENDER_TOTAL_MISMATCH"; readonly details: TenderTotalMismatchDetails };
 
 export type ApiResult<T> =
   | { readonly ok: true; readonly status: number; readonly value: T; readonly correlationId: string | undefined }
@@ -552,6 +594,7 @@ export class TaliApiClient {
       after: params.after,
       q: params.q,
       lowStock: params.lowStock === true ? "true" : undefined,
+      needsValuation: params.needsValuation === true ? "true" : undefined,
     });
     return this.#inventory(
       token,
@@ -908,6 +951,152 @@ export class TaliApiClient {
     );
   }
 
+  /**
+   * `POST .../inventory/valuations` (`inventory:value`); keyed. The valuation
+   * kind (opening or operational) is decided by the API.
+   */
+  async recordStockValuation(
+    token: AccessToken,
+    businessId: string,
+    command: RecordStockValuationRequest,
+    idempotencyKey: string,
+    device?: DeviceHeaders,
+  ): Promise<ApiResult<RecordStockValuationResponse>> {
+    return this.#inventory(
+      token,
+      businessId,
+      { method: "POST", path: "valuations", body: command, idempotencyKey },
+      device,
+      RecordStockValuationResponseSchema,
+    );
+  }
+
+  // ---- Sales and ledger (plan 005; the API computes every amount) ----------
+
+  /** `POST .../sales` (`sales:create`): the Idempotency-Key is the command's `saleId`. */
+  async recordSale(
+    token: AccessToken,
+    businessId: string,
+    command: RecordSaleRequest,
+    device?: DeviceHeaders,
+  ): Promise<ApiResult<SaleResponse>> {
+    return this.#call(
+      {
+        method: "POST",
+        path: `${businessPath(businessId)}/sales`,
+        token,
+        body: command,
+        headers: { ...deviceHeaders(device), [IDEMPOTENCY_KEY_HEADER]: command.saleId },
+      },
+      [201],
+      SaleResponseSchema,
+    );
+  }
+
+  /** Ascending by sale ID; a CASHIER sees only their own sales. */
+  async listSales(
+    token: AccessToken,
+    businessId: string,
+    page: PageRequest = {},
+    device?: DeviceHeaders,
+  ): Promise<ApiResult<SalesResponse>> {
+    return this.#call(
+      {
+        method: "GET",
+        path: `${businessPath(businessId)}/sales${pageQuery(page)}`,
+        token,
+        headers: deviceHeaders(device),
+      },
+      [200],
+      SalesResponseSchema,
+    );
+  }
+
+  async getSale(
+    token: AccessToken,
+    businessId: string,
+    saleId: string,
+    device?: DeviceHeaders,
+  ): Promise<ApiResult<SaleResponse>> {
+    return this.#call(
+      {
+        method: "GET",
+        path: `${businessPath(businessId)}/sales/${segment(saleId)}`,
+        token,
+        headers: deviceHeaders(device),
+      },
+      [200],
+      SaleResponseSchema,
+    );
+  }
+
+  /** `POST .../sales/:saleId/reversal` (`sales:reverse`): a full error correction with its own key. */
+  async reverseSale(
+    token: AccessToken,
+    businessId: string,
+    saleId: string,
+    command: ReverseSaleRequest,
+    idempotencyKey: string,
+    device?: DeviceHeaders,
+  ): Promise<ApiResult<SaleResponse>> {
+    return this.#call(
+      {
+        method: "POST",
+        path: `${businessPath(businessId)}/sales/${segment(saleId)}/reversal`,
+        token,
+        body: command,
+        headers: { ...deviceHeaders(device), [IDEMPOTENCY_KEY_HEADER]: idempotencyKey },
+      },
+      [200],
+      SaleResponseSchema,
+    );
+  }
+
+  /** `GET .../ledger/accounts` (`ledger:read`). */
+  async listLedgerAccounts(
+    token: AccessToken,
+    businessId: string,
+    device?: DeviceHeaders,
+  ): Promise<ApiResult<LedgerAccountsResponse>> {
+    return this.#call(
+      { method: "GET", path: `${businessPath(businessId)}/ledger/accounts`, token, headers: deviceHeaders(device) },
+      [200],
+      LedgerAccountsResponseSchema,
+    );
+  }
+
+  /** `GET .../ledger/balances` (`ledger:read`). */
+  async listAccountBalances(
+    token: AccessToken,
+    businessId: string,
+    device?: DeviceHeaders,
+  ): Promise<ApiResult<AccountBalancesResponse>> {
+    return this.#call(
+      { method: "GET", path: `${businessPath(businessId)}/ledger/balances`, token, headers: deviceHeaders(device) },
+      [200],
+      AccountBalancesResponseSchema,
+    );
+  }
+
+  /** `GET .../ledger/entries/:entryId` (`ledger:read`). */
+  async getJournalEntry(
+    token: AccessToken,
+    businessId: string,
+    entryId: string,
+    device?: DeviceHeaders,
+  ): Promise<ApiResult<JournalEntryResponse>> {
+    return this.#call(
+      {
+        method: "GET",
+        path: `${businessPath(businessId)}/ledger/entries/${segment(entryId)}`,
+        token,
+        headers: deviceHeaders(device),
+      },
+      [200],
+      JournalEntryResponseSchema,
+    );
+  }
+
   /** One inventory route under `.../inventory/`; keyed creates answer 201, everything else 200. */
   async #inventory<T>(
     token: AccessToken,
@@ -1023,23 +1212,66 @@ function interpret<T>(exchange: Exchange, statuses: readonly number[], schema: R
 }
 
 function toFailure(exchange: Exchange): ApiFailure {
+  const invalid: ApiFailure = {
+    kind: "invalid-response",
+    status: exchange.status,
+    correlationId: exchange.correlationId,
+  };
   const envelope = ErrorEnvelopeSchema.safeParse(exchange.body);
-  if (envelope.success) {
-    const stale =
-      envelope.data.error.code === "STOCKTAKE_STALE"
-        ? StocktakeStaleErrorEnvelopeSchema.safeParse(exchange.body)
-        : undefined;
-    return {
-      kind: "api-error",
-      status: exchange.status,
-      code: envelope.data.error.code,
-      message: envelope.data.error.message,
-      correlationId: exchange.correlationId,
-      fields: fieldNames(envelope.data.error.details),
-      ...(stale?.success === true ? { stale: stale.data.error.details } : {}),
-    };
+  if (!envelope.success) return invalid;
+  const stale =
+    envelope.data.error.code === "STOCKTAKE_STALE"
+      ? StocktakeStaleErrorEnvelopeSchema.safeParse(exchange.body)
+      : undefined;
+  const sales = salesConflict(envelope.data.error.code, envelope.data.error.details, exchange.body);
+  if (sales === "malformed") return invalid;
+  return {
+    kind: "api-error",
+    status: exchange.status,
+    code: envelope.data.error.code,
+    message: envelope.data.error.message,
+    correlationId: exchange.correlationId,
+    fields: fieldNames(envelope.data.error.details),
+    ...(stale?.success === true ? { stale: stale.data.error.details } : {}),
+    ...(sales === undefined ? {} : { sales }),
+  };
+}
+
+/**
+ * The strict details of a sales conflict. A specialized envelope that fails
+ * its shared schema is answered as an unreadable response (fail closed);
+ * INSUFFICIENT_STOCK without details (an inventory request) has none.
+ */
+function salesConflict(code: string, details: unknown, body: unknown): SalesConflictDetail | "malformed" | undefined {
+  switch (code) {
+    case "PRICE_NOT_SET": {
+      const parsed = PriceNotSetErrorEnvelopeSchema.safeParse(body);
+      return parsed.success ? { code, details: parsed.data.error.details } : "malformed";
+    }
+    case "PRICE_CHANGED": {
+      const parsed = PriceChangedErrorEnvelopeSchema.safeParse(body);
+      return parsed.success ? { code, details: parsed.data.error.details } : "malformed";
+    }
+    case "PRODUCT_ARCHIVED": {
+      const parsed = ProductArchivedErrorEnvelopeSchema.safeParse(body);
+      return parsed.success ? { code, details: parsed.data.error.details } : "malformed";
+    }
+    case "INSUFFICIENT_STOCK": {
+      if (details === undefined) return undefined;
+      const parsed = InsufficientStockErrorEnvelopeSchema.safeParse(body);
+      return parsed.success ? { code, details: parsed.data.error.details } : "malformed";
+    }
+    case "DISCOUNT_EXCEEDS_LINE": {
+      const parsed = DiscountExceedsLineErrorEnvelopeSchema.safeParse(body);
+      return parsed.success ? { code, details: parsed.data.error.details } : "malformed";
+    }
+    case "TENDER_TOTAL_MISMATCH": {
+      const parsed = TenderTotalMismatchErrorEnvelopeSchema.safeParse(body);
+      return parsed.success ? { code, details: parsed.data.error.details } : "malformed";
+    }
+    default:
+      return undefined;
   }
-  return { kind: "invalid-response", status: exchange.status, correlationId: exchange.correlationId };
 }
 
 /** Field names from validation issue paths (`[{ path: ["body", "name"], ... }]`); nothing else is kept. */

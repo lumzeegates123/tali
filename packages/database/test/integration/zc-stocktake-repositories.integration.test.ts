@@ -557,7 +557,10 @@ describe("stocktake and inventory read repositories (PostgreSQL)", () => {
       return item;
     }
 
-    const listAll = async (query: { readonly q?: string; readonly lowStockOnly?: boolean } = {}, limit = 100) => {
+    const listAll = async (
+      query: { readonly q?: string; readonly lowStockOnly?: boolean; readonly needsValuationOnly?: boolean } = {},
+      limit = 100,
+    ) => {
       const rows: InventoryItemRow[] = [];
       let after: string | undefined;
       for (;;) {
@@ -569,6 +572,7 @@ describe("stocktake and inventory read repositories (PostgreSQL)", () => {
             {
               ...(query.q === undefined ? {} : { search: parseProductSearch(query.q) }),
               lowStockOnly: query.lowStockOnly ?? false,
+              needsValuationOnly: query.needsValuationOnly ?? false,
             },
             page(limit, after),
           ),
@@ -683,6 +687,43 @@ describe("stocktake and inventory read repositories (PostgreSQL)", () => {
       expect((await listAll({ lowStockOnly: true, q: "zero" })).map((row) => row.variantId)).toEqual([
         zeroAtZero.variant.id,
       ]);
+    });
+
+    it("reads a missing valuation row as UNVALUED and filters needing valuation in SQL before paging", async () => {
+      await tenancy.postGoodsReceipt.execute(a.context, {
+        lines: [piece(beans, "3"), piece(sugar, "5")],
+        idempotencyKey: key(),
+      });
+      await tenancy.recordStockValuation.execute(a.context, {
+        variantId: beans.variant.id,
+        expectedBalanceVersion: 1,
+        newTotalValue: { amountMinor: "900", currency: "NGN" },
+        reason: "Opening value",
+        idempotencyKey: key(),
+      });
+      const theirs = await inventoryProduct(harness, b, { name: "Theirs" });
+      await tenancy.postGoodsReceipt.execute(b.context, { lines: [piece(theirs, "1")], idempotencyKey: key() });
+
+      const rows = new Map((await listAll()).map((row) => [row.variantId, row.valuationStatus]));
+      expect(rows.get(beans.variant.id)).toBe("VALUED");
+      expect(rows.get(sugar.variant.id)).toBe("UNVALUED");
+      expect(rows.get(rice.variant.id)).toBe("UNVALUED");
+      expect((await getItem(beans))?.valuationStatus).toBe("VALUED");
+      expect((await getItem(rice))?.valuationStatus).toBe("UNVALUED");
+
+      const unvalued = [rice, sugar].map((p) => p.variant.id as string).sort();
+      expect((await listAll({ needsValuationOnly: true })).map((row) => row.variantId)).toEqual(unvalued);
+      expect((await listAll({ needsValuationOnly: true }, 1)).map((row) => row.variantId)).toEqual(unvalued);
+      const first = await run((scope) =>
+        repos.inventoryItems.listItems(scope, a.businessId, a.locationId, { needsValuationOnly: true }, page(1)),
+      );
+      expect(first.items.map((row) => row.variantId)).toEqual(unvalued.slice(0, 1));
+      expect(first.nextCursor).toBe(unvalued[0]);
+      expect((await listAll({ needsValuationOnly: true, q: "sugar" })).map((row) => row.variantId)).toEqual([
+        sugar.variant.id,
+      ]);
+      const backStore = await secondLocation(harness, a.businessId);
+      expect((await getItem(beans, a.businessId, backStore))?.valuationStatus).toBe("UNVALUED");
     });
 
     it("pages by variant ID ascending", async () => {

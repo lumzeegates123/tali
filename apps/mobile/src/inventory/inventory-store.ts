@@ -17,6 +17,8 @@ import type {
   PostStocktakeResponse,
   RecordAdjustmentRequest,
   RecordOpeningStockRequest,
+  RecordStockValuationRequest,
+  RecordStockValuationResponse,
   RecordStocktakeCountRequest,
   RecordWriteOffRequest,
   RemoveStocktakeLineRequest,
@@ -28,6 +30,8 @@ import type {
   StocktakeResponse,
   UnitResponse,
 } from "@tali/shared";
+import type { CurrencyDefinition } from "@tali/domain/kernel";
+import { currencyDefinition } from "../catalog/money-format";
 import type { ApiFailure, ApiResult, TaliApiClient } from "../api/tali-api-client";
 import type { BusinessRequestCredentials, BusinessRequestPolicy, BusinessRequestResult } from "../auth/session-store";
 import { KeyedCommand } from "./keyed-command";
@@ -43,7 +47,8 @@ export interface InventorySession {
 
 export type LoadPhase = "loading" | "ready" | "failed";
 export type StocktakeFilter = "ALL" | StocktakeResponse["status"];
-export type KeyedOperation = "openingStock" | "goodsReceipt" | "adjustment" | "writeOff" | "createStocktake";
+export type KeyedOperation =
+  "openingStock" | "goodsReceipt" | "adjustment" | "writeOff" | "createStocktake" | "stockValuation";
 
 interface PagedList<T> {
   readonly items: readonly T[];
@@ -97,6 +102,14 @@ export interface InventorySnapshot {
     readonly failure: ApiFailure | undefined;
   };
   readonly items: ItemListState;
+  /** UNVALUED items (`needsValuation=true`), paged separately from the stock list; cost-read roles only. */
+  readonly needsValuation: PagedList<InventoryItemResponse>;
+  /** The business currency, loaded when a valuation is entered. */
+  readonly currency: {
+    readonly phase: LoadPhase;
+    readonly definition: CurrencyDefinition | undefined;
+    readonly failure: ApiFailure | undefined;
+  };
   readonly stocktakes: StocktakeListState;
   /** Labels by variant ID for stocktake lines; `null` when the item is not available. */
   readonly labels: Readonly<Record<string, ItemLabel | null>>;
@@ -136,6 +149,7 @@ const KEYED_OPERATIONS: readonly KeyedOperation[] = [
   "adjustment",
   "writeOff",
   "createStocktake",
+  "stockValuation",
 ];
 
 function emptyList<T>(): PagedList<T> {
@@ -184,6 +198,8 @@ export class InventoryStore {
   #snapshot: InventorySnapshot;
   #disposed = false;
   #itemGeneration = 0;
+  #valuationGeneration = 0;
+  #currencyGeneration = 0;
   #stocktakeGeneration = 0;
   #unitsGeneration = 0;
 
@@ -197,11 +213,14 @@ export class InventoryStore {
       adjustment: new KeyedCommand(newKey),
       writeOff: new KeyedCommand(newKey),
       createStocktake: new KeyedCommand(newKey),
+      stockValuation: new KeyedCommand(newKey),
     };
     this.#snapshot = Object.freeze<InventorySnapshot>({
       businessUnavailable: false,
       units: { phase: "loading", items: [], failure: undefined },
       items: { ...emptyList<InventoryItemResponse>(), query: "", lowStockOnly: false },
+      needsValuation: emptyList<InventoryItemResponse>(),
+      currency: { phase: "loading", definition: undefined, failure: undefined },
       stocktakes: { ...emptyList<StocktakeResponse>(), status: "ALL" },
       labels: {},
       keyed: this.#keyedState(),
@@ -327,6 +346,94 @@ export class InventoryStore {
       api.listInventoryItems(token, this.#businessId, { limit: PICKER_PAGE_SIZE, ...(q === "" ? {} : { q }) }, device),
     );
     return outcome.status === "ok" ? { status: "ok", value: outcome.value.items.map(itemLabel) } : outcome;
+  }
+
+  // ---- Stock needing valuation (business scope, `inventory:cost-read`) ---
+
+  /** The first page of UNVALUED items; which items need valuation is decided by the API. */
+  async loadNeedsValuation(): Promise<void> {
+    const generation = ++this.#valuationGeneration;
+    this.#patch({ needsValuation: emptyList<InventoryItemResponse>() });
+    const outcome = await this.#request("business", (api, { token, device }) =>
+      api.listInventoryItems(token, this.#businessId, { needsValuation: true }, device),
+    );
+    if (generation !== this.#valuationGeneration || (outcome.status !== "ok" && outcome.status !== "failed")) return;
+    const list = this.#snapshot.needsValuation;
+    this.#patch({
+      needsValuation:
+        outcome.status === "failed"
+          ? { ...list, phase: "failed", failure: outcome.failure }
+          : { ...list, phase: "ready", items: outcome.value.items, nextCursor: outcome.value.nextCursor },
+    });
+  }
+
+  async loadMoreNeedsValuation(): Promise<void> {
+    const { nextCursor, phase, loadingMore } = this.#snapshot.needsValuation;
+    if (nextCursor === null || phase !== "ready" || loadingMore) return;
+    const generation = this.#valuationGeneration;
+    this.#patch({ needsValuation: { ...this.#snapshot.needsValuation, loadingMore: true, moreFailure: undefined } });
+    const outcome = await this.#request("business", (api, { token, device }) =>
+      api.listInventoryItems(token, this.#businessId, { needsValuation: true, after: nextCursor }, device),
+    );
+    if (generation !== this.#valuationGeneration || this.#disposed) return;
+    const list = this.#snapshot.needsValuation;
+    if (outcome.status !== "ok" && outcome.status !== "failed") {
+      this.#patch({ needsValuation: { ...list, loadingMore: false } });
+      return;
+    }
+    this.#patch({
+      needsValuation:
+        outcome.status === "failed"
+          ? { ...list, loadingMore: false, moreFailure: outcome.failure }
+          : {
+              ...list,
+              loadingMore: false,
+              items: appendUnique(list.items, outcome.value.items, (item) => item.variantId),
+              nextCursor: outcome.value.nextCursor,
+            },
+    });
+  }
+
+  /** `GET .../currency`, for typing a valuation in the business currency. */
+  async loadCurrency(): Promise<void> {
+    const generation = ++this.#currencyGeneration;
+    this.#patch({ currency: { phase: "loading", definition: undefined, failure: undefined } });
+    const outcome = await this.#request("business", (api, { token, device }) =>
+      api.getBusinessCurrency(token, this.#businessId, device),
+    );
+    if (generation !== this.#currencyGeneration || (outcome.status !== "ok" && outcome.status !== "failed")) return;
+    if (outcome.status === "failed") {
+      this.#patch({ currency: { phase: "failed", definition: undefined, failure: outcome.failure } });
+      return;
+    }
+    const definition = currencyDefinition(outcome.value);
+    this.#patch({
+      currency:
+        definition === undefined
+          ? {
+              phase: "failed",
+              definition: undefined,
+              failure: { kind: "invalid-response", status: 200, correlationId: undefined },
+            }
+          : { phase: "ready", definition, failure: undefined },
+    });
+  }
+
+  /**
+   * `inventory:value`; keyed. On success the stock and needing-valuation lists
+   * are reloaded from the API; the valuation kind comes from the API.
+   */
+  async recordStockValuation(
+    command: RecordStockValuationRequest,
+  ): Promise<InventoryOutcome<RecordStockValuationResponse>> {
+    const outcome = await this.#keyedSubmit("stockValuation", command, (api, { token, device }, key) =>
+      api.recordStockValuation(token, this.#businessId, command, key, device),
+    );
+    if (outcome.status === "ok") {
+      void this.refreshItems();
+      void this.loadNeedsValuation();
+    }
+    return outcome;
   }
 
   // ---- One item (resource scope) -----------------------------------------

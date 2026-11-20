@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 import { CatalogSection } from "../catalog/catalog-section";
 import { InventorySection } from "../inventory/inventory-section";
+import { LedgerSection } from "../ledger/ledger-section";
+import { salesAffordances } from "../sales/affordances";
+import { SalesSection } from "../sales/sales-section";
 import type { BusinessOverview, ResourceResult } from "../lib/auth/session-store";
 import { useSession, useSessionStore } from "../lib/auth/session-context";
 import { FailureAlert } from "./failure-alert";
@@ -12,29 +15,45 @@ import { LoadingState, ScreenHeading } from "./screen-heading";
 type OverviewState =
   { readonly phase: "loading" } | { readonly phase: "done"; readonly result: ResourceResult<BusinessOverview> };
 
-type BusinessSection = "overview" | "catalog" | "inventory";
+type BusinessSection = "overview" | "catalog" | "inventory" | "sales" | "ledger";
 
 const SECTION_LABEL: Readonly<Record<BusinessSection, string>> = {
   overview: "Overview",
   catalog: "Catalog",
   inventory: "Inventory",
+  sales: "Sales",
+  ledger: "Ledger",
 };
 
-/** The selected business: an Overview | Catalog | Inventory switch. Role-based visibility is UX only. */
+/**
+ * The selected business: Overview | Catalog | Inventory, plus Sales and
+ * Ledger for the roles that may use them. Role-based visibility is UX only;
+ * the API checks every request.
+ */
 export function BusinessOverviewScreen({ businessId }: { readonly businessId: string }) {
   const session = useSession();
   const [section, setSection] = useState<BusinessSection>("overview");
   const summary = session.businesses.find((item) => item.business.id === businessId);
+  const role = summary?.membership.role;
+  const sales = salesAffordances(role);
+  const sections: readonly BusinessSection[] = [
+    "overview",
+    "catalog",
+    "inventory",
+    ...(sales.salesVisible ? (["sales"] as const) : []),
+    ...(sales.ledger ? (["ledger"] as const) : []),
+  ];
+  const shown = sections.includes(section) ? section : "overview";
 
   return (
     <>
       <nav aria-label="Business sections" className="section-nav">
-        {(["overview", "catalog", "inventory"] as const).map((value) => (
+        {sections.map((value) => (
           <button
             key={value}
             type="button"
-            className={section === value ? undefined : "secondary"}
-            aria-current={section === value ? "page" : undefined}
+            className={shown === value ? undefined : "secondary"}
+            aria-current={shown === value ? "page" : undefined}
             onClick={() => {
               setSection(value);
             }}
@@ -43,12 +62,16 @@ export function BusinessOverviewScreen({ businessId }: { readonly businessId: st
           </button>
         ))}
       </nav>
-      {section === "overview" ? (
+      {shown === "overview" ? (
         <OverviewSection businessId={businessId} />
-      ) : section === "catalog" ? (
-        <CatalogSection businessId={businessId} role={summary?.membership.role} />
+      ) : shown === "catalog" ? (
+        <CatalogSection businessId={businessId} role={role} />
+      ) : shown === "inventory" ? (
+        <InventorySection businessId={businessId} role={role} />
+      ) : shown === "sales" ? (
+        <SalesSection businessId={businessId} role={role} />
       ) : (
-        <InventorySection businessId={businessId} role={summary?.membership.role} />
+        <LedgerSection businessId={businessId} />
       )}
     </>
   );

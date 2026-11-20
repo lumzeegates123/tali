@@ -110,6 +110,70 @@ describe("ListInventoryItems and GetInventoryItem", () => {
     await expect(h.listInventoryItems.execute(mine.OWNER, { q: "x".repeat(121) })).rejects.toThrow(ValidationError);
   });
 
+  it("shows the valuation status only to cost-read roles, and never a value", async () => {
+    const { h, mine, key, soap, fresh } = await setup();
+    await h.recordStockValuation.execute(mine.OWNER, {
+      variantId: soap.variant.id,
+      expectedBalanceVersion: 1,
+      newTotalValue: { amountMinor: "5000", currency: "NGN" },
+      reason: "Opening value",
+      idempotencyKey: key(),
+    });
+    for (const role of ["OWNER", "MANAGER", "ACCOUNTANT"] as const) {
+      const byId = new Map((await h.listInventoryItems.execute(mine[role])).items.map((i) => [i.variantId, i]));
+      expect(byId.get(soap.variant.id)?.valuationStatus).toBe("VALUED");
+      expect(byId.get(fresh.variant.id)?.valuationStatus).toBe("UNVALUED");
+      expect((await h.getInventoryItem.execute(mine[role], { variantId: soap.variant.id })).valuationStatus).toBe(
+        "VALUED",
+      );
+    }
+    for (const role of ["CASHIER", "STOCK_KEEPER"] as const) {
+      const page = await h.listInventoryItems.execute(mine[role]);
+      expect(page.items.every((item) => !("valuationStatus" in item))).toBe(true);
+      const detail = await h.getInventoryItem.execute(mine[role], { variantId: soap.variant.id });
+      expect("valuationStatus" in detail).toBe(false);
+    }
+    const detail = await h.getInventoryItem.execute(mine.OWNER, { variantId: soap.variant.id });
+    for (const field of ["value", "valueMinor", "averageUnitCost", "inventoryValue"]) {
+      expect(field in detail).toBe(false);
+    }
+  });
+
+  it("lists only UNVALUED items with needsValuationOnly, for cost-read roles only", async () => {
+    const { h, mine, theirs, key, soap, oil, fresh } = await setup();
+    await h.recordStockValuation.execute(mine.OWNER, {
+      variantId: soap.variant.id,
+      expectedBalanceVersion: 1,
+      newTotalValue: { amountMinor: "5000", currency: "NGN" },
+      reason: "Opening value",
+      idempotencyKey: key(),
+    });
+    for (const role of ["OWNER", "MANAGER", "ACCOUNTANT"] as const) {
+      const page = await h.listInventoryItems.execute(mine[role], { needsValuationOnly: true });
+      expect(page.items.map((item) => item.variantId)).toEqual([oil.variant.id, fresh.variant.id].sort());
+      expect(page.items.every((item) => item.valuationStatus === "UNVALUED")).toBe(true);
+    }
+    const first = await h.listInventoryItems.execute(mine.OWNER, { needsValuationOnly: true, limit: 1 });
+    const rest = await h.listInventoryItems.execute(mine.OWNER, {
+      needsValuationOnly: true,
+      limit: 1,
+      after: first.nextCursor ?? "",
+    });
+    expect([...first.items, ...rest.items].map((item) => item.variantId)).toEqual(
+      [oil.variant.id, fresh.variant.id].sort(),
+    );
+    expect(rest.nextCursor).toBeNull();
+    for (const role of ["CASHIER", "STOCK_KEEPER"] as const) {
+      await expect(h.listInventoryItems.execute(mine[role], { needsValuationOnly: true })).rejects.toThrow(
+        PermissionDeniedError,
+      );
+    }
+    expect((await h.listInventoryItems.execute(theirs.OWNER, { needsValuationOnly: true })).items).toEqual([]);
+    await expect(
+      h.listInventoryItems.execute(mine.OWNER, { needsValuationOnly: "yes" as unknown as boolean }),
+    ).rejects.toThrow(ValidationError);
+  });
+
   it("pages by variant ID", async () => {
     const { h, mine } = await setup();
     const first = await h.listInventoryItems.execute(mine.OWNER, { limit: 2 });

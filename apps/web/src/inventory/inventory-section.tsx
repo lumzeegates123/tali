@@ -1,20 +1,29 @@
 "use client";
 
+import type { InventoryItemResponse } from "@tali/shared";
 import { useCallback, useEffect, useState } from "react";
 import { useSessionStore } from "../lib/auth/session-context";
 import { newUuidV7 } from "../lib/ids/uuidv7";
 import { LoadingState } from "../onboarding/screen-heading";
 import { inventoryAffordances } from "./affordances";
 import { DocumentView, type DocumentRef } from "./document-view";
-import { InventoryProvider, useInventory, useInventoryStore } from "./inventory-context";
+import { InventoryProvider, useAllowed, useInventory, useInventoryStore } from "./inventory-context";
 import { type ItemLabel, InventoryStore } from "./inventory-store";
 import { ItemDetail } from "./item-detail";
+import { NeedsValuationList } from "./needs-valuation-list";
+import { ValuationForm } from "./valuation-form";
 import { type StockDocumentKind, StockDocumentForm } from "./stock-document-form";
 import { StockList } from "./stock-list";
 import { StocktakeDetail } from "./stocktake-detail";
 import { StocktakesView } from "./stocktakes-view";
 
-type InventoryTab = "stock" | "stocktakes";
+type InventoryTab = "stock" | "stocktakes" | "needsValuation";
+
+const TAB_LABEL: Readonly<Record<InventoryTab, string>> = {
+  stock: "Stock",
+  stocktakes: "Stocktakes",
+  needsValuation: "Needs valuation",
+};
 
 type InventoryView =
   | { readonly kind: "list" }
@@ -27,7 +36,9 @@ type InventoryView =
     }
   | { readonly kind: "document"; readonly document: DocumentRef; readonly back: InventoryView }
   | { readonly kind: "stocktakes" }
-  | { readonly kind: "stocktake"; readonly stocktakeId: string };
+  | { readonly kind: "stocktake"; readonly stocktakeId: string }
+  | { readonly kind: "needsValuation" }
+  | { readonly kind: "valuationForm"; readonly item: InventoryItemResponse };
 
 const UNAVAILABLE = "This item is not available. It may have been removed, or you may no longer have access to it.";
 
@@ -72,10 +83,19 @@ export function InventorySection({
 function InventoryBody() {
   const session = useSessionStore();
   const store = useInventoryStore();
+  const allowed = useAllowed();
   const { businessUnavailable } = useInventory();
   const [view, setView] = useState<InventoryView>({ kind: "list" });
   const [notice, setNotice] = useState<string | undefined>(undefined);
-  const tab: InventoryTab = view.kind === "stocktakes" || view.kind === "stocktake" ? "stocktakes" : "stock";
+  const tab: InventoryTab =
+    view.kind === "stocktakes" || view.kind === "stocktake"
+      ? "stocktakes"
+      : view.kind === "needsValuation" || view.kind === "valuationForm"
+        ? "needsValuation"
+        : "stock";
+  const tabs: readonly InventoryTab[] = allowed.can("inventory:cost-read")
+    ? ["stock", "stocktakes", "needsValuation"]
+    : ["stock", "stocktakes"];
 
   /** A resource NOT_FOUND returns to the list and refreshes it; it never changes the selected business. */
   const unavailable = useCallback(() => {
@@ -112,17 +132,23 @@ function InventoryBody() {
   return (
     <>
       <nav aria-label="Inventory sections" className="section-nav">
-        {(["stock", "stocktakes"] as const).map((value) => (
+        {tabs.map((value) => (
           <button
             key={value}
             type="button"
             className={tab === value ? undefined : "secondary"}
             aria-current={tab === value ? "page" : undefined}
             onClick={() => {
-              open(value === "stock" ? { kind: "list" } : { kind: "stocktakes" });
+              open(
+                value === "stock"
+                  ? { kind: "list" }
+                  : value === "stocktakes"
+                    ? { kind: "stocktakes" }
+                    : { kind: "needsValuation" },
+              );
             }}
           >
-            {value === "stock" ? "Stock" : "Stocktakes"}
+            {TAB_LABEL[value]}
           </button>
         ))}
       </nav>
@@ -212,6 +238,29 @@ function InventoryBody() {
               open({ kind: "stocktakes" });
             }}
             onUnavailable={stocktakeUnavailable}
+          />
+        );
+      case "needsValuation":
+        return (
+          <NeedsValuationList
+            notice={notice}
+            onValue={(item) => {
+              open({ kind: "valuationForm", item });
+            }}
+          />
+        );
+      case "valuationForm":
+        return (
+          <ValuationForm
+            key={view.item.variantId}
+            item={view.item}
+            onCancel={() => {
+              open({ kind: "needsValuation" });
+            }}
+            onSaved={(message) => {
+              setView({ kind: "needsValuation" });
+              setNotice(message);
+            }}
           />
         );
     }

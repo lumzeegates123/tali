@@ -182,12 +182,17 @@ export const StocktakeLinePathSchema = z.strictObject({
 
 /**
  * `GET .../inventory/balances`: keyset page, an optional search term (name
- * contains, or exact SKU or barcode) and `lowStock=true` (exactly "true" or
- * "false"; absent means every item).
+ * contains, or exact SKU or barcode), `lowStock=true` and `needsValuation=true`
+ * (each exactly "true" or "false"; absent means every item).
+ * `needsValuation=true` lists UNVALUED items only and requires `inventory:cost-read`.
  */
 export const InventoryItemListQuerySchema = PageQuerySchema.extend({
   q: z.string().min(1).max(480).optional(),
   lowStock: z
+    .enum(["true", "false"])
+    .transform((value) => value === "true")
+    .optional(),
+  needsValuation: z
     .enum(["true", "false"])
     .transform((value) => value === "true")
     .optional(),
@@ -314,6 +319,8 @@ export const InventoryItemResponseSchema = z.strictObject({
   /** 0 when no threshold row exists; a cleared threshold keeps its row's version. */
   thresholdVersion: NonNegativeVersionWireSchema,
   lowStock: z.boolean(),
+  /** Present only with `inventory:cost-read` (absent, not null, otherwise). Never a value or an average cost. */
+  valuationStatus: z.enum(["VALUED", "UNVALUED"]).optional(),
 });
 export type InventoryItemResponse = z.infer<typeof InventoryItemResponseSchema>;
 

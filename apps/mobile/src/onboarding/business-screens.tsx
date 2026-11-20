@@ -3,6 +3,9 @@ import { Pressable, Text, View } from "react-native";
 import { describeFailure, rejectedFields } from "../api/failure-messages";
 import { CatalogScreen } from "../catalog/catalog-screen";
 import { InventoryScreen } from "../inventory/inventory-screen";
+import { LedgerScreen } from "../ledger/ledger-screen";
+import { salesAffordances } from "../sales/affordances";
+import { SalesScreen } from "../sales/sales-screen";
 import { useSession, useSessionStore } from "../auth/session-context";
 import type { BusinessOverview, ResourceResult } from "../auth/session-store";
 import { detectDeviceTimeZone, PILOT_CURRENCY_CODES } from "./create-business-defaults";
@@ -184,44 +187,64 @@ export function BusinessPickerScreen() {
   );
 }
 
-type BusinessSection = "overview" | "catalog" | "inventory";
+type BusinessSection = "overview" | "catalog" | "inventory" | "sales" | "ledger";
 
 const SECTION_LABEL: Readonly<Record<BusinessSection, string>> = {
   overview: "Overview",
   catalog: "Catalog",
   inventory: "Inventory",
+  sales: "Sales",
+  ledger: "Ledger",
 };
 
-/** The selected business: an in-screen Overview | Catalog | Inventory switch. Role-based visibility is UX only. */
+/**
+ * The selected business: an in-screen Overview | Catalog | Inventory switch,
+ * plus Sales and Ledger for the roles that may use them. Role-based
+ * visibility is UX only; the API checks every request.
+ */
 export function BusinessOverviewScreen({ businessId }: { readonly businessId: string }) {
   const session = useSession();
   const [section, setSection] = useState<BusinessSection>("overview");
   const summary = session.businesses.find((item) => item.business.id === businessId);
+  const role = summary?.membership.role;
+  const sales = salesAffordances(role);
+  const sections: readonly BusinessSection[] = [
+    "overview",
+    "catalog",
+    "inventory",
+    ...(sales.salesVisible ? (["sales"] as const) : []),
+    ...(sales.ledger ? (["ledger"] as const) : []),
+  ];
+  const shown = sections.includes(section) ? section : "overview";
 
   return (
     <View style={styles.screen}>
-      <View style={styles.row} accessibilityRole="tablist" accessibilityLabel="Business sections">
-        {(["overview", "catalog", "inventory"] as const).map((value) => (
+      <View style={styles.wrap} accessibilityRole="tablist" accessibilityLabel="Business sections">
+        {sections.map((value) => (
           <Pressable
             key={value}
             accessibilityRole="tab"
             accessibilityLabel={SECTION_LABEL[value]}
-            accessibilityState={{ selected: section === value }}
+            accessibilityState={{ selected: shown === value }}
             onPress={() => {
               setSection(value);
             }}
-            style={[styles.button, section === value ? styles.primary : styles.secondary]}
+            style={[styles.button, shown === value ? styles.primary : styles.secondary]}
           >
-            <Text style={section === value ? styles.primaryText : styles.secondaryText}>{SECTION_LABEL[value]}</Text>
+            <Text style={shown === value ? styles.primaryText : styles.secondaryText}>{SECTION_LABEL[value]}</Text>
           </Pressable>
         ))}
       </View>
-      {section === "overview" ? (
+      {shown === "overview" ? (
         <OverviewSection businessId={businessId} />
-      ) : section === "catalog" ? (
-        <CatalogScreen businessId={businessId} role={summary?.membership.role} />
+      ) : shown === "catalog" ? (
+        <CatalogScreen businessId={businessId} role={role} />
+      ) : shown === "inventory" ? (
+        <InventoryScreen businessId={businessId} role={role} />
+      ) : shown === "sales" ? (
+        <SalesScreen businessId={businessId} role={role} />
       ) : (
-        <InventoryScreen businessId={businessId} role={summary?.membership.role} />
+        <LedgerScreen businessId={businessId} />
       )}
     </View>
   );

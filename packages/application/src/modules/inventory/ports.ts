@@ -28,6 +28,7 @@ import type {
   StocktakeLine,
   StocktakeStatus,
   UnitCode,
+  ValuationStatus,
 } from "@tali/domain";
 import type { TransactionScope } from "../../ports/unit-of-work.js";
 import type { Page, PageRequest } from "../../queries/pagination.js";
@@ -393,7 +394,7 @@ export interface StocktakeLineRepository {
  * One stock item at a location, as the inventory read model sees it: a
  * product's default variant with its balance and low-stock threshold. A
  * missing balance row reads as zero at version 0; a missing threshold row as
- * no threshold at version 0.
+ * no threshold at version 0; a missing valuation row as UNVALUED.
  */
 export interface InventoryItemRow {
   readonly productId: ProductId;
@@ -408,12 +409,16 @@ export interface InventoryItemRow {
   readonly balanceVersion: number;
   readonly threshold?: Quantity;
   readonly thresholdVersion: number;
+  /** The stock item's valuation status (ADR-009 section 19); never its value. */
+  readonly valuationStatus: ValuationStatus;
 }
 
 export interface InventoryItemQuery {
   readonly search?: ProductSearch;
   /** Only items whose stored state is low on stock: ACTIVE, tracked, with a threshold at or above on-hand. */
   readonly lowStockOnly?: boolean;
+  /** Only UNVALUED items (no valuation row, or a row whose status is UNVALUED), filtered before paging. */
+  readonly needsValuationOnly?: boolean;
 }
 
 /**
