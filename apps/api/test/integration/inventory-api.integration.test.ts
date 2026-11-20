@@ -165,6 +165,72 @@ describe("Build 2 Slice 5 inventory API over HTTP", () => {
       }
     });
 
+    it("shows valuationStatus to cost-read roles only and filters needsValuation=true before paging", async () => {
+      const milk = await client().product();
+      const sugar = await client().product();
+      const salt = await client().product();
+      await client().receive([
+        [milk, "4"],
+        [sugar, "2"],
+      ]);
+      await client()
+        .keyed("inventory/valuations", {
+          variantId: milk.variantId,
+          expectedBalanceVersion: 1,
+          newTotalValue: { amountMinor: "4000", currency: "KES" },
+          reason: "counted opening",
+        })
+        .expect(201);
+      const unvalued = [sugar.variantId, salt.variantId].sort();
+      for (const role of ["OWNER", "MANAGER", "ACCOUNTANT"] as const) {
+        const rows = new Map((await balances("", as(role))).map((row) => [row.variantId, row.valuationStatus]));
+        expect(rows.get(milk.variantId)).toBe("VALUED");
+        expect(rows.get(sugar.variantId)).toBe("UNVALUED");
+        expect(rows.get(salt.variantId)).toBe("UNVALUED");
+        const detail = record(
+          InventoryItemResponseSchema.parse(
+            (await client().get(`inventory/items/${milk.variantId}`, as(role)).expect(200)).body,
+          ),
+        );
+        expect(detail.valuationStatus).toBe("VALUED");
+        expect((await balances("?needsValuation=true", as(role))).map((row) => row.variantId)).toEqual(unvalued);
+      }
+      for (const role of ["CASHIER", "STOCK_KEEPER"] as const) {
+        const response = await client().get("inventory/balances", as(role)).expect(200);
+        expect(keysDeep(response.body).has("valuationStatus")).toBe(false);
+        const detail = await client().get(`inventory/items/${milk.variantId}`, as(role)).expect(200);
+        expect(keysDeep(detail.body).has("valuationStatus")).toBe(false);
+        const denied = await client().get("inventory/balances?needsValuation=true", as(role)).expect(403);
+        expect(code(denied.body)).toBe("PERMISSION_DENIED");
+        expect((await balances("?needsValuation=false", as(role))).map((row) => row.variantId).sort()).toEqual(
+          [milk.variantId, sugar.variantId, salt.variantId].sort(),
+        );
+      }
+      const first = record(
+        InventoryItemsResponseSchema.parse(
+          (await client().get("inventory/balances?needsValuation=true&limit=1").expect(200)).body,
+        ),
+      );
+      expect(first.items.map((row) => row.variantId)).toEqual(unvalued.slice(0, 1));
+      expect(first.nextCursor).toBe(unvalued[0]);
+      const rest = await balances(`?needsValuation=true&limit=1&after=${first.nextCursor ?? ""}`);
+      expect(rest.map((row) => row.variantId)).toEqual(unvalued.slice(1));
+      const otherTenant = await client()
+        .get("inventory/balances?needsValuation=true", world.ownerB, world.b)
+        .expect(200);
+      expect(InventoryItemsResponseSchema.parse(otherTenant.body).items).toEqual([]);
+      const crossTenant = await client().get("inventory/balances?needsValuation=true", world.ownerB).expect(404);
+      expect(code(crossTenant.body)).toBe("NOT_FOUND");
+      for (const bad of ["1", "yes", "TRUE", ""]) {
+        const response = await client().get(`inventory/balances?needsValuation=${bad}`).expect(400);
+        expect(code(response.body)).toBe("VALIDATION_FAILED");
+      }
+      const valuedKeys = keysDeep((await client().get(`inventory/items/${milk.variantId}`).expect(200)).body);
+      for (const forbidden of ["value", "valueMinor", "averageUnitCost", "inventoryValue", "cost"]) {
+        expect(valuedKeys.has(forbidden)).toBe(false);
+      }
+    });
+
     it("searches by name or exact SKU and pages with a cursor", async () => {
       const milk = await client().product({ name: "Peak Milk 400g", sku: "PK-400" });
       await client().product({ name: "Sugar 1kg" });

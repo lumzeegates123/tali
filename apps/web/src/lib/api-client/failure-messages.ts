@@ -41,6 +41,22 @@ const API_ERROR_MESSAGES: Readonly<Record<string, FailureMessage>> = {
     text: "Some stock changed while you were counting. Recount the affected items before posting.",
     retryable: false,
   },
+  PRICE_NOT_SET: { text: "Price not set. Set a selling price for this product before selling it.", retryable: false },
+  PRICE_CHANGED: {
+    text: "A price changed since it was shown. Review the updated prices and record the sale again.",
+    retryable: false,
+  },
+  PRODUCT_ARCHIVED: { text: "This product is no longer available for sale.", retryable: false },
+  DISCOUNT_EXCEEDS_LINE: { text: "A discount must be less than the amount of its line.", retryable: false },
+  TENDER_TOTAL_MISMATCH: {
+    text: "The payments do not add up to the sale total calculated by Tali. Check the payment amounts.",
+    retryable: false,
+  },
+  LEDGER_NOT_PROVISIONED: { text: "This business is not ready to record sales yet.", retryable: false },
+  VALUATION_STALE: {
+    text: "Stock changed since this valuation was reviewed. Reload the item and enter the value again.",
+    retryable: false,
+  },
 };
 
 /** NOT_FOUND wording by what was asked for; a resource may be hidden by tenancy, so its text stays neutral. */

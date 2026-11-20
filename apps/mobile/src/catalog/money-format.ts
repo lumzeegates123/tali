@@ -37,6 +37,27 @@ export function parseMoneyInput(input: string, definition: CurrencyDefinition): 
   return wire.success ? { ok: true, value: wire.data } : { ok: false, reason: "tooLarge" };
 }
 
+export type NonNegativeMoneyInputError = "empty" | "format" | "negative" | "tooLarge";
+
+export type NonNegativeMoneyInputResult =
+  | { readonly ok: true; readonly value: MoneyWire }
+  | { readonly ok: false; readonly reason: NonNegativeMoneyInputError };
+
+/** Parses an amount of zero or more typed in major units, e.g. a stock valuation total of "0" or "2500.75". */
+export function parseNonNegativeMoneyInput(input: string, definition: CurrencyDefinition): NonNegativeMoneyInputResult {
+  const text = input.trim();
+  if (text === "") return { ok: false, reason: "empty" };
+  let money: Money;
+  try {
+    money = Money.fromDecimalString(text, definition);
+  } catch {
+    return { ok: false, reason: "format" };
+  }
+  if (money.isNegative()) return { ok: false, reason: "negative" };
+  const wire = MoneyWireSchema.safeParse({ amountMinor: money.toMinorUnitsString(), currency: definition.code });
+  return wire.success ? { ok: true, value: wire.data } : { ok: false, reason: "tooLarge" };
+}
+
 /** How to type an amount in this currency. */
 export function moneyInputHint(definition: CurrencyDefinition): string {
   if (definition.minorUnitDigits === 0) {

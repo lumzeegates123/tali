@@ -1,6 +1,6 @@
 # Plan 005. Build 3: sales and ledger posting foundation
 
-Status: **APPROVED / S0 COMPLETE / S1 COMPLETE / S2 COMPLETE / S3 COMPLETE / S4 COMPLETE / S5 COMPLETE / S6 COMPLETE.** ADR-009, ADR-010 and ADR-011 were **ACCEPTED on 2026-10-15** by the
+Status: **APPROVED / S0 COMPLETE / S1 COMPLETE / S2 COMPLETE / S3 COMPLETE / S4 COMPLETE / S5 COMPLETE / S6 COMPLETE / S7 COMPLETE (2026-11-19).** ADR-009, ADR-010 and ADR-011 were **ACCEPTED on 2026-10-15** by the
 human maintainer. Accountant review is **COMPLETE** (Osasu, 2026-10-15; `docs/reviews/build-3-accountant-review.md`
 sections 14 and 14.1): ADR-009 A1 to A22 and ADR-010 T1 to T7 approved. Reversal-residual clarification
 **2026-10-29** (section 14.2; ADR-009 amendment section 38). Maintainer questions M1 to M17 are resolved
@@ -9,7 +9,8 @@ chart provisioning; journal tables moved to S3 by the maintainer's split decisio
 (valuation, journals, residual ORIGINAL corrections) is **COMPLETE (2026-10-30)**. S4 (sales domain and
 application, in-memory adapters only) is **COMPLETE (2026-11-01)**. S5 (sales persistence and SALE
 inventory/ledger integration) is **COMPLETE (2026-11-01)**. S6 (Sales API and Ledger Read API) is **COMPLETE
-(2026-11-02)**. S7 to S9 are not started.
+(2026-11-02)**. S7 (web and mobile clients) is **S7 COMPLETE (2026-11-19)**: every automated gate passed, and the
+manual walkthrough on the reference Android device passed. S8 and S9 are not started.
 
 Scope: the ledger posting foundation, the default chart of accounts, perpetual weighted average cost valuation with
 explicit valuation status, and online, fully tendered sales with full reversal (ADR-009, ADR-011). Configurable tax
@@ -30,7 +31,7 @@ selling; price override; sale-level discounts; account management UI; period clo
 | S4    | Sales domain and application           | ADR-011, ADR-009     | **Complete** (2026-11-01); in-memory adapters only |
 | S5    | Sales persistence and SALE integration | ADR-011, ADR-009     | **Complete** (2026-11-01); no API |
 | S6    | API                                    | ADR-011, ADR-009     | **Complete** (2026-11-02); sales and ledger read routes |
-| S7    | Clients (web and mobile)               | ADR-011              | Not started (after S6)     |
+| S7    | Clients (web and mobile)               | ADR-011              | **S7 COMPLETE** (2026-11-19); automated gates and the reference Android walkthrough passed |
 | S8    | Configurable tax (optional)            | ADR-010              | Not started; optional; needs a separately reviewed pilot tax configuration; may be deferred |
 | S9    | Hardening and acceptance               | All accepted         | Not started (after S7, and S8 if run) |
 
@@ -220,6 +221,17 @@ Each slice: outcome, dependencies, modules and files, tests, gate, stop conditio
 - Tests: component tests, Playwright e2e for a sale and a reversal, client bundle check (no server packages).
 - Gate: client suites, bundle check and a manual walkthrough on the reference Android device.
 - Stop: any authoritative calculation needed on the client.
+- Status: **S7 COMPLETE (2026-11-19)**. Implementation is on `feature/build-3-slice-7-clients`, baseline
+  `61307c857ffbf99d3b4872112a0988826714c3b8`. Every automated gate passed, and manual Android acceptance passed on
+  the reference device on 2026-11-19. The change is uncommitted for review.
+  - Web and mobile Sell, Sales history, sale detail and full reversal; Needs valuation list and valuation form;
+    read-only Ledger. Each uses the existing in-memory store, provider and screen pattern.
+  - Totals, tax, change, cost of goods sold and receipt numbers come only from API responses; the client computes
+    no total, tax, average cost, cost of goods sold or margin.
+  - The only server-side change is the read-only inventory `valuationStatus` and the `needsValuation` filter.
+  - No migration, permission or dependency. Every automated gate passed, including the full web e2e.
+
+  See `docs/audits/build-3-slice-7.md`.
 
 ### S8. Configurable tax (optional)
 

@@ -26,6 +26,7 @@ import type {
   Quantity,
   Sku,
   UnitCode,
+  ValuationStatus,
 } from "@tali/domain";
 import {
   deriveLowStock,
@@ -34,6 +35,7 @@ import {
   parseOpeningBatchId,
   parseProductVariantId,
 } from "@tali/domain";
+import { hasPermission } from "../../authorization/permissions.js";
 import type { LocationBoundContext } from "../../context/business-context.js";
 import { requireContextPermission, requireLocationBound } from "../../context/business-context.js";
 import { NotFoundError, ValidationError } from "../../errors/application-error.js";
@@ -73,6 +75,11 @@ export interface InventoryItemView {
   /** 0 when no threshold row exists; a cleared threshold keeps its row's version. */
   readonly thresholdVersion: number;
   readonly lowStock: boolean;
+  /**
+   * VALUED or UNVALUED (ADR-009 section 19), present only with
+   * `inventory:cost-read`; absent otherwise. No value or average cost is exposed.
+   */
+  readonly valuationStatus?: ValuationStatus;
 }
 
 /**
@@ -141,6 +148,8 @@ export interface ListInventoryItemsInput {
   /** Name contains, or exact SKU or barcode, as in the catalog product search. */
   readonly q?: string;
   readonly lowStockOnly?: boolean;
+  /** Only UNVALUED items ("stock needing valuation", ADR-009 section 23); requires `inventory:cost-read`. */
+  readonly needsValuationOnly?: boolean;
   readonly limit?: number;
   readonly after?: string;
 }
@@ -155,6 +164,7 @@ export interface ListItemMovementsInput {
  * `inventory:read` (every role). Stock items at the context's location:
  * tracked ACTIVE products, with or without stock, and tracked ARCHIVED
  * products that still have stock. Untracked products are never listed.
+ * `needsValuationOnly` additionally requires `inventory:cost-read`.
  */
 export interface ListInventoryItems {
   execute(context: LocationBoundContext, input?: ListInventoryItemsInput): Promise<Page<InventoryItemView>>;
@@ -208,6 +218,7 @@ export interface InventoryReadDependencies {
 }
 
 const readPermission = inventoryPermissions.permissions["inventory:read"];
+const costReadPermission = inventoryPermissions.permissions["inventory:cost-read"];
 
 function readContext(context: LocationBoundContext): LocationBoundContext {
   requireContextPermission(context, readPermission);
@@ -219,7 +230,7 @@ export function isVisibleInventoryItem(row: InventoryItemRow): boolean {
   return row.trackInventory && (row.productStatus === "ACTIVE" || !row.onHand.isZero());
 }
 
-function itemView(row: InventoryItemRow): InventoryItemView {
+function itemView(row: InventoryItemRow, includeValuationStatus: boolean): InventoryItemView {
   const lowStock = deriveLowStock({
     variantStatus: row.productStatus,
     trackInventory: row.trackInventory,
@@ -240,6 +251,7 @@ function itemView(row: InventoryItemRow): InventoryItemView {
     ...(row.threshold === undefined ? {} : { threshold: row.threshold }),
     thresholdVersion: row.thresholdVersion,
     lowStock,
+    ...(includeValuationStatus ? { valuationStatus: row.valuationStatus } : {}),
   });
 }
 
@@ -306,12 +318,10 @@ async function documentMovements(
   return movements.map(documentMovementView);
 }
 
-function parseLowStockOnly(value: unknown): boolean {
+function parseFlag(name: "lowStockOnly" | "needsValuationOnly", value: unknown): boolean {
   if (value === undefined) return false;
   if (typeof value !== "boolean") {
-    throw new ValidationError("lowStockOnly must be true or false", [
-      { path: ["lowStockOnly"], message: "must be a boolean" },
-    ]);
+    throw new ValidationError(`${name} must be true or false`, [{ path: [name], message: "must be a boolean" }]);
   }
   return value;
 }
@@ -321,7 +331,10 @@ export function createListInventoryItems(dependencies: InventoryReadDependencies
     async execute(locationContext, input) {
       const context = readContext(locationContext);
       const search = input?.q === undefined ? undefined : parseProductSearch(input.q);
-      const lowStockOnly = parseLowStockOnly(input?.lowStockOnly);
+      const lowStockOnly = parseFlag("lowStockOnly", input?.lowStockOnly);
+      const needsValuationOnly = parseFlag("needsValuationOnly", input?.needsValuationOnly);
+      if (needsValuationOnly) requireContextPermission(context, costReadPermission);
+      const includeValuationStatus = hasPermission(context.permissions, costReadPermission);
       const request = parsePageRequest({
         ...(input?.limit === undefined ? {} : { limit: input.limit }),
         ...(input?.after === undefined ? {} : { after: input.after }),
@@ -331,12 +344,16 @@ export function createListInventoryItems(dependencies: InventoryReadDependencies
           scope,
           context.businessId,
           context.locationId,
-          { ...(search === undefined ? {} : { search }), lowStockOnly },
+          { ...(search === undefined ? {} : { search }), lowStockOnly, needsValuationOnly },
           request,
         );
         const items = page.items.map((row) => {
-          const view = itemView(row);
-          if (!isVisibleInventoryItem(row) || (lowStockOnly && !view.lowStock)) {
+          const view = itemView(row, includeValuationStatus);
+          if (
+            !isVisibleInventoryItem(row) ||
+            (lowStockOnly && !view.lowStock) ||
+            (needsValuationOnly && row.valuationStatus !== "UNVALUED")
+          ) {
             throw new Error("the inventory item reader returned a row outside the query");
           }
           return view;
@@ -352,8 +369,9 @@ export function createGetInventoryItem(dependencies: InventoryReadDependencies):
     async execute(locationContext, input) {
       const context = readContext(locationContext);
       const variantId = idOrNotFound(() => parseProductVariantId(input.variantId), PRODUCT_NOT_FOUND);
+      const includeValuationStatus = hasPermission(context.permissions, costReadPermission);
       return dependencies.unitOfWork.run(async (scope) =>
-        itemView(await visibleItem(dependencies, scope, context, variantId)),
+        itemView(await visibleItem(dependencies, scope, context, variantId), includeValuationStatus),
       );
     },
   };

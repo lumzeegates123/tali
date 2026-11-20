@@ -854,6 +854,7 @@ export class InMemoryInventoryStore implements RollbackParticipant {
     if (item?.product.businessId !== businessId) return undefined;
     const balance = this.#balances.get(stockItemKey(businessId, locationId, variant.id));
     const threshold = this.#thresholds.get(stockItemKey(businessId, locationId, variant.id));
+    const valuation = this.#valuations.get(stockItemKey(businessId, locationId, variant.id));
     return Object.freeze({
       productId: item.product.id,
       variantId: variant.id,
@@ -867,6 +868,7 @@ export class InMemoryInventoryStore implements RollbackParticipant {
       balanceVersion: balance?.version ?? 0,
       ...(threshold?.threshold === undefined ? {} : { threshold: threshold.threshold }),
       thresholdVersion: threshold?.version ?? 0,
+      valuationStatus: valuation?.status ?? "UNVALUED",
     });
   }
 
@@ -890,6 +892,7 @@ export class InMemoryInventoryStore implements RollbackParticipant {
           return row === undefined ? [] : [row];
         })
         .filter(isVisibleInventoryItem)
+        .filter((row) => query.needsValuationOnly !== true || row.valuationStatus === "UNVALUED")
         .filter(
           (row) =>
             query.lowStockOnly !== true ||
